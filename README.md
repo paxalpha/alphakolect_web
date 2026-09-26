@@ -30,6 +30,28 @@ legacy/          quarantined legacy application — not built, linted or deploye
 - pnpm 11 (`corepack enable` or a global install)
 - Docker (local PostgreSQL)
 
+## Getting started
+
+```bash
+pnpm install
+
+# local database for the new system (127.0.0.1:5436; not the legacy recovery DB)
+cp infrastructure/.env.example infrastructure/.env        # set POSTGRES_PASSWORD
+docker compose -f infrastructure/compose.yaml up -d --wait
+
+# API (http://127.0.0.1:4000/v1/health)
+cp apps/api/.env.example apps/api/.env                    # use the same password in DATABASE_URL
+pnpm --filter @alphakolect/api dev
+```
+
+Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+
+Secret scan before committing:
+
+```bash
+docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact --no-banner
+```
+
 ## Rules
 
 - No secrets in git. Configuration comes from the environment and is validated at startup; each app documents its variables in `.env.example`.

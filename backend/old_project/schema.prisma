@@ -1,0 +1,82 @@
+datasource db {
+    url      = env("DATABASE_URL")
+    provider = "postgresql"
+}
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+// NOTE: ANY THING THAT HAS TO DEAL WITH AMOUNT IN DB IS STORED IN THE SMALLEST CURRENCY UNIT E.G KOBO, CENTS
+model Merchant {
+    id                          String                        @id @default(uuid()) @db.Uuid
+    email                       String                        @unique
+    businessName                String
+    businessAlias               String
+    phone                       String                        @unique
+    baseCurrency                Currency                      @relation(fields: [baseCurrencyId], references: [id])
+    password                    String
+    businessLogo                String?
+    createdAt                   DateTime                      @default(now()) @db.Timestamptz
+    updatedAt                   DateTime                      @updatedAt @db.Timestamptz
+    baseCurrencyId              String                        @db.Uuid
+    accountIsVerified           Boolean                       @default(false)
+    isActive                    Boolean                       @default(true) // this checks for ban status 
+    merchantSubscriptionInvoice MerchantSubscriptionInvoice[]
+    MerchantSubscriptionHistory MerchantSubscriptionHistory[]
+}
+
+model Currency {
+    id                          String                        @id @default(uuid()) @db.Uuid
+    name                        String
+    code                        String                          @unique()
+    symbol                      String
+    createdAt                   DateTime                      @default(now()) @db.Timestamptz
+    merchant                    Merchant[]
+    merchantSubscriptionInvoice MerchantSubscriptionInvoice[]
+    merchantSubscriptionHistory MerchantSubscriptionHistory[]
+}
+
+model MerchantSubscriptionInvoice {
+    id                String    @id @default(uuid()) @db.Uuid
+    merchant          Merchant  @relation(fields: [merchantId], references: [id])
+    merchantId        String    @db.Uuid
+    billedAmount      BigInt
+    billingCurrency   Currency  @relation(fields: [billingCurrencyId], references: [id])
+    billingCurrencyId String    @db.Uuid
+    settlementStatus  String
+    generatedAt       DateTime  @default(now()) @db.Timestamptz
+    settledAt         DateTime?
+}
+
+model MerchantSubscriptionHistory {
+    id                    String   @id @default(uuid()) @db.Uuid
+    merchant              Merchant @relation(fields: [merchantId], references: [id])
+    merchantId            String   @db.Uuid
+    amountPaid            BigInt
+    billingCurrency       Currency @relation(fields: [billingCurrencyId], references: [id])
+    billingCurrencyId     String   @db.Uuid
+    numberOfCyclesSettled Int      @default(1)
+    createdAt             DateTime @default(now()) @db.Timestamptz
+}
+
+model SystemAdmin {
+    id                          String                        @id @default(uuid()) @db.Uuid
+    email                       String                        @unique
+    password                    String
+    createdAt                   DateTime                      @default(now()) @db.Timestamptz
+    updatedAt                   DateTime                      @updatedAt @db.Timestamptz
+    isActive                    Boolean                       @default(true)
+    profileImageUrl             String?
+}
+
+model Agent {
+  id              String   @id @default(uuid())
+  name            String
+  email           String   @unique
+  password        String
+  phoneNumber     String?   @unique
+  createdAt       DateTime @default(now()) @db.Timestamptz
+  updatedAt       DateTime @updatedAt @db.Timestamptz
+  isActive        Boolean  @default(true)
+}

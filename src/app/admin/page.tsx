@@ -14,13 +14,8 @@ export default function Login() {
 
   const schema = z.object({
     email: z.string().email({ message: "Invalid email address" }),
-    password: z
-      .string()
-      .min(8, { message: "Password must be at least 8 characters long" })
-      .regex(/[A-Z]/, { message: "Password must contain at least one uppercase letter" })
-      .regex(/[a-z]/, { message: "Password must contain at least one lowercase letter" })
-      .regex(/\d/, { message: "Password must contain at least one number" })
-      .regex(/[@$!%*?&.#]/, { message: "Password must contain at least one special character" }),
+    // No complexity rules on login: they would block existing passwords. Complexity is enforced on reset.
+    password: z.string().min(1, { message: "Password is required" }),
   });
 
   type FormValues = z.infer<typeof schema>;
@@ -142,7 +137,7 @@ return (
 
         
           <div className="">
-            <Link href="/forgot-password" className="auth-link text-sm">
+            <Link href="/admin/forgot-password" className="auth-link text-sm">
               Forgot password?
             </Link>
           </div>

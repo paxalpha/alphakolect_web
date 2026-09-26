@@ -1,0 +1,4 @@
+# Workspace packages (TARGET_ARCHITECTURE §21). legacy/ is deliberately NOT part of the workspace.
+packages:
+  - 'apps/*'
+  - 'packages/*'

@@ -1,0 +1,14 @@
+{
+  "name": "alphakolect",
+  "private": true,
+  "description": "AlphaKolect rebuild workspace (see docs/architecture/TARGET_ARCHITECTURE.md). The legacy app lives in legacy/ and is not part of the workspace.",
+  "packageManager": "pnpm@11.20.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
+  }
+}

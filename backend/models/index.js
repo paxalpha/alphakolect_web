@@ -1,6 +1,7 @@
 const { Sequelize } = require('sequelize');
 const path = require('path');
 const fs = require('fs');
+const { createSequelize } = require('../config/database');
 
 // Ensure environment variables are loaded for Sequelize as well
 try {
@@ -14,9 +15,6 @@ try {
     require('dotenv').config();
   }
 } catch (_) {}
-
-const databaseUrl = process.env.DATABASE_URL;
-const useSsl = String(process.env.DB_SSL || '').toLowerCase() === 'true';
 
 const validateConnectionSocket = (client) => {
   try {
@@ -38,44 +36,16 @@ const commonPoolConfig = {
   validate: validateConnectionSocket,
 };
 
-let sequelize;
-if (databaseUrl) {
-  const shouldForceSsl = useSsl || /render\.com/i.test(databaseUrl) || /sslmode=require/i.test(databaseUrl);
-  sequelize = new Sequelize(databaseUrl, {
-    dialect: 'postgres',
-    protocol: 'postgres',
-    logging: false,
-    dialectOptions: {
-      ...(shouldForceSsl ? { ssl: { require: true, rejectUnauthorized: false } } : {}),
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 5000,
-      statement_timeout: 30000,
-      idle_in_transaction_session_timeout: 30000,
-    },
-    pool: commonPoolConfig,
-  });
-} else {
-  const database = process.env.DB_NAME || 'alphacollect_db';
-  const username = process.env.DB_USER || 'postgres';
-  const password = process.env.DB_PASSWORD || '';
-  const host = process.env.DB_HOST || 'localhost';
-  const port = Number(process.env.DB_PORT) || 5432;
-
-  sequelize = new Sequelize(database, username, password, {
-    host,
-    port,
-    dialect: 'postgres',
-    logging: false,
-    dialectOptions: {
-      ...(useSsl ? { ssl: { require: true, rejectUnauthorized: false } } : {}),
-      keepAlive: true,
-      keepAliveInitialDelayMillis: 5000,
-      statement_timeout: 30000,
-      idle_in_transaction_session_timeout: 30000,
-    },
-    pool: commonPoolConfig,
-  });
-}
+// Connection settings come only from the environment; TLS only when DB_SSL=true (config/database.js)
+const sequelize = createSequelize(Sequelize, {
+  dialectOptions: {
+    keepAlive: true,
+    keepAliveInitialDelayMillis: 5000,
+    statement_timeout: 30000,
+    idle_in_transaction_session_timeout: 30000,
+  },
+  pool: commonPoolConfig,
+});
 
 // Automatic query retry interceptor for transient DB connection drops
 const originalQuery = sequelize.query.bind(sequelize);

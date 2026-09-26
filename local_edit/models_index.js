@@ -20,7 +20,7 @@ const useSsl = String(process.env.DB_SSL || '').toLowerCase() === 'true';
 
 let sequelize;
 if (databaseUrl) {
-  const shouldForceSsl = useSsl || /render\.com/i.test(databaseUrl) || /sslmode=require/i.test(databaseUrl);
+  const shouldForceSsl = useSsl; // TLS only when DB_SSL=true
   sequelize = new Sequelize(databaseUrl, {
     dialect: 'postgres',
     protocol: 'postgres',
@@ -35,10 +35,10 @@ if (databaseUrl) {
       : {}
   });
 } else {
-  const database = process.env.DB_NAME || 'alphacollect_db';
-  const username = process.env.DB_USER || 'postgres';
+  const database = process.env.DB_NAME;
+  const username = process.env.DB_USER;
   const password = process.env.DB_PASSWORD || '';
-  const host = process.env.DB_HOST || 'localhost';
+  const host = process.env.DB_HOST;
   const port = Number(process.env.DB_PORT) || 5432;
 
   sequelize = new Sequelize(database, username, password, {

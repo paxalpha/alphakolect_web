@@ -2,47 +2,9 @@ const { Sequelize } = require('sequelize');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-const databaseUrl = process.env.DATABASE_URL;
-const useSsl = String(process.env.DB_SSL || '').toLowerCase() === 'true';
+const { createSequelize } = require('./config/database');
 
-let sequelize;
-if (databaseUrl) {
-  const shouldForceSsl = useSsl || /render\.com/i.test(databaseUrl) || /sslmode=require/i.test(databaseUrl);
-  sequelize = new Sequelize(databaseUrl, {
-    dialect: 'postgres',
-    protocol: 'postgres',
-    logging: console.log,
-    dialectOptions: shouldForceSsl
-      ? {
-          ssl: {
-            require: true,
-            rejectUnauthorized: false
-          }
-        }
-      : {}
-  });
-} else {
-  const database = process.env.DB_NAME || 'alphacollect_db';
-  const username = process.env.DB_USER || 'postgres';
-  const password = process.env.DB_PASSWORD || '';
-  const host = process.env.DB_HOST || 'localhost';
-  const port = Number(process.env.DB_PORT) || 5432;
-
-  sequelize = new Sequelize(database, username, password, {
-    host,
-    port,
-    dialect: 'postgres',
-    logging: console.log,
-    dialectOptions: useSsl
-      ? {
-          ssl: {
-            require: true,
-            rejectUnauthorized: false
-          }
-        }
-      : {}
-  });
-}
+const sequelize = createSequelize(Sequelize, { logging: console.log });
 
 async function runMigration() {
   try {

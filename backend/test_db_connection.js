@@ -3,25 +3,11 @@ const { Sequelize } = require('sequelize');
 // Load env vars
 require('dotenv').config();
 
-const databaseUrl = process.env.DATABASE_URL;
+const { createSequelize } = require('./config/database');
 
-if (!databaseUrl) {
-    console.error('DATABASE_URL not found in .env');
-    process.exit(1);
-}
-
-console.log('Testing connection to:', databaseUrl.split('@')[1]);
-
-const sequelize = new Sequelize(databaseUrl, {
-    dialect: 'postgres',
-    logging: console.log,
-    dialectOptions: {
-        ssl: {
-            require: true,
-            rejectUnauthorized: false
-        }
-    }
-});
+// Connection settings come only from the environment; TLS only when DB_SSL=true.
+// (The target host is intentionally not printed.)
+const sequelize = createSequelize(Sequelize, { logging: console.log });
 
 sequelize.authenticate()
     .then(() => {

@@ -1,18 +1,10 @@
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
 
-const databaseUrl = process.env.DATABASE_URL;
+const { createSequelize } = require('./config/database');
 
-const sequelize = new Sequelize(databaseUrl, {
-  dialect: 'postgres',
-  logging: false,
-  dialectOptions: {
-    ssl: {
-      require: true,
-      rejectUnauthorized: false
-    }
-  }
-});
+// Connection settings come only from the environment; TLS only when DB_SSL=true
+const sequelize = createSequelize(Sequelize);
 
 async function check() {
   try {

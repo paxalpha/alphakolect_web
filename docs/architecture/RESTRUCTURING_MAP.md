@@ -282,6 +282,11 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 | **P14** | Parity checklist vs legacy endpoints (§2.5), security review, UAT | **BR traceability report: every BR-x.y covered**; owner signs UAT |
 | **P15** | Dedicated infra, backups + restore test, monitoring, DNS cutover, old app decommissioned | Runbooks in `docs/operations/`; rollback rehearsed |
 
+**P0 + P0-Q status (2026-09-26, branch `chore/p0-workspace-skeleton`, not yet merged):**
+- Met locally: legacy quarantined as-is in `legacy/current-system/` (rename-only; still boots, recovery e2e 17/17, legacy tsc clean); secrets check before moving (only reviewed placeholders); `legacy/` outside the pnpm workspace and ignored by lint/format/CI; pnpm workspace + `packages/config`; `apps/api` (Express 5 + TS) with zod env validation that refuses to boot, pino with redaction, error envelope, `/v1/health`; `PaymentProvider` port + `FakeProvider` with a reusable contract suite; local Postgres compose (127.0.0.1:5436); gitleaks config + CI workflow. `pnpm install --frozen-lockfile && format:check && lint && typecheck && test && build` green locally (24 API tests).
+- Pending: first green CI run on GitHub; merge as one PR; owner confirmation that the old server is frozen (SEC-A).
+- Deliberately not in P0: Prisma/DB schema (P1), contracts/OpenAPI (P2), `apps/web` (P13), worker process and pg-boss (with the first job), Dockerfiles/deploy (P15), pre-commit hook.
+
 ### 7.3 Suggested first milestone ("walking skeleton")
 
 P0 + P1 + P2 + a thin P3/P4 slice: a merchant can sign up, verify email, log in, create a branch, and see it — end-to-end through contracts, TenantContext, RLS, audit, CI, and a Playwright test. Everything after builds on a proven spine.

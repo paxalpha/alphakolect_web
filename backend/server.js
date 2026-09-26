@@ -54,6 +54,7 @@ const remittanceController = require('./controllers/remittanceController');
 const customerWalletController = require('./controllers/customerWalletController');
 const dashboardController = require('./controllers/dashboardController');
 const superAdminController = require('./controllers/superAdminController');
+const superAdminPasswordResetController = require('./controllers/superAdminPasswordResetController');
 const merchantManagementController = require('./controllers/merchantManagementController');
 const accountingController = require('./controllers/accountingController');
 const walletTierController = require('./controllers/walletTierController');
@@ -64,6 +65,7 @@ const { runBillingCycle, resolvePlanByAgentCount } = require('./services/billing
 
 // Import middleware
 const { verifyToken, requireMerchant, requireCollaborator, requireAuthenticated, requireSuperAdmin, checkActiveSubscription } = require('./middleware/auth');
+const { superAdminLoginLimiter, superAdminForgotPasswordLimiter, superAdminResetPasswordLimiter } = require('./middleware/rateLimit');
 
 // Swagger configuration moved to ./swagger.js
 
@@ -153,8 +155,10 @@ app.post('/collaborator/resend-otp', collaboratorController.collaboratorResendOT
 app.post('/collaborator/verify-otp', collaboratorController.collaboratorVerifyOTP);
 app.post('/collaborator/change-password', collaboratorController.collaboratorChangePassword);
 
-// Super Admin authentication routes
-app.post('/superadmin/login', superAdminController.loginSuperAdmin);
+// Super Admin authentication routes (rate-limited per IP and per email)
+app.post('/superadmin/login', superAdminLoginLimiter, superAdminController.loginSuperAdmin);
+app.post('/superadmin/forgot-password', superAdminForgotPasswordLimiter, superAdminPasswordResetController.forgotPassword);
+app.post('/superadmin/reset-password', superAdminResetPasswordLimiter, superAdminPasswordResetController.resetPassword);
 
 // Super Admin protected routes
 app.get('/superadmin/superStats', verifyToken, requireSuperAdmin, superAdminController.getSuperAdminStats);

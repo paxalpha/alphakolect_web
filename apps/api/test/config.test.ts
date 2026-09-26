@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/platform/config.js';
 
-const valid = { DATABASE_URL: 'postgresql://user:s3cret-value@127.0.0.1:5436/alphakolect' };
+// Test fixtures only; not real credentials.
+const valid = { DATABASE_URL: 'postgresql://user:s3cret-value@127.0.0.1:5436/alphakolect' }; // gitleaks:allow
 
 describe('loadConfig', () => {
   it('applies safe defaults for non-secret settings', () => {
@@ -20,7 +21,7 @@ describe('loadConfig', () => {
   });
 
   it('rejects a non-postgres DATABASE_URL without echoing the value', () => {
-    const secretish = 'mysql://root:do-not-print-me@db/app';
+    const secretish = 'mysql://root:do-not-print-me@db/app'; // gitleaks:allow
     try {
       loadConfig({ DATABASE_URL: secretish });
       expect.unreachable();

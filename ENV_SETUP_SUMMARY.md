@@ -1,11 +1,13 @@
 # 🎉 Environment Setup - COMPLETE!
 
+> **Historical record (updated 2026-09-26).** This report describes an old setup on Render, which is no longer used; those databases are retired (RESTRUCTURING_MAP SEC-14) and their hosts/credentials have been removed from this file. The backend now connects only via `DATABASE_URL` or `DB_*` from the environment, with TLS only when `DB_SSL=true` — see `backend/.env.example`.
+
 ## ✅ Database Connection Verified
 
 ```
 ✅ Database connected successfully!
-Database: alphadb_y2ju
-Host: dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com
+Database: <db>
+Host: <retired-render-host>
 ```
 
 ## 📁 Files Created
@@ -28,8 +30,8 @@ Host: dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com
 
 Your application is now connected to your Render PostgreSQL database:
 
-- **Database**: alphadb_y2ju
-- **Host**: dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com
+- **Database**: <db>
+- **Host**: <retired-render-host>
 - **Port**: 5432
 - **SSL**: Enabled ✅
 - **Connection**: Verified ✅
@@ -75,7 +77,7 @@ npm run dev
 
 | Variable        | Value                                                                                                      | Status                   |
 | --------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------ |
-| DATABASE_URL    | postgresql://alphadb_y2ju_user:<REDACTED>@dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com/alphadb_y2ju | ✅ Configured            |
+| DATABASE_URL    | postgresql://<user>:<REDACTED>@<retired-render-host>/<db> | ✅ Configured            |
 | PORT            | 5000                                                                                                       | ✅ Set                   |
 | NODE_ENV        | development                                                                                                | ✅ Set                   |
 | JWT_SECRET      | alphaweb_super_secure_jwt_secret_key_change_this_in_production_<REDACTED>78                                    | ⚠️ Change for production |

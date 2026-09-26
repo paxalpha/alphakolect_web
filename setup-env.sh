@@ -82,7 +82,7 @@ setup_backend_env() {
     print_status "Database Configuration"
     echo "Choose your database setup:"
     echo "1. Use local PostgreSQL database (recommended)"
-    echo "2. Use existing cloud database (like your current Render setup)"
+    echo "2. Use another PostgreSQL server (enter its DATABASE_URL)"
     echo "3. Keep current DATABASE_URL"
     
     read -p "Enter your choice (1-3): " db_choice

@@ -1,5 +1,7 @@
 # Database Migration & Environment Setup - Final Status
 
+> **Historical record (updated 2026-09-26).** This report describes an old setup on Render, which is no longer used; those databases are retired (RESTRUCTURING_MAP SEC-14) and their hosts/credentials have been removed from this file. The backend now connects only via `DATABASE_URL` or `DB_*` from the environment, with TLS only when `DB_SSL=true` — see `backend/.env.example`.
+
 **Date:** January 3, 2026  
 **Time:** 15:00 PM
 
@@ -14,8 +16,8 @@
 
 ### 2. Database Connection
 
-- ✅ **Database**: alphadb_y2ju
-- ✅ **Host**: dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com
+- ✅ **Database**: <db>
+- ✅ **Host**: <retired-render-host>
 - ✅ **SSL**: Enabled and working
 - ✅ **Connection**: Verified successfully
 
@@ -55,7 +57,7 @@ The following tables will be created automatically when the backend starts:
 ### Database Configuration ✅
 
 ```env
-DATABASE_URL=postgresql://alphadb_y2ju_user:<REDACTED>@dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com/alphadb_y2ju
+DATABASE_URL=postgresql://<user>:<REDACTED>@<retired-render-host>/<db>
 DB_SSL=true
 ```
 

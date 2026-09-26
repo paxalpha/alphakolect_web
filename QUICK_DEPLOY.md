@@ -4,21 +4,15 @@ You're absolutely right! Your existing `backend/.env` file can be used directly 
 
 ## Your Current Configuration ✅
 
-Your `backend/.env` already contains everything needed:
+Start from `backend/.env.example` and fill in real values on the server only:
 ```bash
-DATABASE_URL=postgresql://root:<REDACTED>@dpg-d3ai44qdbo4c738rug0g-a.oregon-postgres.render.com/alpha_database_qk9a
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-PORT=3000
-NODE_ENV=development
-SMTP_HOST=sandbox.smtp.mailtrap.io
-SMTP_PORT=2525
-SMTP_SECURE=false
-EMAIL_USER=482df1895e5b8f
-EMAIL_PASS=<REDACTED>
-EMAIL_FROM=AlphaWeb <no-reply@alphaweb.local>
-OTP_SKIP_EXPIRY=true
-OTP_GRACE_MS=300000
-OTP_MASTER=000000
+# See backend/.env.example for every variable the backend reads.
+# The database connection comes only from DATABASE_URL or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD;
+# TLS is used only when DB_SSL=true.
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/alphacollect_db
+JWT_SECRET=<generate-a-long-random-secret>
+PORT=5000
+NODE_ENV=production
 ```
 
 ## Quick Deployment Steps
@@ -46,7 +40,7 @@ The deployment script will only modify these minimal settings in your existing `
 - `NODE_ENV=development` → `NODE_ENV=production`
 
 **Everything else stays exactly the same:**
-- ✅ Your Render database connection
+- ✅ Your database connection (`DATABASE_URL` / `DB_*`)
 - ✅ Your email/SMTP settings  
 - ✅ Your JWT secret
 - ✅ Your OTP configuration
@@ -74,7 +68,7 @@ After deployment:
 ## Why This Works
 
 Your existing configuration is already production-capable:
-- ✅ **Database**: Using Render PostgreSQL (cloud database)
+- ✅ **Database**: PostgreSQL configured via environment only
 - ✅ **Authentication**: JWT implementation ready
 - ✅ **Email**: SMTP configured for notifications
 - ✅ **File uploads**: Directory structure in place
@@ -88,7 +82,7 @@ The deployment just adds:
 
 ## Advantages of Using Your Current .env
 
-1. **No data migration needed** - keeps using your Render database
+1. **No data migration needed** - keeps using the configured PostgreSQL database
 2. **No configuration complexity** - your settings already work
 3. **Minimal changes** - only port and environment mode updates
 4. **Instant deployment** - no environment setup complexity

@@ -1,0 +1,29 @@
+# gitleaks configuration (TARGET_ARCHITECTURE §22: secret scanning in CI and pre-commit).
+# Extends the default rule set with patterns that slipped past it in this codebase's history.
+
+title = "AlphaKolect gitleaks config"
+
+[extend]
+useDefault = true
+
+# A plaintext Render DB password once hid in a positional constructor call that the default rules
+# do not detect: new Sequelize('db', 'user', 'password', { host: ... }). Catch that shape.
+[[rules]]
+id = "positional-db-credentials"
+description = "Database password passed positionally to a Sequelize/pg-style constructor"
+regex = '''new\s+Sequelize\(\s*['"][^'"]+['"]\s*,\s*['"][^'"]+['"]\s*,\s*['"]([^'"<>$]{6,})['"]'''
+secretGroup = 1
+keywords = ["sequelize"]
+
+# Connection strings with an inline password, e.g. postgres://user:password@host/db.
+[[rules]]
+id = "database-url-with-password"
+description = "Database URL containing an inline password"
+regex = '''(?i)(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?)://[^:/\s'"]+:([^@\s'"<>$]{6,})@'''
+secretGroup = 1
+keywords = ["postgres", "mysql", "mongodb"]
+
+  # Documentation placeholders are not secrets.
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = ['''(?i)^(your[_-]?password|password|changeme|example|placeholder)$''']

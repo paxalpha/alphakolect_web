@@ -12,6 +12,14 @@ The new system is built in a **new repository** with clean history. Consequences
 - **The new repo must never import this repo's history** (no `git subtree`/merge from it) — copy files instead.
 - P0 starts without waiting for SEC-3/SEC-4.
 
+### Decision 2026-09-26 — this repository is the reconstruction workspace (ADR-13)
+
+The owner confirmed: `paxalpha/alphakolect_web` is where the new system is built. Consequences:
+- The imported legacy application moves **as-is** into `legacy/current-system/` (one rename-only commit), replacing the `legacy/app` / `legacy/ops` / `legacy/docs` split in §4. Its layout is preserved so it remains runnable as a behavioural reference.
+- Governing documents move to `docs/business`, `docs/architecture`, `docs/operations`.
+- Nothing deploys from this repository, so the quarantine cannot affect production. The old server stays frozen under the security containment track.
+- "PORT" items (§2) are copied from `legacy/current-system/` into `apps/` when their phase starts.
+
 ### Standing assumption — mobile apps (OPEN-16)
 
 > Agent and customer mobile apps are **external consumers** of the AlphaKolect API. Who builds them is undecided. The API is therefore designed as a **versioned, publishable contract from day one** (`packages/contracts` → OpenAPI + typed client), and **no mobile app code lives in this repository**. Either outcome (same team or another team) consumes the same contract.
@@ -145,6 +153,8 @@ The existing UI is the most valuable carried-over asset. Screens are ported **as
 
 ## 4. QUARANTINE → `legacy/` (one commit, Phase 0-Q, after approval)
 
+> **Superseded by ADR-13 (2026-09-26):** everything below moves together into `legacy/current-system/` with its current relative layout. The table remains useful as the classification of what each legacy area is.
+
 | Current path | Destination | Notes |
 |---|---|---|
 | `backend/` (excluding `node_modules`, `uploads`, `.env*`) | `legacy/app/backend/` | includes `old_project/`, `migrations/`, `scripts/`, 40 backend-root scripts |
@@ -192,9 +202,14 @@ The owner states all account passwords have been changed and the previous develo
 | SEC-12 | GitHub access | repo settings | Owner removed previous developer; verify collaborators & deploy keys; son added with own account | Owner: done · Verify: pending |
 | SEC-13 | ~197 fake-signup TransactPay VAs | TransactPay | Ask TransactPay to close (BR-2.4); ask T3 costs | Pending |
 | SEC-14 | Credentials for **3 old Render Postgres databases** (instances `d3ai44…` Oregon, `d2phh3…` Oregon, `d5chbk…` Virginia) — may hold copies of merchant/customer data | legacy docs & one-off scripts; also briefly in this repo's first push (SEC-15) | Owner identifies the Render account (likely previous developer's); databases **deleted** by the account holder, or passwords reset. Do not connect with the leaked credentials | Pending |
-| SEC-15 | This repo's first push (`47acb15`, 2026-09-26) contained SEC-14 credentials, a Mailtrap sandbox password and the master OTP value | `paxalpha/alphakolect_web` | 8 credential-bearing scripts removed, 7 docs redacted (2026-09-26); **amend + force-push** replaces the commit; reset Mailtrap credentials; confirm repo is private; optionally ask GitHub Support to purge the orphaned commit | Cleanup done locally · amend/push pending |
+| SEC-15 | This repo's first push (`47acb15`, 2026-09-26) contained SEC-14 credentials, a Mailtrap sandbox password and the master OTP value | `paxalpha/alphakolect_web` | 8 credential-bearing scripts removed, 7 docs redacted (2026-09-26); **amend + force-push** replaces the commit; reset Mailtrap credentials; confirm repo is private; optionally ask GitHub Support to purge the orphaned commit | Cleanup done · **history rewritten and force-pushed**: `main` now starts at a single root commit `5bffec5` with no plaintext credentials (a further credential in `backend/migrations/migrate.js` was also removed in that rewrite; verified 2026-09-26). Still open: reset Mailtrap credentials; optional GitHub Support purge of orphaned commits |
 
 **Rule:** no file containing a secret is moved into `legacy/ops/` until it is scrubbed (secret → `<REDACTED>`), because `legacy/` remains tracked.
+
+**Decision 2026-09-26 — two security tracks.** Because nothing is live (G1, BR-1.1) and the legacy application is being replaced, security work is split:
+- **SEC-A — containment (continue):** production access ownership, SSH hardening, backup verification, credential ownership and rotation, external cleanup (e.g. the Render databases, SEC-14), old deploy-key cleanup, keeping the old server frozen so nobody deploys from a legacy checkout, and preserving recovery access. These protect the environment without redesigning the application.
+- **SEC-B — legacy application remediation (frozen):** JWT/session design, tenant authorization, wallet mutation, webhook verification, OTP flows, billing and accounting transactions. These are rebuilt correctly in the new architecture (P3–P10) rather than patched in `legacy/current-system/`.
+- **Exception:** if any real customer money or real customers are found to be using the legacy system (i.e. G1 no longer holds), the dangerous financial paths must be contained in the legacy system immediately, in parallel with the rebuild.
 
 **Rule — production is never touched casually.** Server-side items follow one fixed sequence: **read-only verification → access handover (named logins for owner + son, confirmed working) → secret rotation → verification against the frozen production app → only then quarantine/rebuild steps that depend on it.** Starting the rebuild is not by itself a reason to change anything on the server; each server change is a separate, announced, backed-up step with a rollback note.
 
@@ -267,6 +282,11 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 | **P14** | Parity checklist vs legacy endpoints (§2.5), security review, UAT | **BR traceability report: every BR-x.y covered**; owner signs UAT |
 | **P15** | Dedicated infra, backups + restore test, monitoring, DNS cutover, old app decommissioned | Runbooks in `docs/operations/`; rollback rehearsed |
 
+**P0 + P0-Q status (2026-09-26, branch `chore/p0-workspace-skeleton`, not yet merged):**
+- Met locally: legacy quarantined as-is in `legacy/current-system/` (rename-only; still boots, recovery e2e 17/17, legacy tsc clean); secrets check before moving (only reviewed placeholders); `legacy/` outside the pnpm workspace and ignored by lint/format/CI; pnpm workspace + `packages/config`; `apps/api` (Express 5 + TS) with zod env validation that refuses to boot, pino with redaction, error envelope, `/v1/health`; `PaymentProvider` port + `FakeProvider` with a reusable contract suite; local Postgres compose (127.0.0.1:5436); gitleaks config + CI workflow. `pnpm install --frozen-lockfile && format:check && lint && typecheck && test && build` green locally (24 API tests).
+- Pending: first green CI run on GitHub; merge as one PR; owner confirmation that the old server is frozen (SEC-A).
+- Deliberately not in P0: Prisma/DB schema (P1), contracts/OpenAPI (P2), `apps/web` (P13), worker process and pg-boss (with the first job), Dockerfiles/deploy (P15), pre-commit hook.
+
 ### 7.3 Suggested first milestone ("walking skeleton")
 
 P0 + P1 + P2 + a thin P3/P4 slice: a merchant can sign up, verify email, log in, create a branch, and see it — end-to-end through contracts, TenantContext, RLS, audit, CI, and a Playwright test. Everything after builds on a proven spine.
@@ -292,5 +312,7 @@ P0 + P1 + P2 + a thin P3/P4 slice: a merchant can sign up, verify email, log in,
 - ☐ Security track (§6) accepted and started
 - ☐ Build order & exit criteria (§7) approved
 - ☐ P0 + P0-Q (single PR: quarantine + skeleton) may proceed once SEC-1, SEC-3, SEC-4 are verified through the access handover
+
+- **2026-09-26 — owner:** P0 + P0-Q approved to proceed in this repository per ADR-13 (layout `legacy/current-system/`, pnpm workspace). This does not approve the rest of §2–§5 or §7; those boxes stay open.
 
 *These boxes stay unchecked until the project owner and the implementer formally approve.*

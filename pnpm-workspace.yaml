@@ -1,0 +1,8 @@
+# Workspace packages (TARGET_ARCHITECTURE §21). legacy/ is deliberately NOT part of the workspace.
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Dependency install scripts are blocked by default; allow only what is reviewed and required.
+allowBuilds:
+  esbuild: true # native binary used by tsx and vitest

@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AlphaKolect
 
-## Getting Started
+Platform for businesses (merchants) that collect customers' savings through staff and field agents, and manage their customers' savings, loans and wallets (NGN).
 
-First, run the development server:
+This repository is the **rebuild workspace** (ADR-13). The new system is built in `apps/` and `packages/` to the target architecture; the application currently running in production is kept, unchanged, in `legacy/current-system/` as a read-only behavioural reference.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Start here
+
+| Document                                                                                                                                                                               | Role                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`docs/business/BUSINESS_RULES.md`](docs/business/BUSINESS_RULES.md)                                                                                                                   | The specification: owner-approved business rules (BR-x.y)   |
+| [`docs/architecture/TARGET_ARCHITECTURE.md`](docs/architecture/TARGET_ARCHITECTURE.md)                                                                                                 | Target design, ADRs, open decisions                         |
+| [`docs/architecture/RESTRUCTURING_MAP.md`](docs/architecture/RESTRUCTURING_MAP.md)                                                                                                     | Build order (P0…P15), exit criteria, security track (SEC-*) |
+| [`docs/architecture/CURRENT_SYSTEM_INVENTORY.md`](docs/architecture/CURRENT_SYSTEM_INVENTORY.md), [`ARCHITECTURE_RECONNAISSANCE.md`](docs/architecture/ARCHITECTURE_RECONNAISSANCE.md) | Evidence about the legacy system                            |
+| [`legacy/README.md`](legacy/README.md)                                                                                                                                                 | What the quarantined app is and how to run it for reference |
+
+## Layout
+
+```text
+apps/            deployables (api now; web ported in P13)
+packages/        shared infrastructure only: config (now), contracts (P2), db (P1)
+infrastructure/  local compose and, later, deploy manifests
+docs/            business, architecture, operations
+legacy/          quarantined legacy application — not built, linted or deployed
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Requirements
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- Node.js 24 (`.nvmrc`)
+- pnpm 11 (`corepack enable` or a global install)
+- Docker (local PostgreSQL)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Getting started
 
-## Learn More
+```bash
+pnpm install
 
-To learn more about Next.js, take a look at the following resources:
+# local database for the new system (127.0.0.1:5436; not the legacy recovery DB)
+cp infrastructure/.env.example infrastructure/.env        # set POSTGRES_PASSWORD
+docker compose -f infrastructure/compose.yaml up -d --wait
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# API (http://127.0.0.1:4000/v1/health)
+cp apps/api/.env.example apps/api/.env                    # use the same password in DATABASE_URL
+pnpm --filter @alphakolect/api dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
 
-## Deploy on Vercel
+Secret scan before committing:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:v8.30.1 git /repo --redact --no-banner
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Rules
+
+- No secrets in git. Configuration comes from the environment and is validated at startup; each app documents its variables in `.env.example`.
+- Nothing deploys from this repository yet. Production is frozen on the old server.

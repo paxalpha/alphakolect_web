@@ -1,0 +1,31 @@
+# Reviewed false positives only. Each entry is an exact finding fingerprint, not a pattern.
+
+# --- Legacy status docs (verified 2026-09-26): "Authorization: Bearer <token>"-style curl examples
+# and a truncated JWT header ("eyJhbGciOi..."). Placeholders, not credentials.
+
+# git-history scans (introduced in the initial import)
+5bffec54b9059f6a00e2607737b509de174302ea:ADMIN_INTEGRATION_README.md:curl-auth-header:195
+5bffec54b9059f6a00e2607737b509de174302ea:QUICK_START.md:curl-auth-header:116
+5bffec54b9059f6a00e2607737b509de174302ea:ARCHITECTURE_OVERVIEW.md:generic-api-key:352
+5bffec54b9059f6a00e2607737b509de174302ea:VERIFICATION_CHECKLIST.md:curl-auth-header:95
+5bffec54b9059f6a00e2607737b509de174302ea:VERIFICATION_CHECKLIST.md:curl-auth-header:115
+
+# working-tree scans run as `docker run -v "${PWD}:/repo" zricethezav/gitleaks dir /repo`
+/repo/legacy/current-system/ADMIN_INTEGRATION_README.md:curl-auth-header:200
+/repo/legacy/current-system/QUICK_START.md:curl-auth-header:116
+/repo/legacy/current-system/ARCHITECTURE_OVERVIEW.md:generic-api-key:352
+/repo/legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:95
+/repo/legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:115
+
+# working-tree scans run as `docker run -v "${PWD}:/repo" -w /repo zricethezav/gitleaks dir .`
+legacy/current-system/ADMIN_INTEGRATION_README.md:curl-auth-header:200
+legacy/current-system/QUICK_START.md:curl-auth-header:116
+legacy/current-system/ARCHITECTURE_OVERVIEW.md:generic-api-key:352
+legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:95
+legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:115
+
+# --- apps/api config tests: fake DATABASE_URL fixtures (e.g. user:s3cret-value@127.0.0.1) used to test
+# validation and that values are never echoed. Marked `gitleaks:allow` inline since the next commit;
+# these two entries cover the commit that introduced them before the marker existed.
+34fc4902d10dde483b005fec955ec0ad4fed5a13:apps/api/test/config.test.ts:database-url-with-password:4
+34fc4902d10dde483b005fec955ec0ad4fed5a13:apps/api/test/config.test.ts:database-url-with-password:23

@@ -357,7 +357,7 @@ pnpm workspace monorepo:
 ```
 alphakolect/
 ├── apps/
-│   ├── api/                 # Express 5 (or Fastify) + TS; entrypoints: server.ts, worker.ts
+│   ├── api/                 # Express 5 + TS (OPEN-19); entrypoints: server.ts, worker.ts
 │   │   └── src/
 │   │       ├── modules/<module>/{routes,service,repository,schemas,events,policies}.ts
 │   │       ├── platform/    # http, auth middleware, tenant context, errors, logging, config

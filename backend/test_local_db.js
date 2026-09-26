@@ -2,12 +2,11 @@ const { Sequelize } = require('sequelize');
 
 console.log('Testing LOCAL DB connection...');
 
-const sequelize = new Sequelize('alphacollect_db', 'postgres', '', {
-    host: 'localhost',
-    port: 5432,
-    dialect: 'postgres',
-    logging: console.log
-});
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+const { createSequelize } = require('./config/database');
+
+// Connection settings come only from the environment (see .env.example)
+const sequelize = createSequelize(Sequelize, { logging: console.log });
 
 sequelize.authenticate()
     .then(() => {

@@ -1,0 +1,6 @@
+# Quarantined legacy app and governing documents are not reformatted.
+legacy/
+docs/
+pnpm-lock.yaml
+**/dist/
+**/coverage/

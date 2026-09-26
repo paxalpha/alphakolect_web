@@ -1,0 +1,19 @@
+{
+  "name": "@alphakolect/config",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Shared tooling presets (TypeScript, ESLint, Prettier). No runtime code.",
+  "type": "module",
+  "exports": {
+    "./tsconfig/base.json": "./tsconfig/base.json",
+    "./tsconfig/node.json": "./tsconfig/node.json",
+    "./eslint": "./eslint.config.js",
+    "./prettier": "./prettier.config.js"
+  },
+  "peerDependencies": {
+    "@eslint/js": "^9",
+    "eslint": "^9",
+    "globals": "^16",
+    "typescript-eslint": "^8"
+  }
+}

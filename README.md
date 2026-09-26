@@ -6,17 +6,17 @@ This repository is the **rebuild workspace** (ADR-13). The new system is built i
 
 ## Start here
 
-| Document | Role |
-|---|---|
-| [`docs/business/BUSINESS_RULES.md`](docs/business/BUSINESS_RULES.md) | The specification: owner-approved business rules (BR-x.y) |
-| [`docs/architecture/TARGET_ARCHITECTURE.md`](docs/architecture/TARGET_ARCHITECTURE.md) | Target design, ADRs, open decisions |
-| [`docs/architecture/RESTRUCTURING_MAP.md`](docs/architecture/RESTRUCTURING_MAP.md) | Build order (P0…P15), exit criteria, security track (SEC-*) |
-| [`docs/architecture/CURRENT_SYSTEM_INVENTORY.md`](docs/architecture/CURRENT_SYSTEM_INVENTORY.md), [`ARCHITECTURE_RECONNAISSANCE.md`](docs/architecture/ARCHITECTURE_RECONNAISSANCE.md) | Evidence about the legacy system |
-| [`legacy/README.md`](legacy/README.md) | What the quarantined app is and how to run it for reference |
+| Document                                                                                                                                                                               | Role                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| [`docs/business/BUSINESS_RULES.md`](docs/business/BUSINESS_RULES.md)                                                                                                                   | The specification: owner-approved business rules (BR-x.y)   |
+| [`docs/architecture/TARGET_ARCHITECTURE.md`](docs/architecture/TARGET_ARCHITECTURE.md)                                                                                                 | Target design, ADRs, open decisions                         |
+| [`docs/architecture/RESTRUCTURING_MAP.md`](docs/architecture/RESTRUCTURING_MAP.md)                                                                                                     | Build order (P0…P15), exit criteria, security track (SEC-*) |
+| [`docs/architecture/CURRENT_SYSTEM_INVENTORY.md`](docs/architecture/CURRENT_SYSTEM_INVENTORY.md), [`ARCHITECTURE_RECONNAISSANCE.md`](docs/architecture/ARCHITECTURE_RECONNAISSANCE.md) | Evidence about the legacy system                            |
+| [`legacy/README.md`](legacy/README.md)                                                                                                                                                 | What the quarantined app is and how to run it for reference |
 
 ## Layout
 
-```
+```text
 apps/            deployables (api now; web ported in P13)
 packages/        shared infrastructure only: config (now), contracts (P2), db (P1)
 infrastructure/  local compose and, later, deploy manifests

@@ -121,6 +121,7 @@ db.Subscription = require('./subscription')(sequelize, Sequelize.DataTypes);
 
 // Super Admin models
 db.SuperAdmin = require('./SuperAdmin')(sequelize, Sequelize.DataTypes);
+db.SuperAdminPasswordReset = require('./superAdminPasswordReset')(sequelize, Sequelize.DataTypes);
 db.Activity = require('./activity')(sequelize, Sequelize.DataTypes);
 db.Plan = require('./plan')(sequelize, Sequelize.DataTypes);
 db.Transaction = require('./transaction')(sequelize, Sequelize.DataTypes);

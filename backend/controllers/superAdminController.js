@@ -4,6 +4,7 @@ const { SuperAdmin, Merchant, Transaction, Plan, Agent, Customer, AdminRole, Adm
 const { Op } = require("sequelize");
 const PERMISSIONS = require('../utils/permissions');
 const AdminLogService = require('../services/adminLogService');
+const { findSuperAdminByEmail } = require('./superAdminPasswordResetController');
 
 // ====================
 // Support Tickets
@@ -190,8 +191,6 @@ const deleteFaq = async (req, res) => {
 // ====================
 const loginSuperAdmin = async (req, res) => {
   try {
-    console.log('SuperAdmin:', SuperAdmin);
-
     const requiredFields = ["email", "password"];
 
     for (let field of requiredFields) {
@@ -202,8 +201,8 @@ const loginSuperAdmin = async (req, res) => {
 
     const { email, password } = req.body;
 
-    // Find super admin
-    const superAdmin = await SuperAdmin.findOne({ where: { email } });
+    // Find super admin (case-insensitive email)
+    const superAdmin = await findSuperAdminByEmail(email);
     if (!superAdmin) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }

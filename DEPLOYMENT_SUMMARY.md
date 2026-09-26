@@ -6,21 +6,15 @@ I've updated the deployment configuration to properly use your existing `backend
 
 ## Current Environment Setup
 
-### Your Existing Configuration (backend/.env)
+### Backend configuration (backend/.env)
 ```bash
-DATABASE_URL=postgresql://root:<REDACTED>@dpg-d3ai44qdbo4c738rug0g-a.oregon-postgres.render.com/alpha_database_qk9a
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-PORT=3000
-NODE_ENV=development
-SMTP_HOST=sandbox.smtp.mailtrap.io
-SMTP_PORT=2525
-SMTP_SECURE=false
-EMAIL_USER=482df1895e5b8f
-EMAIL_PASS=<REDACTED>
-EMAIL_FROM=AlphaWeb <no-reply@alphaweb.local>
-OTP_SKIP_EXPIRY=true
-OTP_GRACE_MS=300000
-OTP_MASTER=000000
+# See backend/.env.example for every variable the backend reads.
+# The database connection comes only from DATABASE_URL or DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD;
+# TLS is used only when DB_SSL=true.
+DATABASE_URL=postgresql://<user>:<password>@localhost:5432/alphacollect_db
+JWT_SECRET=<generate-a-long-random-secret>
+PORT=5000
+NODE_ENV=production
 ```
 
 ## Quick Deployment Guide
@@ -53,11 +47,7 @@ NODE_ENV=production
 PORT=5000
 JWT_SECRET=your_new_very_secure_production_jwt_secret
 
-# Database options:
-# Option 1: Use your existing Render database
-DATABASE_URL=postgresql://root:<REDACTED>@dpg-d3ai44qdbo4c738rug0g-a.oregon-postgres.render.com/alpha_database_qk9a
-
-# Option 2: Use local PostgreSQL (recommended for VPS)
+# Database: PostgreSQL reachable from the VPS (credentials from the server env only)
 DATABASE_URL=postgresql://your_user:your_password@localhost:5432/alphacollect_db
 
 # Email settings (update for production)
@@ -110,9 +100,10 @@ alphaweb/
 
 ### 2. Database Options
 You can choose between:
-- **Your existing Render PostgreSQL** (no migration needed)
-- **Local PostgreSQL on VPS** (recommended for performance)
-- **Another cloud provider**
+- **Local PostgreSQL on the VPS** (current setup)
+- Any other PostgreSQL reachable via `DATABASE_URL` / `DB_*` (set `DB_SSL=true` if it requires TLS)
+
+Render is no longer used; the old Render databases are retired (see RESTRUCTURING_MAP SEC-14).
 
 ### 3. Security Improvements
 - Generates new JWT secret for production
@@ -130,16 +121,9 @@ After deployment:
 
 ## Database Migration Options
 
-### Option 1: Continue Using Render Database
-- Keep your existing `DATABASE_URL` in production config
-- No migration needed
-- Your data remains intact
-
-### Option 2: Migrate to Local PostgreSQL
-- Set up PostgreSQL on your VPS
-- Export data from Render: `pg_dump your_render_database > backup.sql`
-- Import to local: `psql alphacollect_db < backup.sql`
-- Update `DATABASE_URL` to local database
+### PostgreSQL on the VPS
+- Set `DATABASE_URL` (or `DB_*`) in the server-side `backend/.env`; never commit it
+- Apply schema changes one migration at a time; do not replay all migrations
 
 ## Production Checklist
 

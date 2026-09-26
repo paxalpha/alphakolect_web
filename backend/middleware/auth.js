@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { Agent, Staff } = require('../models');
+const { Agent, Staff, SuperAdmin } = require('../models');
 
 // Middleware to verify JWT token
 const verifyToken = async (req, res, next) => {
@@ -76,12 +76,33 @@ const requireAuthenticated = (req, res, next) => {
   next();
 };
 
-// Middleware to check if user is a super admin
-const requireSuperAdmin = (req, res, next) => {
-  if (req.user.role !== 'super_admin' && req.user.role !== 'superadmin') {
+// Middleware to check if user is a super admin.
+// The JWT is only a hint: the SuperAdmin row is re-loaded on every request, and tokens are
+// rejected if the admin no longer exists or was issued before the last password change.
+const requireSuperAdmin = async (req, res, next) => {
+  if (!req.user || (req.user.role !== 'super_admin' && req.user.role !== 'superadmin')) {
     return res.status(403).json({ message: 'Access denied. SuperAdmin role required.' });
   }
-  next();
+
+  try {
+    const superAdmin = await SuperAdmin.findByPk(req.user.id, { attributes: ['id', 'passwordChangedAt'] });
+    if (!superAdmin) {
+      return res.status(401).json({ message: 'Session is no longer valid. Please log in again.' });
+    }
+
+    // JWT iat has 1-second resolution, so compare against the change time truncated to seconds
+    if (superAdmin.passwordChangedAt) {
+      const changedAtSec = Math.floor(new Date(superAdmin.passwordChangedAt).getTime() / 1000);
+      if (!req.user.iat || req.user.iat < changedAtSec) {
+        return res.status(401).json({ message: 'Session is no longer valid. Please log in again.' });
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error('Error verifying super admin session:', error.message);
+    return res.status(500).json({ message: 'Could not verify session' });
+  }
 };
 
 // Middleware to check if merchant subscription is active

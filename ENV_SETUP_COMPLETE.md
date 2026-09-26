@@ -1,5 +1,7 @@
 # Environment Setup Complete! 🎉
 
+> **Historical record (updated 2026-09-26).** This report describes an old setup on Render, which is no longer used; those databases are retired (RESTRUCTURING_MAP SEC-14) and their hosts/credentials have been removed from this file. The backend now connects only via `DATABASE_URL` or `DB_*` from the environment, with TLS only when `DB_SSL=true` — see `backend/.env.example`.
+
 ## ✅ Files Created
 
 1. **`backend/.env`** - Backend environment variables with your database configuration
@@ -12,9 +14,9 @@
 #### Database Configuration
 
 - ✅ **DATABASE_URL** - Connected to your Render PostgreSQL database
-  - Database: `alphadb_y2ju`
-  - Host: `dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com`
-  - User: `alphadb_y2ju_user`
+  - Database: `<db>`
+  - Host: `<retired-render-host>`
+  - User: `<user>`
   - SSL: Enabled
 
 #### Server Configuration
@@ -172,8 +174,8 @@ Expected output:
 
 Your database is hosted on **Render** with the following details:
 
-- **Database Name**: alphadb_y2ju
-- **Host**: dpg-d5chbk95pdvs73cd5qo0-a.virginia-postgres.render.com
+- **Database Name**: <db>
+- **Host**: <retired-render-host>
 - **Port**: 5432
 - **SSL**: Required (already configured)
 
@@ -200,7 +202,6 @@ Your database is hosted on **Render** with the following details:
 **Error: "Connection refused"**
 
 - Check if DATABASE_URL is correct in `backend/.env`
-- Verify your IP is whitelisted on Render (if applicable)
 - Ensure SSL is enabled
 
 **Error: "password authentication failed"**

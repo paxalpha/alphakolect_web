@@ -66,6 +66,37 @@ export const adminAPI = {
     return response.json();
   },
 
+  // Password recovery (always returns the same generic message)
+  forgotPassword: async (email: string) => {
+    const response = await fetch(`${API_BASE_URL}/superadmin/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Request failed' }));
+      throw new Error(error.message || 'Request failed');
+    }
+
+    return response.json();
+  },
+
+  resetPassword: async (token: string, newPassword: string) => {
+    const response = await fetch(`${API_BASE_URL}/superadmin/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, newPassword }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ message: 'Password reset failed' }));
+      throw new Error(error.message || 'Password reset failed');
+    }
+
+    return response.json();
+  },
+
   // Dashboard Stats
   getSuperStats: () => makeRequest('/superadmin/superStats'),
 

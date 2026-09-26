@@ -1,16 +1,16 @@
 const { Client } = require('pg');
 require('dotenv').config();
 
-const connectionString = process.env.DATABASE_URL;
+const { getDbSettings, sslDialectOptions } = require('./config/database');
 
 console.log('Testing with raw pg client...');
 
-const client = new Client({
-  connectionString,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
+// Connection settings come only from the environment; TLS only when DB_SSL=true
+const db = getDbSettings();
+const { ssl } = sslDialectOptions();
+const client = new Client(db.url
+  ? { connectionString: db.url, ssl }
+  : { host: db.host, port: db.port, database: db.database, user: db.username, password: db.password, ssl });
 
 client.connect()
   .then(() => {

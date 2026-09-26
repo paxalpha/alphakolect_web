@@ -31,6 +31,11 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: 'superadmin',
       comment: 'Role of the admin (superadmin or admin)'
+    },
+    passwordChangedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      comment: 'Set on password reset; JWTs issued before this are rejected (migration 046)'
     }
   }, {
     tableName: 'super_admins',

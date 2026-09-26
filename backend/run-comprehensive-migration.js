@@ -1,29 +1,9 @@
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
+const { createSequelize } = require('./config/database');
 
 async function runComprehensiveMigration() {
-  const databaseUrl = process.env.DATABASE_URL;
-  const useSsl = String(process.env.DB_SSL || '').toLowerCase() === 'true';
-  
-  let sequelize;
-  if (databaseUrl) {
-    const shouldForceSsl = useSsl || /render\.com/i.test(databaseUrl) || /sslmode=require/i.test(databaseUrl);
-    sequelize = new Sequelize(databaseUrl, {
-      dialect: 'postgres',
-      protocol: 'postgres',
-      logging: console.log,
-      dialectOptions: shouldForceSsl
-        ? {
-            ssl: {
-              require: true,
-              rejectUnauthorized: false
-            }
-          }
-        : {}
-    });
-  } else {
-    throw new Error('DATABASE_URL not found in environment variables');
-  }
+  const sequelize = createSequelize(Sequelize, { logging: console.log });
   
   try {
     console.log('🚀 Starting comprehensive database migration...');

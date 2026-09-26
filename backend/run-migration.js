@@ -19,48 +19,41 @@ try {
   }
 } catch (_) {}
 
-const databaseUrl = process.env.DATABASE_URL;
-const dbHost = process.env.DB_HOST || process.env.PGHOST;
-const dbUser = process.env.DB_USER || process.env.PGUSER;
-const dbPassword = process.env.DB_PASSWORD || process.env.PGPASSWORD;
-const dbName = process.env.DB_NAME || process.env.PGDATABASE;
-const dbPort = Number(process.env.DB_PORT || process.env.PGPORT || 5432);
-const useSsl = String(process.env.DB_SSL || process.env.PGSSLMODE || '').toLowerCase().includes('require');
+// Connection settings come only from the environment; TLS only when DB_SSL=true
+const { getDbSettings, sslDialectOptions } = require('./config/database');
+const db = getDbSettings();
+const { ssl } = sslDialectOptions();
 
-let targetInfo = { usingDatabaseUrl: !!databaseUrl, loadedEnvPath };
-if (databaseUrl) {
+let targetInfo = { usingDatabaseUrl: !!db.url, loadedEnvPath, ssl: db.ssl };
+if (db.url) {
   try {
-    const url = new URL(databaseUrl);
+    const url = new URL(db.url);
     targetInfo.host = url.hostname;
     targetInfo.port = Number(url.port || 5432);
     targetInfo.database = url.pathname.replace(/^\//, '') || undefined;
-    targetInfo.ssl = /render\.com|sslmode=require/i.test(databaseUrl) || useSsl;
   } catch {
     targetInfo.host = '(unparsed DATABASE_URL)';
   }
 } else {
-  targetInfo.host = dbHost || 'localhost';
-  targetInfo.port = dbPort;
-  targetInfo.database = dbName || 'alphacollect_db';
-  targetInfo.ssl = !!useSsl;
+  targetInfo.host = db.host;
+  targetInfo.port = db.port;
+  targetInfo.database = db.database;
 }
 
-const pool = databaseUrl
+const pool = db.url
   ? new Pool({
-      connectionString: databaseUrl,
-      ssl: /render\.com|sslmode=require/i.test(databaseUrl) || useSsl
-        ? { require: true, rejectUnauthorized: false }
-        : undefined,
+      connectionString: db.url,
+      ssl,
       connectionTimeoutMillis: 15000,
       idleTimeoutMillis: 10000,
     })
   : new Pool({
-      host: dbHost || 'localhost',
-      user: dbUser || 'postgres',
-      password: dbPassword || '',
-      database: dbName || 'alphacollect_db',
-      port: dbPort,
-      ssl: useSsl ? { require: true, rejectUnauthorized: false } : undefined,
+      host: db.host,
+      user: db.username,
+      password: db.password,
+      database: db.database,
+      port: db.port,
+      ssl,
       connectionTimeoutMillis: 15000,
       idleTimeoutMillis: 10000,
     });

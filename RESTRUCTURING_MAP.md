@@ -12,6 +12,14 @@ The new system is built in a **new repository** with clean history. Consequences
 - **The new repo must never import this repo's history** (no `git subtree`/merge from it) — copy files instead.
 - P0 starts without waiting for SEC-3/SEC-4.
 
+### Decision 2026-09-26 — this repository is the reconstruction workspace (ADR-13)
+
+The owner confirmed: `paxalpha/alphakolect_web` is where the new system is built. Consequences:
+- The imported legacy application moves **as-is** into `legacy/current-system/` (one rename-only commit), replacing the `legacy/app` / `legacy/ops` / `legacy/docs` split in §4. Its layout is preserved so it remains runnable as a behavioural reference.
+- Governing documents move to `docs/business`, `docs/architecture`, `docs/operations`.
+- Nothing deploys from this repository, so the quarantine cannot affect production. The old server stays frozen under the security containment track.
+- "PORT" items (§2) are copied from `legacy/current-system/` into `apps/` when their phase starts.
+
 ### Standing assumption — mobile apps (OPEN-16)
 
 > Agent and customer mobile apps are **external consumers** of the AlphaKolect API. Who builds them is undecided. The API is therefore designed as a **versioned, publishable contract from day one** (`packages/contracts` → OpenAPI + typed client), and **no mobile app code lives in this repository**. Either outcome (same team or another team) consumes the same contract.
@@ -144,6 +152,8 @@ The existing UI is the most valuable carried-over asset. Screens are ported **as
 ---
 
 ## 4. QUARANTINE → `legacy/` (one commit, Phase 0-Q, after approval)
+
+> **Superseded by ADR-13 (2026-09-26):** everything below moves together into `legacy/current-system/` with its current relative layout. The table remains useful as the classification of what each legacy area is.
 
 | Current path | Destination | Notes |
 |---|---|---|
@@ -292,5 +302,7 @@ P0 + P1 + P2 + a thin P3/P4 slice: a merchant can sign up, verify email, log in,
 - ☐ Security track (§6) accepted and started
 - ☐ Build order & exit criteria (§7) approved
 - ☐ P0 + P0-Q (single PR: quarantine + skeleton) may proceed once SEC-1, SEC-3, SEC-4 are verified through the access handover
+
+- **2026-09-26 — owner:** P0 + P0-Q approved to proceed in this repository per ADR-13 (layout `legacy/current-system/`, pnpm workspace). This does not approve the rest of §2–§5 or §7; those boxes stay open.
 
 *These boxes stay unchecked until the project owner and the implementer formally approve.*

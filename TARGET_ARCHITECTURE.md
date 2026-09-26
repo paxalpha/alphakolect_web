@@ -35,6 +35,7 @@ Conventions: **MUST** = invariant the implementation and tests enforce. **ADR-n*
 | ADR-10 | **Immutable, containerised deploys from CI** to infrastructure dedicated to AlphaKolect; production is never a git working copy. | Current deploy model is the root cause of drift and credential sprawl. |
 | ADR-11 | **Money in minor units** (`bigint` kobo) + ISO-4217 currency column on every amount. **Naira (NGN) only for now** (owner decision, revised 2026-09-26): the system accepts and validates `NGN` only, and there is no currency selection in the UI. The currency column exists so adding currencies later is a controlled change (currency table with minor-unit exponents, per-currency plan prices, platform ledger per currency) rather than a schema rewrite. Timezone: WAT. | FLOAT money today; the old code's XOF option is dropped. |
 | ADR-12 | **The new system is built in a new, clean repository under the `paxalpha` GitHub organisation** (fresh `git init`, never this repo's history); this repo (`mayowae/Alphaweb`) is frozen as the legacy archive and behavioural reference (decided 2026-09-26). | No inherited secret-laden history, no root-file conflict, start not gated on SEC-3/SEC-4. Supersedes the in-repo quarantine (§26) for the new code. |
+| ADR-13 | **This repository (`paxalpha/alphakolect_web`) is the reconstruction workspace.** The imported legacy application is quarantined, unchanged in layout, under **`legacy/current-system/`**; the new system is built beside it in `apps/` and `packages/` per §21. Governing documents live in `docs/`. Nothing deploys from this repository. (Owner decision, 2026-09-26; refines ADR-12 and supersedes the `legacy/app` / `legacy/ops` / `legacy/docs` split in §26.) | The repo already holds the clean-history import (ADR-12). Keeping the legacy layout intact keeps it runnable as a behavioural reference (its frontend imports root folders by relative path); a split would break it for no benefit. |
 
 ---
 
@@ -419,6 +420,8 @@ Because nothing is live (BR-1.1, 1.2):
 5. **TransactPay:** existing VAs — close the ~197 fake-signup VAs (BR-2.4); decide whether the 4 verified test merchants' VAs are reused or closed (OPEN-14).
 
 ## 26. Legacy-code quarantine strategy
+
+> **Update 2026-09-26 (ADR-13):** the quarantine happens in this repository, with the whole legacy application moved as-is to `legacy/current-system/` (not split into `legacy/app`, `legacy/ops`, `legacy/docs`). Step 1 is satisfied for this repository: nothing deploys from it; production runs from the old checkout, which stays frozen (security containment track). Steps 3–5 still apply.
 
 > **Not started.** This is the planned sequence only. Nothing moves into `legacy/` until the architecture gates are accepted and `RESTRUCTURING_MAP.md` is approved; the old application stays frozen as-is meanwhile.
 

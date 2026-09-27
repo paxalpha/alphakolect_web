@@ -1,0 +1,10 @@
+-- psql entry point for roles.sql + database.sql. Passwords are passed as psql variables, which :'var'
+-- quotes safely, e.g.:
+--   psql -v ON_ERROR_STOP=1 -v migrator_password=... -v app_password=... -v readonly_password=... \
+--        -d <database> -f bootstrap.psql
+\set ON_ERROR_STOP on
+SELECT set_config('alphakolect.migrator_password', :'migrator_password', false) \gset ignored_
+SELECT set_config('alphakolect.app_password', :'app_password', false) \gset ignored_
+SELECT set_config('alphakolect.readonly_password', :'readonly_password', false) \gset ignored_
+\ir roles.sql
+\ir database.sql

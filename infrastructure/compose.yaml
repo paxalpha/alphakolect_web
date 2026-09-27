@@ -1,10 +1,11 @@
 # Local development services for the new system (TARGET_ARCHITECTURE §23: "local: compose").
 # This is NOT the legacy recovery database (alphakolect-recovery-db on 5435); the new system starts clean (§25).
 #
-#   cp infrastructure/.env.example infrastructure/.env   # then set POSTGRES_PASSWORD
-#   docker compose -f infrastructure/compose.yaml up -d
+#   cp infrastructure/.env.example infrastructure/.env   # then set every password in it
+#   docker compose -f infrastructure/compose.yaml up -d --wait
 #
 # Ports are bound to 127.0.0.1 only, so nothing is reachable from the network.
+# On first start (empty volume) the database roles are created by packages/db/sql/bootstrap.
 name: alphakolect
 
 services:
@@ -12,12 +13,19 @@ services:
     image: postgres:16
     environment:
       POSTGRES_DB: alphakolect
+      # Superuser: local administration and bootstrap only; applications never use it.
       POSTGRES_USER: alphakolect
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in infrastructure/.env}
+      # Application roles (packages/db/sql/bootstrap/roles.sql).
+      DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD:?Set DB_MIGRATOR_PASSWORD in infrastructure/.env}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?Set DB_APP_PASSWORD in infrastructure/.env}
+      DB_READONLY_PASSWORD: ${DB_READONLY_PASSWORD:?Set DB_READONLY_PASSWORD in infrastructure/.env}
     ports:
       - '127.0.0.1:5436:5432'
     volumes:
       - postgres16-data:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ../packages/db/sql/bootstrap:/alphakolect/bootstrap:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U alphakolect -d alphakolect']
       interval: 5s

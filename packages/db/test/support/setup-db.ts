@@ -59,16 +59,21 @@ export async function dropTestDatabase(name: string): Promise<void> {
   }
 }
 
-/** Run the real `prisma migrate deploy` as alphakolect_migrator. Returns combined output. */
-export function migrateDeploy(database: string): string {
-  const result = spawnSync(process.execPath, [prismaCli, 'migrate', 'deploy'], {
+/** Run the Prisma CLI against a test database as alphakolect_migrator. */
+export function runPrisma(args: string[], database: string): { status: number | null; output: string } {
+  const result = spawnSync(process.execPath, [prismaCli, ...args], {
     cwd: packageDir,
     env: { ...process.env, DATABASE_MIGRATOR_URL: connectionUrl('migrator', database) },
     encoding: 'utf8',
   });
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
-  if (result.status !== 0) {
-    throw new Error(`prisma migrate deploy failed (exit ${result.status}):\n${output}`);
+  return { status: result.status, output: `${result.stdout ?? ''}${result.stderr ?? ''}` };
+}
+
+/** Run the real `prisma migrate deploy` as alphakolect_migrator. Returns combined output. */
+export function migrateDeploy(database: string): string {
+  const { status, output } = runPrisma(['migrate', 'deploy'], database);
+  if (status !== 0) {
+    throw new Error(`prisma migrate deploy failed (exit ${status}):\n${output}`);
   }
   return output;
 }

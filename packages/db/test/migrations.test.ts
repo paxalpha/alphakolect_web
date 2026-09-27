@@ -3,7 +3,7 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { connectAs, expectSqlState, SQLSTATE } from './support/db.js';
 import { FIXTURE } from './support/fixtures.js';
-import { migrateDeploy } from './support/setup-db.js';
+import { migrateDeploy, runPrisma } from './support/setup-db.js';
 
 const MODULE_SCHEMAS = [
   'audit',
@@ -58,6 +58,15 @@ describe('migrations from zero (P1 exit criterion)', () => {
 
   it('re-running migrate deploy is a no-op', () => {
     expect(migrateDeploy(inject('testDatabase'))).toMatch(/No pending migrations to apply/);
+  });
+
+  it('schema.prisma matches the migrated database exactly (no drift)', () => {
+    // Exit code 0 = no difference, 2 = the schema and the migrations disagree.
+    const { status, output } = runPrisma(
+      ['migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'],
+      inject('testDatabase'),
+    );
+    expect(status, output).toBe(0);
   });
 
   it('created one schema per module (TARGET_ARCHITECTURE §19)', async () => {

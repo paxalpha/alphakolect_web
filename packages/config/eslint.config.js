@@ -6,7 +6,14 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   {
     // Never lint the quarantined legacy app or build output.
-    ignores: ['legacy/**', '**/dist/**', '**/coverage/**', '**/node_modules/**', '**/.next/**', '**/generated/**'],
+    ignores: [
+      'legacy/**',
+      '**/dist/**',
+      '**/coverage/**',
+      '**/node_modules/**',
+      '**/.next/**',
+      '**/generated/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

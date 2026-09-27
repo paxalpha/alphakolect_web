@@ -1,0 +1,27 @@
+// AlphaKolect database schema — P1 foundation (RESTRUCTURING_MAP P1, TARGET_ARCHITECTURE §4, §7, §16, §19).
+//
+// Prisma is the application schema/migration authority; PostgreSQL enforces the security and
+// accounting invariants (ADR-4). Everything Prisma cannot express lives in raw SQL migrations:
+//   - util.uuid_v7() id generator
+//   - ledger balance and immutability triggers
+//   - row-level security policies
+//   - per-table grants for alphakolect_app / alphakolect_readonly
+//
+// Conventions (§19): one Postgres schema per module; snake_case; UUIDv7 primary keys; timestamptz;
+// money as bigint minor units (kobo) + char(3) currency (NGN only, ADR-11); every tenant-owned row has
+// merchant_id NOT NULL; composite (merchant_id, id) foreign keys keep references inside one tenant.
+//
+// Models are added with the migrations that create them.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  // NodeNext ESM: generated files import each other with .js extensions
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["util", "identity", "tenancy", "customers", "savings", "loans", "investments", "payments", "ledger", "billing", "kyc", "support", "notifications", "documents", "audit", "jobs"]
+}
+

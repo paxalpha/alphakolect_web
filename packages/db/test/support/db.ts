@@ -46,6 +46,6 @@ export const SQLSTATE = {
   checkViolation: '23514',
   foreignKeyViolation: '23503',
   uniqueViolation: '23505',
-  raiseException: 'P0001',
+  restrictViolation: '23001',
   rlsViolation: '42501', // "new row violates row-level security policy" is also insufficient_privilege
 } as const;

@@ -287,6 +287,12 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 - Pending: first green CI run on GitHub; merge as one PR; owner confirmation that the old server is frozen (SEC-A).
 - Deliberately not in P0: Prisma/DB schema (P1), contracts/OpenAPI (P2), `apps/web` (P13), worker process and pg-boss (with the first job), Dockerfiles/deploy (P15), pre-commit hook.
 
+**P1 status (2026-09-27, branch `feat/p1-db-foundation`, not yet merged — review the SQL before merging):**
+- Met locally and in a replay of CI against a fresh PostgreSQL 16: migrations apply from zero as `alphakolect_migrator`; the `alphakolect_app` login cannot UPDATE/DELETE/TRUNCATE journal lines or entries (SQLSTATE 42501) and even the owner cannot (23001); tenant A cannot read or write tenant B through RLS, tested as the app login. 81 database tests; every protection was mutation-checked (removing it makes tests fail).
+- Delivered: role bootstrap (`packages/db/sql/bootstrap`), `packages/db` (Prisma 7.10.0), migrations `baseline`, `privileges`, `ledger_invariants`, `row_level_security`; test-only fixtures; RLS catalog guard; schema drift test; CI PostgreSQL 16 service; local compose on PostgreSQL 16.
+- Judgement calls to review: roles are named `alphakolect_migrator/app/readonly` (the §19 `migrator/app/readonly` with a prefix, since roles are cluster-wide); ledgers are merchant-only for now (`merchant_id NOT NULL`) — platform and custody ledgers (§7) come with their own RLS rule in P6/P10; `merchants.status` values are not constrained (P4 lifecycle); `readonly` reads across tenants; the migrator owns the tables and is exempt from RLS (no `FORCE ROW LEVEL SECURITY`); audit events are immutable even for the owner, so customer anonymisation (BR-11.3) will need a narrow audited path in P7; UUIDv7 comes from a SQL function because PostgreSQL 16 has none; Prisma is pinned exactly because npm `latest` currently points at an 8.0 release candidate.
+- Not in P1 (by design): identity, sessions, memberships, authorization logic, ledger posting/reversal services, billing, payments, customer wallets, chart-of-accounts decisions, frontend.
+
 ### 7.3 Suggested first milestone ("walking skeleton")
 
 P0 + P1 + P2 + a thin P3/P4 slice: a merchant can sign up, verify email, log in, create a branch, and see it — end-to-end through contracts, TenantContext, RLS, audit, CI, and a Playwright test. Everything after builds on a proven spine.

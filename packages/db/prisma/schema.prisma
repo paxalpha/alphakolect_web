@@ -11,7 +11,7 @@
 // money as bigint minor units (kobo) + char(3) currency (NGN only, ADR-11); every tenant-owned row has
 // merchant_id NOT NULL; composite (merchant_id, id) foreign keys keep references inside one tenant.
 //
-// Models are added with the migrations that create them.
+// P1 deliberately contains only the tenant anchor, the ledger core and the audit log. No workflows.
 
 generator client {
   provider            = "prisma-client"
@@ -25,3 +25,166 @@ datasource db {
   schemas  = ["util", "identity", "tenancy", "customers", "savings", "loans", "investments", "payments", "ledger", "billing", "kyc", "support", "notifications", "documents", "audit", "jobs"]
 }
 
+// ── tenancy ─────────────────────────────────────────────────────────────────────────────────────
+
+/// The tenant. Every tenant-owned row in every module references a merchant.
+/// P1 holds only what row-level security and composite keys need; the tenancy module grows in P4.
+model Merchant {
+  id        String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  name      String
+  status    String   @default("pending_verification")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  ledgers           Ledger[]
+  accounts          Account[]
+  journalEntries    JournalEntry[]
+  journalLines      JournalLine[]
+  balanceProjection BalanceProjection[]
+  auditEvents       AuditEvent[]
+
+  @@map("merchants")
+  @@schema("tenancy")
+}
+
+// ── ledger ──────────────────────────────────────────────────────────────────────────────────────
+
+/// The merchant's books (one per merchant). Platform and custody ledgers (§7) have no merchant and
+/// are added with their own row-level-security rule when the ledger/billing phases need them.
+model Ledger {
+  id         String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String   @unique @map("merchant_id") @db.Uuid
+  currency   String   @default("NGN") @db.Char(3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant       Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accounts       Account[]
+  journalEntries JournalEntry[]
+
+  @@unique([merchantId, id])
+  @@map("ledgers")
+  @@schema("ledger")
+}
+
+/// Chart-of-accounts entry or per-subject sub-account (e.g. one Collection wallet per customer).
+/// Codes and names are data; the chart itself is decided later (OPEN-8).
+model Account {
+  id              String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId      String   @map("merchant_id") @db.Uuid
+  ledgerId        String   @map("ledger_id") @db.Uuid
+  code            String
+  name            String
+  type            String
+  parentAccountId String?  @map("parent_account_id") @db.Uuid
+  /// What a sub-account belongs to (e.g. "customer"), with its id. Both null for plain accounts.
+  subjectType     String?  @map("subject_type")
+  subjectId       String?  @map("subject_id") @db.Uuid
+  isSystem        Boolean  @default(false) @map("is_system")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant   Merchant           @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ledger     Ledger             @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  parent     Account?           @relation("AccountParent", fields: [merchantId, parentAccountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  children   Account[]          @relation("AccountParent")
+  lines      JournalLine[]
+  projection BalanceProjection?
+
+  @@unique([merchantId, id])
+  @@index([ledgerId, code])
+  @@map("accounts")
+  @@schema("ledger")
+}
+
+/// Journal entry header. Immutable once written: corrections are reversing entries (BR-11.1).
+model JournalEntry {
+  id              String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId      String   @map("merchant_id") @db.Uuid
+  ledgerId        String   @map("ledger_id") @db.Uuid
+  effectiveDate   DateTime @map("effective_date") @db.Date
+  entryType       String   @map("entry_type")
+  narrative       String
+  sourceType      String?  @map("source_type")
+  sourceId        String?  @map("source_id")
+  idempotencyKey  String   @map("idempotency_key")
+  reversesEntryId String?  @map("reverses_entry_id") @db.Uuid
+  /// identity.identities(id) once the identity module exists (P3); no foreign key yet.
+  createdBy       String?  @map("created_by") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant   Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ledger     Ledger         @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  reverses   JournalEntry?  @relation("EntryReversal", fields: [merchantId, reversesEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  reversedBy JournalEntry[] @relation("EntryReversal")
+  lines      JournalLine[]
+
+  @@unique([merchantId, id])
+  @@unique([merchantId, idempotencyKey])
+  @@index([ledgerId, effectiveDate])
+  @@map("journal_entries")
+  @@schema("ledger")
+}
+
+/// One side of a journal entry. INSERT-only; the entry must balance (Σdebits = Σcredits) at commit.
+model JournalLine {
+  id          String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId  String   @map("merchant_id") @db.Uuid
+  entryId     String   @map("entry_id") @db.Uuid
+  accountId   String   @map("account_id") @db.Uuid
+  side        String
+  amountMinor BigInt   @map("amount_minor")
+  currency    String   @db.Char(3)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant Merchant     @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entry    JournalEntry @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  account  Account      @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([entryId])
+  @@index([accountId])
+  @@map("journal_lines")
+  @@schema("ledger")
+}
+
+/// Read model: current balance per account, updated in the same transaction as each posting (§7).
+model BalanceProjection {
+  accountId    String   @id @map("account_id") @db.Uuid
+  merchantId   String   @map("merchant_id") @db.Uuid
+  balanceMinor BigInt   @default(0) @map("balance_minor")
+  version      BigInt   @default(0)
+  updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  account  Account  @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([merchantId, accountId])
+  @@map("balance_projection")
+  @@schema("ledger")
+}
+
+// ── audit ───────────────────────────────────────────────────────────────────────────────────────
+
+/// Append-only audit log (§16). merchant_id is null for events outside any tenant (e.g. a failed
+/// platform login). summary must never contain secrets.
+model AuditEvent {
+  id                String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  occurredAt        DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  merchantId        String?  @map("merchant_id") @db.Uuid
+  actorIdentityId   String?  @map("actor_identity_id") @db.Uuid
+  actorAudience     String?  @map("actor_audience")
+  actorMembershipId String?  @map("actor_membership_id") @db.Uuid
+  action            String
+  targetType        String?  @map("target_type")
+  targetId          String?  @map("target_id")
+  outcome           String
+  ip                String?
+  userAgent         String?  @map("user_agent")
+  requestId         String?  @map("request_id")
+  summary           Json     @default("{}")
+
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([merchantId, occurredAt])
+  @@index([action, occurredAt])
+  @@map("audit_events")
+  @@schema("audit")
+}

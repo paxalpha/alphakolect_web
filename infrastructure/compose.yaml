@@ -9,7 +9,7 @@ name: alphakolect
 
 services:
   postgres:
-    image: postgres:17
+    image: postgres:16
     environment:
       POSTGRES_DB: alphakolect
       POSTGRES_USER: alphakolect
@@ -17,7 +17,7 @@ services:
     ports:
       - '127.0.0.1:5436:5432'
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres16-data:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U alphakolect -d alphakolect']
       interval: 5s
@@ -25,4 +25,6 @@ services:
       retries: 20
 
 volumes:
-  postgres-data:
+  # PostgreSQL 16 per TARGET_ARCHITECTURE §19. (A data directory created by another major version
+  # cannot be opened, so this volume name is version-specific.)
+  postgres16-data:

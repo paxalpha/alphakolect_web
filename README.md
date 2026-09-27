@@ -36,15 +36,15 @@ legacy/          quarantined legacy application — not built, linted or deploye
 pnpm install
 
 # local database for the new system (127.0.0.1:5436; not the legacy recovery DB)
-cp infrastructure/.env.example infrastructure/.env        # set POSTGRES_PASSWORD
+cp infrastructure/.env.example infrastructure/.env        # set all four passwords
 docker compose -f infrastructure/compose.yaml up -d --wait
 
 # API (http://127.0.0.1:4000/v1/health)
-cp apps/api/.env.example apps/api/.env                    # use the same password in DATABASE_URL
+cp apps/api/.env.example apps/api/.env                    # DATABASE_URL uses DB_APP_PASSWORD
 pnpm --filter @alphakolect/api dev
 ```
 
-Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`.
+Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`. `pnpm test` needs the local database running (the `packages/db` tests use it; see [`packages/db/README.md`](packages/db/README.md)).
 
 Secret scan before committing:
 

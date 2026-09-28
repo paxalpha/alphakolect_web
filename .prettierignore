@@ -4,3 +4,4 @@ docs/
 pnpm-lock.yaml
 **/dist/
 **/coverage/
+**/generated/

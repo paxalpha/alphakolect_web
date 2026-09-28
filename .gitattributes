@@ -1,0 +1,5 @@
+# Files executed inside Linux containers keep LF even on Windows checkouts (core.autocrlf):
+# a CR at the end of a psql meta-command line (e.g. "\ir roles.sql") breaks it.
+*.sh text eol=lf
+*.sql text eol=lf
+*.psql text eol=lf

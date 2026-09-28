@@ -1,0 +1,7 @@
+{
+  "extends": "@alphakolect/config/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src", "test", "prisma.config.ts", "vitest.config.ts"]
+}

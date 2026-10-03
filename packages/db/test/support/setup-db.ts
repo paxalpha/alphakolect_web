@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { connectionConfig, connectionUrl, dbTestEnv } from './env.js';
 
+// Also used by other workspace packages' tests via @alphakolect/db/testing (test-only).
+export { connectionConfig, connectionUrl } from './env.js';
+
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const bootstrapDir = path.join(packageDir, 'sql/bootstrap');
 const prismaCli = createRequire(import.meta.url).resolve('prisma/build/index.js');

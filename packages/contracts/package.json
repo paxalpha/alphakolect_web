@@ -19,10 +19,11 @@
   "scripts": {
     "openapi:generate": "tsx scripts/openapi.ts",
     "openapi:check": "tsx scripts/openapi.ts --check",
-    "build": "pnpm client:generate && tsc -p tsconfig.build.json",
+    "build": "pnpm client:generate && tsc -p tsconfig.build.json && pnpm consumer:typecheck",
     "typecheck": "pnpm client:generate && tsc --noEmit",
     "test": "pnpm client:generate && vitest run",
-    "client:generate": "openapi-typescript openapi/v1.json --output src/generated/v1.ts"
+    "client:generate": "openapi-typescript openapi/v1.json --output src/generated/v1.ts",
+    "consumer:typecheck": "tsc -p consumer/tsconfig.json"
   },
   "dependencies": {
     "openapi-fetch": "0.17.0",

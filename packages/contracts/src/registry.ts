@@ -4,8 +4,12 @@ import type { z } from 'zod';
 // The OpenAPI document is generated from it, and apps/api mounts its routes from it; a parity test in
 // apps/api fails if an Express route has no contract or a contract has no route.
 
-/** Who an endpoint is for (§3.1, §17). `public` = no session (e.g. health). */
-export type Audience = 'public' | 'platform' | 'merchant' | 'agent' | 'customer' | 'webhook';
+/**
+ * Who an endpoint is for (§3.1, §17). `public` = no session (e.g. health); `authenticated` = any signed-in
+ * audience (e.g. logout, current session). Secured endpoints reject sessions of other audiences.
+ */
+export type Audience =
+  'public' | 'authenticated' | 'platform' | 'merchant' | 'agent' | 'customer' | 'webhook';
 
 export type HttpMethod = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
@@ -36,6 +40,11 @@ export type EndpointContract = {
   summary: string;
   /** Accepted authentication schemes (any one suffices). Omitted = no authentication required. */
   security?: readonly SecurityScheme[];
+  /**
+   * Secured endpoints accept only full sessions by default. 'mfa_enrollment' also admits the short-lived
+   * enrolment-only platform session (ADR-14 D8) — used solely by the TOTP enrolment endpoints.
+   */
+  sessionScope?: 'mfa_enrollment';
   request?: {
     params?: z.ZodObject;
     query?: z.ZodObject;

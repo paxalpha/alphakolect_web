@@ -48,6 +48,7 @@ function operation(e: EndpointContract): ZodOpenApiOperationObject {
     summary: e.summary,
     tags: [e.audience],
     'x-audience': e.audience,
+    ...(e.sessionScope ? { 'x-session-scope': e.sessionScope } : {}),
     ...(security ? { security } : {}),
     ...(params || query || headers
       ? {

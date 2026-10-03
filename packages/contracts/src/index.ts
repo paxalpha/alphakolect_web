@@ -3,6 +3,7 @@
 
 import { getHealth } from './endpoints/health.js';
 
+export * from './auth.js';
 export * from './primitives.js';
 export * from './registry.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';

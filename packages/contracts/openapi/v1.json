@@ -131,6 +131,26 @@
           "currency": "NGN"
         }
       }
+    },
+    "securitySchemes": {
+      "cookieSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Secure-ak_at",
+        "description": "Web audiences (platform, merchant): HttpOnly access-token cookie (ADR-14 D7)"
+      },
+      "csrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "description": "Echo of the __Secure-ak_csrf cookie, required on state-changing cookie requests"
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Mobile audiences (agent, customer): EdDSA-signed access token (ADR-14 D6)"
+      }
     }
   }
 }

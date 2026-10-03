@@ -26,12 +26,22 @@ const MODULE_SCHEMAS = [
 
 const TABLES = [
   'audit.audit_events',
+  'identity.identities',
+  'identity.mfa_challenges',
+  'identity.one_time_tokens',
+  'identity.platform_memberships',
+  'identity.recovery_codes',
+  'identity.refresh_tokens',
+  'identity.sessions',
+  'identity.totp_credentials',
   'ledger.accounts',
   'ledger.balance_projection',
   'ledger.journal_entries',
   'ledger.journal_lines',
   'ledger.ledgers',
+  'tenancy.merchant_memberships',
   'tenancy.merchants',
+  'util.rate_limit_counters',
 ];
 
 let owner: pg.Client;
@@ -77,7 +87,7 @@ describe('migrations from zero (P1 exit criterion)', () => {
     expect(rows.map((r) => r.nspname)).toEqual(MODULE_SCHEMAS);
   });
 
-  it('created exactly the P1 tables, all owned by the migrator (never the app role)', async () => {
+  it('created exactly the expected tables, all owned by the migrator (never the app role)', async () => {
     const { rows } = await owner.query(
       `SELECT n.nspname || '.' || c.relname AS name, pg_get_userbyid(c.relowner) AS owner
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

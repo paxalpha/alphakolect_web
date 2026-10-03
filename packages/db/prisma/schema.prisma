@@ -42,6 +42,7 @@ model Merchant {
   journalLines      JournalLine[]
   balanceProjection BalanceProjection[]
   auditEvents       AuditEvent[]
+  memberships       MerchantMembership[]
 
   @@map("merchants")
   @@schema("tenancy")
@@ -107,7 +108,7 @@ model JournalEntry {
   sourceId        String?  @map("source_id")
   idempotencyKey  String   @map("idempotency_key")
   reversesEntryId String?  @map("reverses_entry_id") @db.Uuid
-  /// identity.identities(id) once the identity module exists (P3); no foreign key yet.
+  /// The identity that posted the entry (identity.identities).
   createdBy       String?  @map("created_by") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -115,6 +116,7 @@ model JournalEntry {
   ledger     Ledger         @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   reverses   JournalEntry?  @relation("EntryReversal", fields: [merchantId, reversesEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy JournalEntry[] @relation("EntryReversal")
+  creator    Identity?      @relation("JournalEntryCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lines      JournalLine[]
 
   @@unique([merchantId, id])
@@ -182,9 +184,201 @@ model AuditEvent {
   summary           Json     @default("{}")
 
   merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  actor    Identity? @relation("AuditActor", fields: [actorIdentityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@index([merchantId, occurredAt])
   @@index([action, occurredAt])
   @@map("audit_events")
   @@schema("audit")
+}
+
+// ── identity (P3, TARGET_ARCHITECTURE §3, ADR-14) ───────────────────────────────────────────────
+// The app role has NO table privileges here: it reaches identity data only through SECURITY DEFINER
+// functions (ADR-14 D4). Tokens are stored only as SHA-256 hashes; passwords only as argon2id hashes.
+
+/// One per person (§3.1). Email is the only login identifier for now (D11), stored lowercase.
+model Identity {
+  id                String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  email             String    @unique
+  status            String    @default("active")
+  emailVerifiedAt   DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  /// argon2id PHC string; null until a password is set (e.g. a bootstrapped super admin, D9).
+  passwordHash      String?   @map("password_hash")
+  passwordChangedAt DateTime? @map("password_changed_at") @db.Timestamptz(6)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  platformMembership  PlatformMembership?
+  merchantMemberships MerchantMembership[]
+  sessions            Session[]
+  oneTimeTokens       OneTimeToken[]
+  mfaChallenges       MfaChallenge[]
+  totpCredential      TotpCredential?
+  recoveryCodes       RecoveryCode[]
+  journalEntries      JournalEntry[]       @relation("JournalEntryCreator")
+  auditEvents         AuditEvent[]         @relation("AuditActor")
+
+  @@map("identities")
+  @@schema("identity")
+}
+
+/// Platform audience membership (§3.1): super admin now; support, verification and finance later (P4/P5).
+model PlatformMembership {
+  id            String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId    String    @unique @map("identity_id") @db.Uuid
+  role          String
+  status        String    @default("active")
+  deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity      Identity       @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sessions      Session[]
+  mfaChallenges MfaChallenge[]
+
+  @@map("platform_memberships")
+  @@schema("identity")
+}
+
+/// One login (a refresh-token family), bound to exactly one audience and one membership (§3.1, D5).
+model Session {
+  id                   String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId           String    @map("identity_id") @db.Uuid
+  audience             String
+  platformMembershipId String?   @map("platform_membership_id") @db.Uuid
+  merchantMembershipId String?   @map("merchant_membership_id") @db.Uuid
+  /// "full", or "mfa_enrollment" for a platform login that may only enrol TOTP (D8).
+  scope                String    @default("full")
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  absoluteExpiresAt    DateTime  @map("absolute_expires_at") @db.Timestamptz(6)
+  revokedAt            DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason         String?   @map("revoke_reason")
+  createdIp            String?   @map("created_ip")
+  userAgent            String?   @map("user_agent")
+
+  identity           Identity            @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  platformMembership PlatformMembership? @relation(fields: [platformMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  merchantMembership MerchantMembership? @relation(fields: [merchantMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  refreshTokens      RefreshToken[]
+
+  @@index([identityId])
+  @@map("sessions")
+  @@schema("identity")
+}
+
+/// Rotating refresh tokens of a session (§3.2). Presenting a rotated token is reuse: the session is revoked.
+model RefreshToken {
+  id        String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  sessionId String    @map("session_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash") @db.Char(64)
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(6)
+  rotatedAt DateTime? @map("rotated_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([sessionId])
+  @@map("refresh_tokens")
+  @@schema("identity")
+}
+
+/// Single-use email-verification and password-reset tokens (§3.2, D12).
+model OneTimeToken {
+  id          String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId  String    @map("identity_id") @db.Uuid
+  purpose     String
+  tokenHash   String    @unique @map("token_hash") @db.Char(64)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt  DateTime? @map("consumed_at") @db.Timestamptz(6)
+  requestedIp String?   @map("requested_ip")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([identityId, purpose])
+  @@map("one_time_tokens")
+  @@schema("identity")
+}
+
+/// Pending second factor of a platform login (D8): 5 minutes, 5 attempts.
+model MfaChallenge {
+  id                   String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId           String    @map("identity_id") @db.Uuid
+  platformMembershipId String    @map("platform_membership_id") @db.Uuid
+  tokenHash            String    @unique @map("token_hash") @db.Char(64)
+  expiresAt            DateTime  @map("expires_at") @db.Timestamptz(6)
+  attempts             Int       @default(0)
+  consumedAt           DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity           Identity           @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  platformMembership PlatformMembership @relation(fields: [platformMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("mfa_challenges")
+  @@schema("identity")
+}
+
+/// TOTP secret (RFC 6238), encrypted with AES-256-GCM by the API under key secret_key_id (D8).
+model TotpCredential {
+  identityId       String    @id @map("identity_id") @db.Uuid
+  secretCiphertext Bytes     @map("secret_ciphertext")
+  secretKeyId      String    @map("secret_key_id")
+  confirmedAt      DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  /// Highest accepted TOTP time step; codes at or below it are replays.
+  lastUsedStep     BigInt?   @map("last_used_step")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("totp_credentials")
+  @@schema("identity")
+}
+
+/// Single-use MFA recovery codes, stored hashed (D8).
+model RecoveryCode {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId String    @map("identity_id") @db.Uuid
+  codeHash   String    @unique @map("code_hash") @db.Char(64)
+  usedAt     DateTime? @map("used_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([identityId])
+  @@map("recovery_codes")
+  @@schema("identity")
+}
+
+/// Merchant audience membership — the minimal P3 slice (ADR-14 D2: owners only in P3; staff/agents P4).
+model MerchantMembership {
+  id            String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId    String    @map("merchant_id") @db.Uuid
+  identityId    String    @map("identity_id") @db.Uuid
+  kind          String
+  status        String    @default("active")
+  deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  identity Identity  @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sessions Session[]
+
+  @@unique([merchantId, id])
+  @@unique([merchantId, identityId])
+  @@map("merchant_memberships")
+  @@schema("tenancy")
+}
+
+// ── util ────────────────────────────────────────────────────────────────────────────────────────
+
+/// Fixed-window rate-limit counters (ADR-14 D13), reached only through util.rate_limit_hit().
+model RateLimitCounter {
+  key         String
+  windowStart DateTime @map("window_start") @db.Timestamptz(6)
+  hits        Int      @default(0)
+  expiresAt   DateTime @map("expires_at") @db.Timestamptz(6)
+
+  @@id([key, windowStart])
+  @@index([expiresAt])
+  @@map("rate_limit_counters")
+  @@schema("util")
 }

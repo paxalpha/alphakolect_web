@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { ConfigError, loadConfig } from '../src/platform/config.js';
 import { newSigningJwk } from './support/keys.js';
@@ -7,7 +8,11 @@ const DATABASE_URL = 'postgresql://user:s3cret-value@127.0.0.1:5436/alphakolect'
 let valid: Record<string, string>;
 
 beforeAll(async () => {
-  valid = { DATABASE_URL, AUTH_SIGNING_JWK: JSON.stringify(await newSigningJwk('test-key')) };
+  valid = {
+    DATABASE_URL,
+    AUTH_SIGNING_JWK: JSON.stringify(await newSigningJwk('test-key')),
+    MFA_ENCRYPTION_KEY: `mfa-1:${randomBytes(32).toString('base64')}`,
+  };
 });
 
 const problemsOf = (env: Record<string, string | undefined>) => {
@@ -27,11 +32,17 @@ describe('loadConfig', () => {
     expect(config.auth.issuer).toBe('alphakolect-api');
     expect(config.auth.signingKey.kid).toBe('test-key');
     expect(config.auth.previousSigningKey).toBeUndefined();
+    expect(config.auth.mfaEncryptionKey.kid).toBe('mfa-1');
+    expect(config.auth.mfaEncryptionKey.key).toHaveLength(32);
     expect(Object.isFrozen(config)).toBe(true);
   });
 
   it('refuses to load without its required secrets', () => {
-    expect(problemsOf({}).problems).toEqual(['DATABASE_URL is required', 'AUTH_SIGNING_JWK is required']);
+    expect(problemsOf({}).problems).toEqual([
+      'DATABASE_URL is required',
+      'AUTH_SIGNING_JWK is required',
+      'MFA_ENCRYPTION_KEY is required',
+    ]);
   });
 
   it('rejects a non-postgres DATABASE_URL without echoing the value', () => {
@@ -54,10 +65,26 @@ describe('loadConfig', () => {
     expect(message).not.toContain('do-not-print-this-key-material');
   });
 
+  it.each([
+    ['without a kid', 'do-not-print-this-key-material'],
+    ['with a 16-byte key', `k:${Buffer.from('do-not-print-me!').toString('base64')}`],
+  ])('rejects MFA_ENCRYPTION_KEY %s, without echoing it', (_label, value) => {
+    const { problems, message } = problemsOf({ ...valid, MFA_ENCRYPTION_KEY: value });
+    expect(problems).toEqual(['MFA_ENCRYPTION_KEY must be "<kid>:<base64 of 32 bytes>"']);
+    expect(message).not.toContain('do-not-print');
+  });
+
   it('reports every invalid variable at once', () => {
     const names = problemsOf({ PORT: '70000', LOG_LEVEL: 'loud', NODE_ENV: 'staging' })
       .problems.map((p) => p.split(' ')[0])
       .sort();
-    expect(names).toEqual(['AUTH_SIGNING_JWK', 'DATABASE_URL', 'LOG_LEVEL', 'NODE_ENV', 'PORT']);
+    expect(names).toEqual([
+      'AUTH_SIGNING_JWK',
+      'DATABASE_URL',
+      'LOG_LEVEL',
+      'MFA_ENCRYPTION_KEY',
+      'NODE_ENV',
+      'PORT',
+    ]);
   });
 });

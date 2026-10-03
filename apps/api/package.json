@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env dist/server.js",
     "typecheck": "pnpm --filter @alphakolect/contracts client:generate && tsc --noEmit",
-    "test": "pnpm --filter @alphakolect/contracts client:generate && vitest run"
+    "test": "pnpm --filter @alphakolect/contracts client:generate && vitest run",
+    "secrets:local": "tsx scripts/generate-local-secrets.ts"
   },
   "dependencies": {
     "@alphakolect/contracts": "workspace:*",

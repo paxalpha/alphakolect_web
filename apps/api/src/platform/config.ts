@@ -30,6 +30,17 @@ const jsonJwk = z
   })
   .pipe(Ed25519PrivateJwk);
 
+/** "<kid>:<base64 of exactly 32 random bytes>" — an AES-256 key for MFA secrets at rest (ADR-14 D8). */
+const encryptionKey = z.string().transform((value, ctx) => {
+  const match = /^([A-Za-z0-9._-]{1,64}):([A-Za-z0-9+/=_-]+)$/.exec(value);
+  const key = match ? Buffer.from(match[2]!, 'base64') : undefined;
+  if (!match || !key || key.length !== 32) {
+    ctx.addIssue({ code: 'custom', message: 'must be "<kid>:<base64 of 32 bytes>"' });
+    return z.NEVER;
+  }
+  return { kid: match[1]!, key };
+});
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -40,6 +51,9 @@ const EnvSchema = z.object({
   AUTH_SIGNING_JWK: jsonJwk,
   AUTH_SIGNING_JWK_PREVIOUS: jsonJwk.optional(),
   AUTH_ISSUER: z.string().min(1).default('alphakolect-api'),
+  // MFA secret encryption at rest (ADR-14 D8); the previous key (if set) still decrypts.
+  MFA_ENCRYPTION_KEY: encryptionKey,
+  MFA_ENCRYPTION_KEY_PREVIOUS: encryptionKey.optional(),
 });
 
 export type Config = Readonly<{
@@ -51,6 +65,8 @@ export type Config = Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
     previousSigningKey?: Ed25519PrivateJwk;
+    mfaEncryptionKey: Readonly<{ kid: string; key: Buffer }>;
+    previousMfaEncryptionKey?: Readonly<{ kid: string; key: Buffer }>;
   }>;
 }>;
 
@@ -87,6 +103,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,
       ...(e.AUTH_SIGNING_JWK_PREVIOUS ? { previousSigningKey: e.AUTH_SIGNING_JWK_PREVIOUS } : {}),
+      mfaEncryptionKey: e.MFA_ENCRYPTION_KEY,
+      ...(e.MFA_ENCRYPTION_KEY_PREVIOUS ? { previousMfaEncryptionKey: e.MFA_ENCRYPTION_KEY_PREVIOUS } : {}),
     }),
   });
 }

@@ -57,9 +57,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
       - run: pnpm lint
+
+      - name: OpenAPI spec is up to date with the contracts
+        run: pnpm --filter @alphakolect/contracts openapi:check
+
       - run: pnpm typecheck
       - run: pnpm test
-      - run: pnpm build
+      - run: pnpm build # includes the contracts' independent typecheck consumer
 
       - name: API refuses to boot without required configuration
         run: |
@@ -67,6 +71,49 @@ jobs:
             echo "::error::apps/api started without DATABASE_URL"
             exit 1
           fi
+
+      # The API contract for this build (P2). External publishing to the mobile developer is decided
+      # when the authenticated contracts are ready (OPEN-16); until then this artifact is the hand-off.
+      - name: Publish OpenAPI spec
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-v1-${{ github.sha }}
+          path: packages/contracts/openapi/v1.json
+          if-no-files-found: error
+
+  api-contract:
+    name: API contract (breaking-change check)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OASDIFF_VERSION: 1.32.1
+      SPEC: packages/contracts/openapi/v1.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the base commit's spec is the baseline
+
+      - name: Install oasdiff (pinned, checksum-verified)
+        run: |
+          base="https://github.com/oasdiff/oasdiff/releases/download/v${OASDIFF_VERSION}"
+          file="oasdiff_${OASDIFF_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL -o "$file" "$base/$file"
+          curl -sSfL -o checksums.txt "$base/checksums.txt"
+          grep " $file\$" checksums.txt | sha256sum -c -
+          tar -xzf "$file" oasdiff
+
+      # Pull requests compare with the target branch's spec; pushes compare with the previous commit.
+      # Breaking changes to a published contract break mobile clients (TARGET_ARCHITECTURE §24).
+      - name: Fail on breaking changes against the base
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}:${SPEC}" 2>/dev/null; then
+            echo "::notice::No ${SPEC} at the base commit; nothing to compare yet."
+            exit 0
+          fi
+          git show "${BASE_SHA}:${SPEC}" > base-openapi.json
+          ./oasdiff breaking base-openapi.json "${SPEC}" --fail-on ERR --format githubactions
 
   secrets:
     name: Secret scan (gitleaks)

@@ -1,0 +1,9 @@
+{
+  // Deliberately NO "customConditions": imports resolve to dist/ via package.json "exports",
+  // as for any external consumer. Run after `tsc -p tsconfig.build.json` (see the build script).
+  "extends": "@alphakolect/config/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["consumer.ts"]
+}

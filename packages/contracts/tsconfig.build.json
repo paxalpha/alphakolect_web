@@ -1,0 +1,10 @@
+{
+  "extends": "@alphakolect/config/tsconfig/node.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "noEmit": false,
+    "declaration": true
+  },
+  "include": ["src"]
+}

@@ -1,7 +1,10 @@
 {
   "extends": "@alphakolect/config/tsconfig/node.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    // Type-check against workspace packages' source (no build needed). The production build
+    // (tsconfig.build.json) has no custom condition, so it uses their compiled dist/.
+    "customConditions": ["@alphakolect/source"]
   },
   "include": ["src", "test", "vitest.config.ts"]
 }

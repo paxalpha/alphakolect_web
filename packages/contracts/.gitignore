@@ -1,0 +1,3 @@
+dist/
+# Generated from openapi/v1.json by openapi-typescript (client:generate); never committed.
+src/generated/

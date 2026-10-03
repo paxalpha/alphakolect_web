@@ -41,6 +41,33 @@ const encryptionKey = z.string().transform((value, ctx) => {
   return { kid: match[1]!, key };
 });
 
+/** Comma-separated web origins (scheme://host[:port]) allowed to make cookie-authenticated state changes. */
+const originList = z
+  .string()
+  .default('')
+  .transform((value, ctx) => {
+    const origins = value
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean);
+    for (const origin of origins) {
+      let parsed: URL | undefined;
+      try {
+        parsed = new URL(origin);
+      } catch {
+        parsed = undefined;
+      }
+      if (!parsed || parsed.origin !== origin) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'must be comma-separated origins like https://app.example.com',
+        });
+        return z.NEVER;
+      }
+    }
+    return new Set(origins) as ReadonlySet<string>;
+  });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -54,6 +81,8 @@ const EnvSchema = z.object({
   // MFA secret encryption at rest (ADR-14 D8); the previous key (if set) still decrypts.
   MFA_ENCRYPTION_KEY: encryptionKey,
   MFA_ENCRYPTION_KEY_PREVIOUS: encryptionKey.optional(),
+  // CSRF defence (ADR-14 D7): empty means no origin may make cookie-authenticated state changes.
+  WEB_ORIGINS: originList,
 });
 
 export type Config = Readonly<{
@@ -61,6 +90,7 @@ export type Config = Readonly<{
   port: number;
   logLevel: z.infer<typeof EnvSchema>['LOG_LEVEL'];
   databaseUrl: string;
+  webOrigins: ReadonlySet<string>;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -99,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
+    webOrigins: e.WEB_ORIGINS,
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

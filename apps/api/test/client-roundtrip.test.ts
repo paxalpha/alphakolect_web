@@ -2,9 +2,8 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { getHealth } from '@alphakolect/contracts';
 import { createApiClient } from '@alphakolect/contracts/client';
-import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../src/platform/http/app.js';
+import { createTestApp } from './support/app.js';
 
 // P2 exit criterion (amended 2026-10-03): the client GENERATED FROM openapi/v1.json round-trips against
 // the real API over real HTTP — the spec, the client and the Express handlers agree.
@@ -13,7 +12,7 @@ let server: Server;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = createApp({ logger: pino({ level: 'silent' }) }).listen(0, '127.0.0.1');
+  server = (await createTestApp()).app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });

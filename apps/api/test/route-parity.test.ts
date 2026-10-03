@@ -1,7 +1,6 @@
 import { endpoints } from '@alphakolect/contracts';
-import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../src/platform/http/app.js';
+import { createTestApp } from './support/app.js';
 import { API_PREFIX, toExpressPath } from '../src/platform/http/routes.js';
 
 // Registry parity (P2): OpenAPI must never become documentation that silently diverges from Express.
@@ -9,12 +8,12 @@ import { API_PREFIX, toExpressPath } from '../src/platform/http/routes.js';
 // contract registry exactly — no route without a contract, no contract without a route.
 
 type Layer = {
-  route?: { path: string; methods: Record<string, boolean> };
+  route?: { path: string; methods: Record<string, boolean>; stack: Array<{ name: string }> };
   handle?: { stack?: Layer[] };
   match: (path: string) => boolean;
 };
 
-const app = createApp({ logger: pino({ level: 'silent' }) });
+const { app } = await createTestApp();
 const appStack = (app as unknown as { router: { stack: Layer[] } }).router.stack;
 
 const isRouter = (layer: Layer) => Array.isArray(layer.handle?.stack);
@@ -61,5 +60,18 @@ describe('Express routes and the contract registry are identical', () => {
     const v1 = appStack.find(isRouter)!;
     const expressRoutes = routesOf(v1.handle!.stack!, API_PREFIX).sort();
     expect(expressRoutes).toEqual(contractRoutes);
+  });
+
+  it('mounts authentication in front of every secured endpoint, and only there', () => {
+    const v1 = appStack.find(isRouter)!;
+    const byRoute = new Map(
+      v1.handle!.stack!.filter((l) => l.route).map((l) => [l.route!.path, l.route!.stack.map((h) => h.name)]),
+    );
+    for (const e of Object.values(endpoints)) {
+      const chain = byRoute.get(toExpressPath(e.path));
+      const secured = 'security' in e && Array.isArray(e.security) && e.security.length > 0;
+      expect(chain?.[0] === 'authenticateRequest', `${e.id} authentication`).toBe(secured);
+      expect(chain?.length, `${e.id} handler chain`).toBe(secured ? 2 : 1);
+    }
   });
 });

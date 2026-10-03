@@ -1,13 +1,12 @@
 import { ErrorResponse, getHealth } from '@alphakolect/contracts';
-import { pino } from 'pino';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
-import { createApp } from '../src/platform/http/app.js';
+import { createTestApp } from './support/app.js';
 
 // Responses the API actually sends must satisfy the contract schemas (the same schemas the OpenAPI
 // document and the typed client are generated from).
 
-const app = createApp({ logger: pino({ level: 'silent' }) });
+const { app } = await createTestApp();
 
 describe('responses conform to the contracts', () => {
   it('GET /v1/health matches its 200 schema', async () => {

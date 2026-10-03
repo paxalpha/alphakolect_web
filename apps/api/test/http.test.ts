@@ -4,12 +4,12 @@ import { pinoHttp } from 'pino-http';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { AppError } from '../src/platform/errors.js';
-import { createApp } from '../src/platform/http/app.js';
 import { errorHandler } from '../src/platform/http/error-handler.js';
 import { resolveRequestId } from '../src/platform/http/request-id.js';
+import { createTestApp } from './support/app.js';
 
 const logger = pino({ level: 'silent' });
-const app = createApp({ logger });
+const { app } = await createTestApp();
 
 describe('GET /v1/health', () => {
   it('returns ok with a generated request id', async () => {

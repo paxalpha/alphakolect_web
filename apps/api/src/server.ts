@@ -1,4 +1,7 @@
+import { AccessTokens } from './modules/identity/access-tokens.js';
+import { IdentityRepository } from './modules/identity/repository.js';
 import { ConfigError, loadConfig, type Config } from './platform/config.js';
+import { createDb } from './platform/db.js';
 import { createApp } from './platform/http/app.js';
 import { createLogger } from './platform/logger.js';
 
@@ -17,7 +20,15 @@ function readConfig(): Config {
 
 const config = readConfig();
 const logger = createLogger(config);
-const app = createApp({ logger });
+const db = createDb(config.databaseUrl);
+const app = createApp({
+  logger,
+  auth: {
+    accessTokens: await AccessTokens.create(config.auth),
+    identity: new IdentityRepository(db),
+    webOrigins: config.webOrigins,
+  },
+});
 
 const server = app.listen(config.port, () => {
   logger.info({ port: config.port, env: config.nodeEnv }, 'API listening');
@@ -26,6 +37,7 @@ const server = app.listen(config.port, () => {
 function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, 'Shutting down');
   server.close((err) => {
+    void db.close();
     if (err) {
       logger.error({ err }, 'Error during shutdown');
       process.exit(1);

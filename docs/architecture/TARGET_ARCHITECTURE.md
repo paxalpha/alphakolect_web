@@ -135,7 +135,7 @@ Concrete values for §3.1–§3.2, decided before P3 implementation (P3 readines
 | D12 Email verification | Single-use link token valid **24 h**; at most 3 resends per hour. Anti-enumeration: a wrong password gets the same `INVALID_CREDENTIALS` response whether the email is unknown, unverified or verified; **only correct credentials on an unverified account** get the generic "email verification required" response leading to the resend flow; the resend endpoint answers identically for any email. |
 | D13 Rate limits | Postgres-backed fixed-window counters behind a `RateLimiter` port, per IP and per identifier; exceeding returns 429. No Redis (ADR-9). |
 | D14 CAPTCHA | Deferred to the pre-launch checklist (P15); signup keeps a hook for it. |
-| D15 Hashing library | `@node-rs/argon2`, argon2id m = 19 MiB, t = 2, p = 1 (OWASP minimum; may be raised), with rehash on login when parameters change. |
+| D15 Hashing library | ~~`@node-rs/argon2`~~ **`hash-wasm` (amended 2026-10-03, owner-approved):** Windows Application Control on the development PC blocks `@node-rs/argon2`'s unsigned native binary; `hash-wasm` runs the same argon2id in WebAssembly, identically locally, in CI and in production. Unchanged: argon2id m = 19 MiB, t = 2, p = 1 (OWASP minimum; may be raised), with rehash on login when parameters change. |
 | D16 Multiple memberships | Deferred to P4 (an owner has exactly one membership in P3). |
 
 ---

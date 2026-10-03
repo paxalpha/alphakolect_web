@@ -9,14 +9,20 @@
       "@alphakolect/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./client": {
+      "@alphakolect/source": "./src/client.ts",
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
     }
   },
   "scripts": {
     "openapi:generate": "tsx scripts/openapi.ts",
     "openapi:check": "tsx scripts/openapi.ts --check",
-    "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "build": "pnpm client:generate && tsc -p tsconfig.build.json",
+    "typecheck": "pnpm client:generate && tsc --noEmit",
+    "test": "pnpm client:generate && vitest run",
+    "client:generate": "openapi-typescript openapi/v1.json --output src/generated/v1.ts"
   },
   "dependencies": {
     "openapi-fetch": "0.17.0",

@@ -18,7 +18,7 @@ This repository is the **rebuild workspace** (ADR-13). The new system is built i
 
 ```text
 apps/            deployables (api now; web ported in P13)
-packages/        shared infrastructure only: config (now), contracts (P2), db (P1)
+packages/        shared infrastructure only: config, db (P1), contracts (P2)
 infrastructure/  local compose and, later, deploy manifests
 docs/            business, architecture, operations
 legacy/          quarantined legacy application — not built, linted or deployed

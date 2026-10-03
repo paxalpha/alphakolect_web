@@ -1,0 +1,31 @@
+{
+  "name": "@alphakolect/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "API contracts only: zod schemas, the endpoint registry and API primitives (TARGET_ARCHITECTURE §17, RESTRUCTURING_MAP §1). No behaviour.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@alphakolect/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openapi-fetch": "0.17.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@alphakolect/config": "workspace:*",
+    "@types/node": "^24.13.6",
+    "openapi-typescript": "7.13.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "zod-openapi": "6.0.2"
+  }
+}

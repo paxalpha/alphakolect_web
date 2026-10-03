@@ -1,15 +1,9 @@
-// Standard error envelope (TARGET_ARCHITECTURE §17):
+import type { ErrorResponse } from '@alphakolect/contracts';
+
+// The standard error envelope is defined once, in packages/contracts (ErrorResponse, TARGET_ARCHITECTURE §17):
 //   { error: { code, message, details?, requestId } }
 // `code` is a stable, machine-readable identifier clients (web and mobile) can rely on.
-
-export type ErrorBody = {
-  error: {
-    code: string;
-    message: string;
-    details?: unknown;
-    requestId: string;
-  };
-};
+export type ErrorBody = ErrorResponse;
 
 export class AppError extends Error {
   constructor(

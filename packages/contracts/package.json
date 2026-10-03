@@ -12,6 +12,8 @@
     }
   },
   "scripts": {
+    "openapi:generate": "tsx scripts/openapi.ts",
+    "openapi:check": "tsx scripts/openapi.ts --check",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -24,6 +26,7 @@
     "@alphakolect/config": "workspace:*",
     "@types/node": "^24.13.6",
     "openapi-typescript": "7.13.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^3.2.7",
     "zod-openapi": "6.0.2"

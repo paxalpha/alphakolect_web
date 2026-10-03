@@ -5,3 +5,4 @@ pnpm-lock.yaml
 **/dist/
 **/coverage/
 **/generated/
+packages/contracts/openapi/

@@ -1,0 +1,136 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AlphaKolect API",
+    "version": "v1",
+    "description": "Generated from packages/contracts — do not edit by hand. Money amounts are kobo as exact decimal digit strings (e.g. \"150000\" = ₦1,500.00)."
+  },
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Liveness check",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "responses": {
+          "200": {
+            "description": "The API process is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AmountMinor": {
+        "type": "string",
+        "pattern": "^(0|[1-9][0-9]{0,18})$",
+        "description": "Non-negative amount in minor units (kobo) as a decimal digit string",
+        "example": "150000"
+      },
+      "Currency": {
+        "type": "string",
+        "const": "NGN",
+        "description": "ISO 4217 currency code. Only NGN is accepted."
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable; never contains secrets"
+              },
+              "details": {},
+              "requestId": {
+                "type": "string",
+                "description": "Echoed in the x-request-id response header"
+              }
+            },
+            "required": [
+              "code",
+              "message",
+              "requestId"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false,
+        "description": "Every error response uses this envelope"
+      },
+      "ErrorCode": {
+        "type": "string",
+        "pattern": "^[A-Z][A-Z0-9_]*$",
+        "example": "NOT_FOUND"
+      },
+      "Id": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+        "description": "UUIDv7 identifier",
+        "example": "01900000-0000-7000-8000-00000000000a"
+      },
+      "Money": {
+        "type": "object",
+        "properties": {
+          "amountMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          }
+        },
+        "required": [
+          "amountMinor",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "description": "An amount of money",
+        "example": {
+          "amountMinor": "150000",
+          "currency": "NGN"
+        }
+      }
+    }
+  }
+}

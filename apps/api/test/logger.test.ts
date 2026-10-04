@@ -20,12 +20,24 @@ describe('logger redaction', () => {
       {
         body: { email: 'a@example.test', password: 'p4ss', otp: '123456', accountNumber: '0123456789' },
         session: { token: 'tok', refreshToken: 'rt' },
-        req: { headers: { authorization: 'Bearer abc', cookie: 'sid=1' } },
+        req: { headers: { authorization: 'Bearer abc', cookie: 'sid=1', 'x-csrf-token': 'csrf-value' } },
+        change: { currentPassword: 'old-p4ss', recoveryCode: 'ABCD-EFGH' },
       },
       'event',
     );
     const out = lines.join('');
-    for (const secret of ['p4ss', '123456', '0123456789', 'Bearer abc', 'sid=1', '"tok"', '"rt"']) {
+    for (const secret of [
+      'p4ss',
+      '123456',
+      '0123456789',
+      'Bearer abc',
+      'sid=1',
+      '"tok"',
+      '"rt"',
+      'csrf-value',
+      'old-p4ss',
+      'ABCD-EFGH',
+    ]) {
       expect(out).not.toContain(secret);
     }
     expect(out).toContain('a@example.test');

@@ -33,7 +33,8 @@ export async function createTestApp(
   };
   const email = new InMemoryEmailSender();
   const app = createApp({
-    logger: pino({ level: 'silent' }),
+    // Silent by default; API_TEST_LOG_LEVEL=error shows the cause of any unexpected 500 while investigating.
+    logger: pino({ level: process.env.API_TEST_LOG_LEVEL ?? 'silent' }),
     db,
     auth,
     email,

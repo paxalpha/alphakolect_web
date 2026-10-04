@@ -16,5 +16,9 @@ export default defineConfig({
     globalSetup: ['test/support/global-setup.ts'],
     testTimeout: 30_000,
     hookTimeout: 120_000,
+    // Each worker hashes passwords with argon2 (19 MiB per hash) against the shared test database. One worker
+    // per CPU (11 on a 12-thread laptop) exhausted memory on a busy 8 GB machine — the OS refused allocations,
+    // giving scattered 500s and a crashed worker (investigated 2026-10-04). Four matches a typical CI runner.
+    maxWorkers: 4,
   },
 });

@@ -108,4 +108,11 @@ describe('loadConfig', () => {
       expect.stringMatching(/^TRUST_PROXY must be "false", or a comma-separated list/),
     ]);
   });
+
+  it('accepts a cookie domain and rejects look-alikes', () => {
+    expect(loadConfig({ ...valid, COOKIE_DOMAIN: '.alphakolect.com' }).cookieDomain).toBe('.alphakolect.com');
+    for (const bad of ['alphakolect_com', '.alphakolectXcom', 'https://alphakolect.com']) {
+      expect(problemsOf({ ...valid, COOKIE_DOMAIN: bad }).problems[0], bad).toMatch(/^COOKIE_DOMAIN/);
+    }
+  });
 });

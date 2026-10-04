@@ -124,7 +124,7 @@ const EnvSchema = z.object({
   // Cookie Domain for the web session cookies (production: .alphakolect.com); unset = host-only (D7).
   COOKIE_DOMAIN: z
     .string()
-    .regex(/^.?[a-z0-9-]+(.[a-z0-9-]+)+$/, 'must be a domain such as .alphakolect.com')
+    .regex(/^\.?[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'must be a domain such as .alphakolect.com')
     .optional(),
   // Reverse proxies trusted for the client IP (rate limits, audit): by address only. Default: a proxy on this host.
   TRUST_PROXY: trustedProxies,

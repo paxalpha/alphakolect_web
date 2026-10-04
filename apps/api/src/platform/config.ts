@@ -128,6 +128,31 @@ const EnvSchema = z.object({
     .optional(),
   // Reverse proxies trusted for the client IP (rate limits, audit): by address only. Default: a proxy on this host.
   TRUST_PROXY: trustedProxies,
+  // Outgoing email (ADR-14 D1). May contain credentials; never logged. Default (not in production): local Mailpit.
+  SMTP_URL: z.url({ protocol: /^smtps?$/, error: 'must be an smtp:// or smtps:// URL' }).optional(),
+  MAIL_FROM: z.string().min(3).max(200).optional(),
+  // The web app that serves the links in emails (verify email, reset password). Default (not in production): local.
+  WEB_APP_URL: z
+    .url({ protocol: /^https?$/, error: 'must be an http(s):// URL' })
+    .refine((v) => new URL(v).pathname === '/' && !new URL(v).search && !new URL(v).hash, {
+      message: 'must be an origin such as https://app.alphakolect.com, without a path',
+    })
+    .optional(),
+});
+
+/** Settings that have a convenient local default but must be set explicitly in production. */
+const LOCAL_DEFAULTS = {
+  SMTP_URL: 'smtp://127.0.0.1:1025',
+  MAIL_FROM: 'AlphaKolect <no-reply@alphakolect.local>',
+  WEB_APP_URL: 'http://localhost:3000',
+} as const;
+
+const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
+  if (e.NODE_ENV !== 'production') return;
+  for (const name of Object.keys(LOCAL_DEFAULTS) as Array<keyof typeof LOCAL_DEFAULTS>) {
+    if (e[name] === undefined)
+      ctx.addIssue({ code: 'custom', path: [name], message: 'is required in production' });
+  }
 });
 
 export type Config = Readonly<{
@@ -138,6 +163,9 @@ export type Config = Readonly<{
   webOrigins: ReadonlySet<string>;
   cookieDomain: string | undefined;
   trustProxy: TrustedProxies;
+  email: Readonly<{ smtpUrl: string; from: string }>;
+  /** Origin of the web app, for links in emails. */
+  webAppUrl: string;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -159,7 +187,7 @@ export class ConfigError extends Error {
  * but never include the supplied value, so secrets cannot leak into logs.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const result = EnvSchema.safeParse(env);
+  const result = EnvSchemaWithProductionRules.safeParse(env);
   if (!result.success) {
     const problems = result.error.issues.map((issue) => {
       const name = issue.path.join('.') || '(root)';
@@ -179,6 +207,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webOrigins: e.WEB_ORIGINS,
     cookieDomain: e.COOKIE_DOMAIN,
     trustProxy: e.TRUST_PROXY,
+    email: Object.freeze({
+      smtpUrl: e.SMTP_URL ?? LOCAL_DEFAULTS.SMTP_URL,
+      from: e.MAIL_FROM ?? LOCAL_DEFAULTS.MAIL_FROM,
+    }),
+    webAppUrl: new URL(e.WEB_APP_URL ?? LOCAL_DEFAULTS.WEB_APP_URL).origin,
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

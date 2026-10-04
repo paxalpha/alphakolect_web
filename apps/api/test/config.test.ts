@@ -88,6 +88,39 @@ describe('loadConfig', () => {
     ]);
   });
 
+  it('defaults email to local Mailpit and links to a local web app outside production', () => {
+    const config = loadConfig(valid);
+    expect(config.email.smtpUrl).toBe('smtp://127.0.0.1:1025');
+    expect(config.email.from).toMatch(/@/);
+    expect(config.webAppUrl).toBe('http://localhost:3000');
+  });
+
+  it('requires the email settings and the web app URL in production', () => {
+    expect(problemsOf({ ...valid, NODE_ENV: 'production' }).problems).toEqual([
+      'SMTP_URL is required in production',
+      'MAIL_FROM is required in production',
+      'WEB_APP_URL is required in production',
+    ]);
+    const config = loadConfig({
+      ...valid,
+      NODE_ENV: 'production',
+      SMTP_URL: 'smtps://mailer:pw@smtp.example.com:465', // gitleaks:allow
+      MAIL_FROM: 'AlphaKolect <no-reply@alphakolect.com>',
+      WEB_APP_URL: 'https://app.alphakolect.com/',
+    });
+    expect(config.webAppUrl).toBe('https://app.alphakolect.com');
+  });
+
+  it('rejects a non-SMTP SMTP_URL without echoing it, and a WEB_APP_URL with a path', () => {
+    const { problems, message } = problemsOf({
+      ...valid,
+      SMTP_URL: 'https://user:do-not-print-me@mail.example.com', // gitleaks:allow
+      WEB_APP_URL: 'https://app.alphakolect.com/login',
+    });
+    expect(problems.map((p) => p.split(' ')[0])).toEqual(['SMTP_URL', 'WEB_APP_URL']);
+    expect(message).not.toContain('do-not-print-me');
+  });
+
   it('trusts only reverse proxies named by address (default: this host)', () => {
     expect(loadConfig(valid).trustProxy).toEqual(['loopback']);
     expect(loadConfig({ ...valid, TRUST_PROXY: 'false' }).trustProxy).toBe(false);

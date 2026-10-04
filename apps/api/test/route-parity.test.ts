@@ -1,4 +1,4 @@
-import { endpoints } from '@alphakolect/contracts';
+import { endpoints, type EndpointContract } from '@alphakolect/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestApp } from './support/app.js';
 import { API_PREFIX, toExpressPath } from '../src/platform/http/routes.js';
@@ -62,16 +62,20 @@ describe('Express routes and the contract registry are identical', () => {
     expect(expressRoutes).toEqual(contractRoutes);
   });
 
-  it('mounts authentication in front of every secured endpoint, and only there', () => {
+  it('mounts authentication in front of every secured endpoint and body validation in front of every endpoint with a body, and only there', () => {
     const v1 = appStack.find(isRouter)!;
     const byRoute = new Map(
       v1.handle!.stack!.filter((l) => l.route).map((l) => [l.route!.path, l.route!.stack.map((h) => h.name)]),
     );
-    for (const e of Object.values(endpoints)) {
+    for (const e of Object.values(endpoints) as EndpointContract[]) {
       const chain = byRoute.get(toExpressPath(e.path));
-      const secured = 'security' in e && Array.isArray(e.security) && e.security.length > 0;
-      expect(chain?.[0] === 'authenticateRequest', `${e.id} authentication`).toBe(secured);
-      expect(chain?.length, `${e.id} handler chain`).toBe(secured ? 2 : 1);
+      const secured = (e.security?.length ?? 0) > 0;
+      const hasBody = e.request?.body !== undefined;
+      const expected = [
+        ...(secured ? ['authenticateRequest'] : []),
+        ...(hasBody ? ['validateRequestBody'] : []),
+      ];
+      expect(chain?.slice(0, -1), `${e.id} middleware chain`).toEqual(expected);
     }
   });
 });

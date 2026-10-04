@@ -6,6 +6,7 @@ import { healthHandlers } from '../../modules/health/routes.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { authHandlers } from '../../modules/identity/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
+import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
@@ -18,13 +19,14 @@ export type AppDeps = {
   auth: AuthDeps;
   /** Session cookie Domain (production: .alphakolect.com); host-only when undefined (ADR-14 D7). */
   cookieDomain?: string | undefined;
-  /** Proxy hops trusted for req.ip (rate-limit keys). Default: only a proxy on this host. */
-  trustProxy?: false | 'loopback' | number;
+  /** Reverse proxies whose X-Forwarded-For sets req.ip (rate limits, audit), by address. Default: this host only. */
+  trustProxy?: TrustedProxies;
 };
 
-export function createApp({ logger, db, auth, cookieDomain, trustProxy = 'loopback' }: AppDeps): Express {
+export function createApp({ logger, db, auth, cookieDomain, trustProxy = ['loopback'] }: AppDeps): Express {
   const app = express();
-  app.set('trust proxy', trustProxy);
+  // An array of addresses/subnets (never a hop count): see TrustedProxies.
+  app.set('trust proxy', trustProxy === false ? false : [...trustProxy]);
 
   app.disable('x-powered-by');
 

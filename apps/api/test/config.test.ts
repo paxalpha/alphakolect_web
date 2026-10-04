@@ -87,4 +87,25 @@ describe('loadConfig', () => {
       'PORT',
     ]);
   });
+
+  it('trusts only reverse proxies named by address (default: this host)', () => {
+    expect(loadConfig(valid).trustProxy).toEqual(['loopback']);
+    expect(loadConfig({ ...valid, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+    expect(
+      loadConfig({ ...valid, TRUST_PROXY: 'loopback, 10.0.0.5, 192.168.10.0/24, fd00::/8' }).trustProxy,
+    ).toEqual(['loopback', '10.0.0.5', '192.168.10.0/24', 'fd00::/8']);
+  });
+
+  it.each([
+    ['a hop count (trusts whoever connects)', '1'],
+    ['another hop count', '2'],
+    ['a broad named range', 'uniquelocal'],
+    ['an impossible prefix', '10.0.0.0/33'],
+    ['not an address', 'nginx.internal'],
+    ['empty', ' '],
+  ])('rejects TRUST_PROXY as %s', (_label, value) => {
+    expect(problemsOf({ ...valid, TRUST_PROXY: value }).problems).toEqual([
+      expect.stringMatching(/^TRUST_PROXY must be "false", or a comma-separated list/),
+    ]);
+  });
 });

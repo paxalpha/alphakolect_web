@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { z } from 'zod';
 
 // All configuration comes from the environment and is validated at startup (TARGET_ARCHITECTURE §22).
@@ -68,6 +69,43 @@ const originList = z
     return new Set(origins) as ReadonlySet<string>;
   });
 
+/**
+ * Reverse proxies whose X-Forwarded-For is believed (rate-limit keys, audit IPs). Only proxies named by address
+ * are trusted: "loopback" (a proxy on this host, e.g. nginx) and/or explicit IPs or CIDR subnets. Hop counts are
+ * deliberately not accepted — they trust whoever connects, so a client reaching the listener directly could
+ * forge its IP. "false" trusts nobody (the client IP is the TCP peer).
+ */
+export type TrustedProxies = false | readonly string[];
+
+const proxyEntry = (entry: string): boolean => {
+  if (entry === 'loopback') return true;
+  const [address, prefix, extra] = entry.split('/');
+  const family = isIP(address ?? '');
+  if (!family || extra !== undefined) return false;
+  if (prefix === undefined) return true;
+  const bits = Number(prefix);
+  return /^\d+$/.test(prefix) && bits >= 0 && bits <= (family === 4 ? 32 : 128);
+};
+
+const trustedProxies = z
+  .string()
+  .default('loopback')
+  .transform((value, ctx): TrustedProxies => {
+    if (value.trim() === 'false') return false;
+    const entries = value
+      .split(',')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (entries.length === 0 || !entries.every(proxyEntry)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'must be "false", or a comma-separated list of "loopback", IP addresses and CIDR subnets',
+      });
+      return z.NEVER;
+    }
+    return Object.freeze(entries);
+  });
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -88,8 +126,8 @@ const EnvSchema = z.object({
     .string()
     .regex(/^.?[a-z0-9-]+(.[a-z0-9-]+)+$/, 'must be a domain such as .alphakolect.com')
     .optional(),
-  // Which proxy hops to trust for the client IP (rate limits): 'loopback' trusts only a proxy on this host.
-  TRUST_PROXY: z.enum(['false', 'loopback', '1', '2']).default('loopback'),
+  // Reverse proxies trusted for the client IP (rate limits, audit): by address only. Default: a proxy on this host.
+  TRUST_PROXY: trustedProxies,
 });
 
 export type Config = Readonly<{
@@ -99,7 +137,7 @@ export type Config = Readonly<{
   databaseUrl: string;
   webOrigins: ReadonlySet<string>;
   cookieDomain: string | undefined;
-  trustProxy: false | 'loopback' | number;
+  trustProxy: TrustedProxies;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -140,8 +178,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databaseUrl: e.DATABASE_URL,
     webOrigins: e.WEB_ORIGINS,
     cookieDomain: e.COOKIE_DOMAIN,
-    trustProxy:
-      e.TRUST_PROXY === 'false' ? false : e.TRUST_PROXY === 'loopback' ? 'loopback' : Number(e.TRUST_PROXY),
+    trustProxy: e.TRUST_PROXY,
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

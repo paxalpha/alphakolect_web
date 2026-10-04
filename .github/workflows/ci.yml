@@ -19,8 +19,9 @@ jobs:
     name: Format, lint, typecheck, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # A disposable PostgreSQL 16 (TARGET_ARCHITECTURE §19) for the packages/db tests. The test harness
-    # creates the roles itself (packages/db/sql/bootstrap/roles.sql), then a throwaway database per run.
+    # A disposable PostgreSQL 16 (TARGET_ARCHITECTURE §19) for the packages/db and apps/api tests. The test
+    # harness creates the roles itself (packages/db/sql/bootstrap/roles.sql), then a throwaway, fully migrated
+    # database per test run. The API tests send email to an in-memory adapter, so no mail service is needed.
     # These passwords are CI-only: the container exists for one job and is never reachable externally.
     services:
       postgres:

@@ -35,16 +35,25 @@ legacy/          quarantined legacy application — not built, linted or deploye
 ```bash
 pnpm install
 
-# local database for the new system (127.0.0.1:5436; not the legacy recovery DB)
+# local services (127.0.0.1 only): PostgreSQL 16 on 5436 (not the legacy recovery DB) and
+# Mailpit, which catches every email the API sends — inbox at http://127.0.0.1:8025
 cp infrastructure/.env.example infrastructure/.env        # set all four passwords
 docker compose -f infrastructure/compose.yaml up -d --wait
 
+# schema (as the migrator; packages/db/README.md)
+DATABASE_MIGRATOR_URL=postgresql://alphakolect_migrator:<DB_MIGRATOR_PASSWORD>@127.0.0.1:5436/alphakolect \
+  pnpm --filter @alphakolect/db migrate:deploy
+
 # API (http://127.0.0.1:4000/v1/health)
-cp apps/api/.env.example apps/api/.env                    # DATABASE_URL uses DB_APP_PASSWORD
-pnpm --filter @alphakolect/api dev
+pnpm --filter @alphakolect/api secrets:local              # writes apps/api/.env: DATABASE_URL, signing + MFA keys
+pnpm --filter @alphakolect/api dev                        # other settings: apps/api/.env.example
+
+# first platform super admin (ADR-14 D9): emails a set-password link (see it in Mailpit)
+DATABASE_MIGRATOR_URL=postgresql://alphakolect_migrator:<DB_MIGRATOR_PASSWORD>@127.0.0.1:5436/alphakolect \
+  pnpm --filter @alphakolect/api admin:bootstrap -- --email you@example.com
 ```
 
-Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`. `pnpm test` needs the local database running (the `packages/db` tests use it; see [`packages/db/README.md`](packages/db/README.md)).
+Checks (the same ones CI runs): `pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build`. `pnpm test` needs the local database running: the `packages/db` and `apps/api` tests each build a throwaway, fully migrated database on it (see [`packages/db/README.md`](packages/db/README.md)). The API tests use an in-memory email sender, so they do not need Mailpit.
 
 Secret scan before committing:
 

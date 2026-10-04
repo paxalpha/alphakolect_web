@@ -50,7 +50,7 @@ export class IdentityRepository {
 
   async issueOneTimeToken(
     identityId: string,
-    purpose: 'email_verification' | 'password_reset',
+    purpose: 'email_verification' | 'password_reset' | 'account_setup',
     tokenHash: string,
     ttlSeconds: number,
     ip: string | null,
@@ -76,6 +76,15 @@ export class IdentityRepository {
       tokenHash,
       passwordHash,
     ]);
+    return row?.id ?? null;
+  }
+
+  /** First password through the setup link; also verifies the email (it was sent there). */
+  async completeAccountSetup(tokenHash: string, passwordHash: string): Promise<string | null> {
+    const [row] = await this.db.query<{ id: string | null }>(
+      `SELECT identity.complete_account_setup($1, $2) AS id`,
+      [tokenHash, passwordHash],
+    );
     return row?.id ?? null;
   }
 

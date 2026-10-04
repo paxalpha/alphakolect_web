@@ -42,15 +42,15 @@ async function merchantOwner({ verified = true } = {}) {
   return { email, identityId: signup.identity_id!, merchantId: signup.merchant_id! };
 }
 
-/** A super admin as the bootstrap CLI leaves it, with a password set through the reset flow (D9). */
+/** A super admin as the bootstrap CLI leaves it, after following the set-password link (D9, option A). */
 async function superAdmin({ totp }: { totp: boolean }) {
   const email = uniqueEmail('admin');
   const {
     rows: [{ id }],
   } = await owner.query(`SELECT identity.bootstrap_super_admin($1, true) AS id`, [email]);
-  const reset = newOpaqueToken();
-  await repo.issueOneTimeToken(id, 'password_reset', reset.hash, 1800, null);
-  await repo.resetPassword(reset.hash, await hashPassword(PASSWORD));
+  const setup = newOpaqueToken();
+  await repo.issueOneTimeToken(id, 'account_setup', setup.hash, 86400, null);
+  await repo.completeAccountSetup(setup.hash, await hashPassword(PASSWORD));
   if (totp) {
     await repo.beginTotpEnrollment(id, randomBytes(60), 'test');
     await repo.confirmTotpEnrollment(

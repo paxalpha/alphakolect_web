@@ -18,6 +18,7 @@ import { hashRecoveryCode, newRecoveryCodes } from '../../src/modules/identity/r
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { totpStep } from '../../src/modules/identity/totp.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
+import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
 // /v1/auth login, refresh, logout and session through the real app and database (ADR-14; P3 exit criteria 3, 5,
 // 6, 7, 8, 10, 11).
@@ -25,6 +26,7 @@ import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 const { app, auth } = await createTestApp();
 const repo = auth.identity;
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
+const window = databaseWindow(owner);
 beforeAll(() => owner.connect());
 afterAll(() => owner.end());
 
@@ -271,14 +273,16 @@ describe('POST /v1/auth/login — merchant owner', () => {
   });
 
   it('rate-limits per identifier with 429 and Retry-After (D13, exit criterion 8)', async () => {
-    const email = uniqueEmail('limited');
-    for (let i = 0; i < LIMITS.login.perIdentifier; i++) {
-      expect((await login({ email, password: 'whatever it is', audience: 'merchant' })).status).toBe(401);
-    }
-    const res = await login({ email, password: 'whatever it is', audience: 'merchant' });
-    expect(res.status).toBe(429);
-    expect(res.body.error.code).toBe('RATE_LIMITED');
-    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    await inOneWindow(window, LIMITS.login.windowSeconds, async () => {
+      const email = uniqueEmail('limited');
+      for (let i = 0; i < LIMITS.login.perIdentifier; i++) {
+        expect((await login({ email, password: 'whatever it is', audience: 'merchant' })).status).toBe(401);
+      }
+      const res = await login({ email, password: 'whatever it is', audience: 'merchant' });
+      expect(res.status).toBe(429);
+      expect(res.body.error.code).toBe('RATE_LIMITED');
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    });
   });
 
   it('accepts only JSON, so a cross-site HTML form cannot sign a victim in (login CSRF)', async () => {

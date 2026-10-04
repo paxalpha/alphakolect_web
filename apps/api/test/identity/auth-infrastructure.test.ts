@@ -13,9 +13,11 @@ import { LIMITS, RateLimiter } from '../../src/modules/identity/rate-limits.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
 import { resolveRequestId } from '../../src/platform/http/request-id.js';
 import { createTestApp } from '../support/app.js';
+import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
 const { auth, db } = await createTestApp();
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
+const window = databaseWindow(owner);
 beforeAll(() => owner.connect());
 afterAll(() => owner.end());
 
@@ -69,25 +71,33 @@ describe('AuditLog (as alphakolect_app, through RLS)', () => {
 describe('RateLimiter (D13)', () => {
   it('refuses with 429 and a retry-after once the per-identifier limit is reached', async () => {
     const limiter = new RateLimiter(auth.identity);
-    const id = `limit-${randomBytes(4).toString('hex')}@example.test`;
-    for (let i = 0; i < LIMITS.login.perIdentifier; i++) {
-      await limiter.enforce('login', `10.0.${i}.1`, id);
-    }
-    await expect(limiter.enforce('login', '10.9.9.9', id)).rejects.toMatchObject({
-      status: 429,
-      code: 'RATE_LIMITED',
-      details: { retryAfterSeconds: expect.any(Number) },
+    await inOneWindow(window, LIMITS.login.windowSeconds, async () => {
+      const id = `limit-${randomBytes(4).toString('hex')}@example.test`;
+      for (let i = 0; i < LIMITS.login.perIdentifier; i++) {
+        await limiter.enforce('login', `10.0.${i}.1`, id);
+      }
+      await expect(limiter.enforce('login', '10.9.9.9', id)).rejects.toMatchObject({
+        status: 429,
+        code: 'RATE_LIMITED',
+        details: { retryAfterSeconds: expect.any(Number) },
+      });
     });
   });
 
   it('limits per IP independently of the identifier', async () => {
     const limiter = new RateLimiter(auth.identity);
-    const ip = `192.0.2.${Math.floor(Math.random() * 200)}-${randomBytes(3).toString('hex')}`;
-    for (let i = 0; i < LIMITS.password_forgot.perIp; i++) {
-      await limiter.enforce('password_forgot', ip, `user${i}-${randomBytes(3).toString('hex')}@example.test`);
-    }
-    await expect(limiter.enforce('password_forgot', ip, 'fresh@example.test')).rejects.toMatchObject({
-      status: 429,
+    await inOneWindow(window, LIMITS.password_forgot.windowSeconds, async () => {
+      const ip = `192.0.2.${Math.floor(Math.random() * 200)}-${randomBytes(3).toString('hex')}`;
+      for (let i = 0; i < LIMITS.password_forgot.perIp; i++) {
+        await limiter.enforce(
+          'password_forgot',
+          ip,
+          `user${i}-${randomBytes(3).toString('hex')}@example.test`,
+        );
+      }
+      await expect(limiter.enforce('password_forgot', ip, 'fresh@example.test')).rejects.toMatchObject({
+        status: 429,
+      });
     });
   });
 
@@ -103,23 +113,25 @@ describe('RateLimiter (D13)', () => {
 
   it('sends Retry-After on the 429 response', async () => {
     const limiter = new RateLimiter(auth.identity);
-    const id = `retry-${randomBytes(4).toString('hex')}@example.test`;
-    const app = express();
-    app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
-    app.post('/try', async (_req, res, next) => {
-      try {
-        await limiter.enforce('mfa', '198.51.100.1', id);
-        res.status(204).end();
-      } catch (err) {
-        next(err);
-      }
+    await inOneWindow(window, LIMITS.mfa.windowSeconds, async () => {
+      const id = `retry-${randomBytes(4).toString('hex')}@example.test`;
+      const app = express();
+      app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+      app.post('/try', async (_req, res, next) => {
+        try {
+          await limiter.enforce('mfa', '198.51.100.1', id);
+          res.status(204).end();
+        } catch (err) {
+          next(err);
+        }
+      });
+      app.use(errorHandler);
+      let res = await request(app).post('/try');
+      for (let i = 1; i <= LIMITS.mfa.perIdentifier; i++) res = await request(app).post('/try');
+      expect(res.status).toBe(429);
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+      expect(res.body.error.code).toBe('RATE_LIMITED');
     });
-    app.use(errorHandler);
-    let res = await request(app).post('/try');
-    for (let i = 1; i <= LIMITS.mfa.perIdentifier; i++) res = await request(app).post('/try');
-    expect(res.status).toBe(429);
-    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
-    expect(res.body.error.code).toBe('RATE_LIMITED');
   });
 });
 

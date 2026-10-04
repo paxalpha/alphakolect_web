@@ -7,12 +7,14 @@ import { LIMITS } from '../../src/modules/identity/rate-limits.js';
 import { AppError } from '../../src/platform/errors.js';
 import type { EmailSender } from '../../src/platform/email.js';
 import { createTestApp, TEST_WEB_APP_URL } from '../support/app.js';
+import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
 // Signup, email verification and resend through the real app and database (ADR-14 D1, D2, D10, D12, D13, D14;
 // P3 exit criteria 2, 3, 8, 11).
 
 const { app, email } = await createTestApp();
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
+const window = databaseWindow(owner);
 beforeAll(() => owner.connect());
 afterAll(() => owner.end());
 
@@ -200,19 +202,23 @@ describe('password policy and limits', () => {
   );
 
   it('limits signups per email (D13)', async () => {
-    const address = uniqueEmail('signup-limit');
-    for (let i = 0; i < LIMITS.signup.perIdentifier; i++) expect((await signup(address)).status).toBe(202);
-    const res = await signup(address);
-    expect(res.status).toBe(429);
-    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    await inOneWindow(window, LIMITS.signup.windowSeconds, async () => {
+      const address = uniqueEmail('signup-limit');
+      for (let i = 0; i < LIMITS.signup.perIdentifier; i++) expect((await signup(address)).status).toBe(202);
+      const res = await signup(address);
+      expect(res.status).toBe(429);
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    });
   });
 
   it('limits resends to 3 per hour per email (D12)', async () => {
-    const address = uniqueEmail('resend-limit');
-    for (let i = 0; i < LIMITS.verification_resend.perIdentifier; i++) {
-      expect((await resend(address)).status).toBe(202);
-    }
-    expect((await resend(address)).status).toBe(429);
+    await inOneWindow(window, LIMITS.verification_resend.windowSeconds, async () => {
+      const address = uniqueEmail('resend-limit');
+      for (let i = 0; i < LIMITS.verification_resend.perIdentifier; i++) {
+        expect((await resend(address)).status).toBe(202);
+      }
+      expect((await resend(address)).status).toBe(429);
+    });
   });
 });
 

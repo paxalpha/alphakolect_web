@@ -7,6 +7,7 @@ import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { LIMITS } from '../../src/modules/identity/rate-limits.js';
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app.js';
+import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
 // Forgot / reset / first-password setup / change through the real app and database (§3.2; ADR-14 D5, D9, D10,
 // D12 and the 2026-10-04 clarifications; P3 exit criteria 4, 6, 8, 11).
@@ -14,6 +15,7 @@ import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app
 const { app, auth, email } = await createTestApp();
 const repo = auth.identity;
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
+const window = databaseWindow(owner);
 beforeAll(() => owner.connect());
 afterAll(() => owner.end());
 
@@ -106,10 +108,12 @@ describe('forgot (D12, exit criterion 4)', () => {
   });
 
   it('limits requests per email (D13)', async () => {
-    const address = uniqueEmail('forgot-limit');
-    for (let i = 0; i < LIMITS.password_forgot.perIdentifier; i++)
-      expect((await forgot(address)).status).toBe(202);
-    expect((await forgot(address)).status).toBe(429);
+    await inOneWindow(window, LIMITS.password_forgot.windowSeconds, async () => {
+      const address = uniqueEmail('forgot-limit');
+      for (let i = 0; i < LIMITS.password_forgot.perIdentifier; i++)
+        expect((await forgot(address)).status).toBe(202);
+      expect((await forgot(address)).status).toBe(429);
+    });
   });
 });
 

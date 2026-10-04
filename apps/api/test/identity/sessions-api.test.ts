@@ -344,6 +344,35 @@ describe('POST /v1/auth/refresh (exit criterion 5)', () => {
     expect((await refresh(next)).status).toBe(200);
   });
 
+  it('audits every successful refresh, lightly and without any token (P3.5 review)', async () => {
+    const m = await merchantOwner();
+    const signin = await login({ email: m.email, password: PASSWORD, audience: 'merchant' });
+    const jar = jarOf(signin);
+    const res = await refresh(jar);
+    const [row] = await auditRows(res.headers['x-request-id']);
+    expect(row).toEqual({
+      action: 'auth.refresh',
+      outcome: 'success',
+      merchant_id: m.merchantId,
+      actor_identity_id: m.identityId,
+      actor_audience: 'merchant',
+      summary: {},
+    });
+    const {
+      rows: [full],
+    } = await owner.query(`SELECT * FROM audit.audit_events WHERE request_id = $1`, [
+      res.headers['x-request-id'],
+    ]);
+    const stored = JSON.stringify(full);
+    for (const secret of [jar.access, jar.refresh, jar.csrf, ...Object.values(jarOf(res))]) {
+      expect(stored).not.toContain(secret);
+    }
+    expect(full).toMatchObject({
+      target_type: 'session',
+      target_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    });
+  });
+
   it('reuse of a rotated token ends the session for everyone, clears cookies and is audited', async () => {
     const jar = await signedIn();
     const next = jarOf(await refresh(jar));
@@ -357,19 +386,28 @@ describe('POST /v1/auth/refresh (exit criterion 5)', () => {
     expect((await getSession(next)).status).toBe(401);
     expect(await auditRows(replay.headers['x-request-id'])).toEqual([
       expect.objectContaining({
-        action: 'auth.refresh',
+        action: 'auth.refresh_token_reuse',
         outcome: 'denied',
-        summary: { reason: 'refresh_token_reuse', sessionRevoked: true },
+        summary: { severity: 'high', sessionRevoked: true },
       }),
     ]);
   });
 
-  it('a missing or malformed refresh cookie gets 401 and cleared cookies', async () => {
+  it('a missing, malformed or unknown refresh cookie gets 401, cleared cookies and a failure audit', async () => {
     const jar = await signedIn();
-    for (const res of [await refresh({ csrf: jar.csrf }), await refresh({ ...jar, refresh: 'nope' })]) {
+    const cases: Array<[Partial<Jar>, string]> = [
+      [{ csrf: jar.csrf }, 'no_token'],
+      [{ ...jar, refresh: 'nope' }, 'malformed_token'],
+      [{ ...jar, refresh: newOpaqueToken().raw }, 'invalid_or_expired'],
+    ];
+    for (const [cookies, reason] of cases) {
+      const res = await refresh(cookies);
       expect(res.status).toBe(401);
       expect(res.body.error.code).toBe('INVALID_OR_EXPIRED_TOKEN');
       expect(setCookies(res).get(AUTH_COOKIES.access)!.value).toBe('');
+      expect(await auditRows(res.headers['x-request-id'])).toEqual([
+        expect.objectContaining({ action: 'auth.refresh', outcome: 'failure', summary: { reason } }),
+      ]);
     }
   });
 

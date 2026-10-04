@@ -184,34 +184,53 @@ export class SessionService {
     };
   }
 
-  /** Rotate a refresh token (§3.2). Reuse of a spent token ends the whole session (exit criterion 5). */
+  /**
+   * Rotate a refresh token (§3.2). Reuse of a spent token ends the whole session (exit criterion 5).
+   * Every outcome is audited (P3.5 review): success lightly; failure; and reuse as a distinct, high-severity
+   * security event. Tokens never reach the audit log.
+   */
   async refresh(rawRefreshToken: string | undefined, ctx: RequestContext): Promise<IssuedSession> {
     const { identity, accessTokens, audit, limiter } = this.deps;
     await limiter.enforce('refresh', ctx.ip);
+    const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
+    const failed = async (reason: string) => {
+      await audit.record({ action: 'auth.refresh', outcome: 'failure', ...request, summary: { reason } });
+      return invalidRefresh();
+    };
 
     const oldHash = hashReceivedToken(rawRefreshToken);
-    if (!oldHash) throw invalidRefresh();
+    if (!oldHash) throw await failed(rawRefreshToken ? 'malformed_token' : 'no_token');
 
     const next = newOpaqueToken();
     const rotated = await identity.rotateRefreshToken(oldHash, next.hash);
     if (rotated.outcome === 'reuse_detected') {
       await audit.record({
-        action: 'auth.refresh',
+        action: 'auth.refresh_token_reuse',
         outcome: 'denied',
         actorIdentityId: rotated.identity_id,
         targetType: 'session',
         targetId: rotated.session_id,
-        ip: ctx.ip,
-        userAgent: ctx.userAgent,
-        requestId: ctx.requestId,
-        summary: { reason: 'refresh_token_reuse', sessionRevoked: true },
+        ...request,
+        summary: { severity: 'high', sessionRevoked: true },
       });
       throw invalidRefresh();
     }
-    if (rotated.outcome !== 'rotated') throw invalidRefresh();
+    if (rotated.outcome !== 'rotated') throw await failed('invalid_or_expired');
 
     const valid = await identity.validateSession(rotated.session_id!);
-    if (!valid) throw invalidRefresh();
+    if (!valid) throw await failed('invalid_or_expired');
+
+    await audit.record({
+      action: 'auth.refresh',
+      outcome: 'success',
+      merchantId: valid.merchant_id,
+      actorIdentityId: valid.identity_id,
+      actorAudience: valid.audience,
+      actorMembershipId: valid.membership_id,
+      targetType: 'session',
+      targetId: rotated.session_id,
+      ...request,
+    });
     return {
       session: toSession(valid),
       tokens: {

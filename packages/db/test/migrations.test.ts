@@ -66,18 +66,30 @@ describe('migrations from zero (P1 exit criterion)', () => {
     expect(rows.map((r) => r.migration_name)).toEqual(onDisk);
   });
 
-  it('re-running migrate deploy is a no-op', () => {
-    expect(migrateDeploy(inject('testDatabase'))).toMatch(/No pending migrations to apply/);
-  });
+  // These two start the Prisma CLI as a child process, which took 44 s on a memory-starved machine
+  // (2026-10-04) — longer than the 30 s default — so they get more time. The assertions are unchanged.
+  const CLI_TIMEOUT_MS = 120_000;
 
-  it('schema.prisma matches the migrated database exactly (no drift)', () => {
-    // Exit code 0 = no difference, 2 = the schema and the migrations disagree.
-    const { status, output } = runPrisma(
-      ['migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'],
-      inject('testDatabase'),
-    );
-    expect(status, output).toBe(0);
-  });
+  it(
+    're-running migrate deploy is a no-op',
+    () => {
+      expect(migrateDeploy(inject('testDatabase'))).toMatch(/No pending migrations to apply/);
+    },
+    CLI_TIMEOUT_MS,
+  );
+
+  it(
+    'schema.prisma matches the migrated database exactly (no drift)',
+    () => {
+      // Exit code 0 = no difference, 2 = the schema and the migrations disagree.
+      const { status, output } = runPrisma(
+        ['migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'],
+        inject('testDatabase'),
+      );
+      expect(status, output).toBe(0);
+    },
+    CLI_TIMEOUT_MS,
+  );
 
   it('created one schema per module (TARGET_ARCHITECTURE §19)', async () => {
     const { rows } = await owner.query(

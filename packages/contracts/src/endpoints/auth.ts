@@ -298,3 +298,107 @@ export const changePassword = defineEndpoint({
     429: rateLimited,
   },
 });
+
+// ── MFA: TOTP enrolment and the login second step (D8) ──────────────────────────────────────────
+// The two enrolment responses are the only ones that ever carry a secret: the TOTP secret (to add it to an
+// authenticator app) and the 10 recovery codes (shown once). Both are sent with Cache-Control: no-store.
+
+export const TotpEnrollment = z
+  .object({
+    /** otpauth:// URI for a QR code. */
+    otpauthUri: z.string().startsWith('otpauth://totp/'),
+    /** The same secret, base32, for typing in by hand. */
+    secret: z.string().regex(/^[A-Z2-7]+$/),
+  })
+  .meta({ id: 'TotpEnrollment', description: 'Shown once. Not stored by the client.' });
+
+export type TotpEnrollment = z.infer<typeof TotpEnrollment>;
+
+export const TotpCode = z
+  .string()
+  .regex(/^\d{6}$/, 'must be the 6-digit code')
+  .meta({ id: 'TotpCode' });
+
+export const ConfirmTotpRequest = z.object({ code: TotpCode }).meta({ id: 'ConfirmTotpRequest' });
+
+export type ConfirmTotpRequest = z.infer<typeof ConfirmTotpRequest>;
+
+export const TotpEnrolled = z
+  .object({
+    session: Session,
+    /** 10 single-use recovery codes. Shown once: store them somewhere safe. */
+    recoveryCodes: z.array(z.string()).length(10),
+  })
+  .meta({ id: 'TotpEnrolled' });
+
+export type TotpEnrolled = z.infer<typeof TotpEnrolled>;
+
+export const VerifyMfaRequest = z
+  .union([z.strictObject({ code: TotpCode }), z.strictObject({ recoveryCode: z.string().min(1).max(64) })])
+  .meta({
+    id: 'VerifyMfaRequest',
+    description: 'Either the current authenticator code or one recovery code',
+  });
+
+export type VerifyMfaRequest = z.infer<typeof VerifyMfaRequest>;
+
+const NoStore = z.object({
+  'Cache-Control': z.literal('no-store').meta({ description: 'The body holds a secret shown once' }),
+});
+
+export const beginTotpEnrollment = defineEndpoint({
+  id: 'beginTotpEnrollment',
+  method: 'post',
+  path: '/v1/auth/mfa/totp/enrollment',
+  audience: 'platform',
+  summary: 'Start TOTP enrolment: a new secret for an authenticator app',
+  security: ['cookieSession'],
+  sessionScope: 'mfa_enrollment',
+  responses: {
+    200: {
+      description: 'A new, unconfirmed secret (replaces any earlier unconfirmed one)',
+      schema: TotpEnrollment,
+      headers: NoStore,
+    },
+    409: error('MFA_ALREADY_ENROLLED'),
+  },
+});
+
+export const confirmTotpEnrollment = defineEndpoint({
+  id: 'confirmTotpEnrollment',
+  method: 'post',
+  path: '/v1/auth/mfa/totp/confirm',
+  audience: 'platform',
+  summary: 'Confirm TOTP enrolment with a code; the enrolment session becomes a full session',
+  security: ['cookieSession'],
+  sessionScope: 'mfa_enrollment',
+  request: { body: ConfirmTotpRequest },
+  responses: {
+    200: {
+      description: 'Enrolled: a full session (new cookies) and the recovery codes, shown once',
+      schema: TotpEnrolled,
+      headers: SetCookie.extend(NoStore.shape),
+    },
+    400: error('VALIDATION_ERROR'),
+    401: error('INVALID_MFA_CODE'),
+    409: error('MFA_ALREADY_ENROLLED — or enrolment was not started'),
+    429: rateLimited,
+  },
+});
+
+export const verifyMfa = defineEndpoint({
+  id: 'verifyMfa',
+  method: 'post',
+  path: '/v1/auth/mfa/verify',
+  audience: 'public',
+  summary: 'Second login step for platform accounts (uses the MFA challenge cookie set by login)',
+  request: { body: VerifyMfaRequest },
+  responses: {
+    200: { description: 'Signed in', schema: LoginResponse, headers: SetCookie },
+    400: error('VALIDATION_ERROR'),
+    401: error(
+      'INVALID_MFA_CODE (try again; 5 attempts per challenge) or INVALID_OR_EXPIRED_TOKEN (sign in again)',
+    ),
+    429: rateLimited,
+  },
+});

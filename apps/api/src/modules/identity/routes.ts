@@ -1,6 +1,7 @@
 import {
   AUTH_COOKIES,
   type ChangePasswordRequest,
+  type ConfirmTotpRequest,
   type ForgotPasswordRequest,
   type LoginRequest,
   type PasswordEmailPending,
@@ -9,17 +10,23 @@ import {
   type ResendVerificationRequest,
   type Session,
   type SignupRequest,
+  type TotpEnrolled,
+  type TotpEnrollment,
   type VerificationPending,
   type VerifyEmailRequest,
+  type VerifyMfaRequest,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler, Response } from 'express';
 import { AppError } from '../../platform/errors.js';
 import { assertCsrf, parseCookies, type AuthContext } from '../../platform/http/authenticate.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from './access-tokens.js';
 import type { AccountService } from './accounts.js';
+import type { MfaService } from './mfa.js';
 import type { PasswordService } from './password-flows.js';
 import {
+  clearMfaChallengeCookie,
   clearSessionCookies,
+  MFA_CHALLENGE_COOKIE,
   setMfaChallengeCookie,
   setSessionCookies,
   type CookieSettings,
@@ -170,4 +177,43 @@ export function passwordHandlers({
   };
 
   return { forgotPassword, resetPassword, completeAccountSetup, changePassword };
+}
+
+/** TOTP enrolment (enrolment-only session) and the login second step (MFA challenge cookie), D8. */
+export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: CookieSettings }) {
+  const beginTotpEnrollment: RequestHandler = async (req, res) => {
+    const body: TotpEnrollment = await mfa.beginEnrollment(req.auth!, contextOf(req));
+    res.set('Cache-Control', 'no-store').json(body);
+  };
+
+  const confirmTotpEnrollment: RequestHandler = async (req, res) => {
+    const { issued, recoveryCodes } = await mfa.confirmEnrollment(
+      req.auth!,
+      (req.body as ConfirmTotpRequest).code,
+      contextOf(req),
+    );
+    // A new, full session replaces the enrolment one; the page keeps its CSRF token.
+    const csrf = parseCookies(req.headers.cookie).get(AUTH_COOKIES.csrf) ?? newOpaqueToken().raw;
+    setCookiesFor(res, cookies, issued.tokens, csrf);
+    const body: TotpEnrolled = { session: issued.session, recoveryCodes };
+    res.set('Cache-Control', 'no-store').json(body);
+  };
+
+  const verifyMfa: RequestHandler = async (req, res) => {
+    const challenge = parseCookies(req.headers.cookie).get(MFA_CHALLENGE_COOKIE);
+    try {
+      const issued = await mfa.verifyChallenge(challenge, req.body as VerifyMfaRequest, contextOf(req));
+      clearMfaChallengeCookie(res, cookies);
+      setCookiesFor(res, cookies, issued.tokens, newOpaqueToken().raw);
+      const body: LoginResponse = { status: 'authenticated', session: issued.session };
+      res.json(body);
+    } catch (err) {
+      // A wrong code keeps the challenge (up to 5 attempts); a dead challenge means signing in again.
+      if (err instanceof AppError && err.code === 'INVALID_OR_EXPIRED_TOKEN')
+        clearMfaChallengeCookie(res, cookies);
+      throw err;
+    }
+  };
+
+  return { beginTotpEnrollment, confirmTotpEnrollment, verifyMfa };
 }

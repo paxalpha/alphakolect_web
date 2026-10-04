@@ -2,8 +2,10 @@
 // No application behaviour, database access, Express handlers, authentication or business rules.
 
 import {
+  beginTotpEnrollment,
   changePassword,
   completeAccountSetup,
+  confirmTotpEnrollment,
   forgotPassword,
   getSession,
   login,
@@ -13,6 +15,7 @@ import {
   resetPassword,
   signup,
   verifyEmail,
+  verifyMfa,
 } from './endpoints/auth.js';
 import { getHealth } from './endpoints/health.js';
 
@@ -36,6 +39,9 @@ export const endpoints = {
   resetPassword,
   completeAccountSetup,
   changePassword,
+  beginTotpEnrollment,
+  confirmTotpEnrollment,
+  verifyMfa,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

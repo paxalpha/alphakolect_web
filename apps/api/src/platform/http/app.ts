@@ -5,8 +5,15 @@ import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
 import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
+import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
-import { accountHandlers, authHandlers, passwordHandlers } from '../../modules/identity/routes.js';
+import {
+  accountHandlers,
+  authHandlers,
+  mfaHandlers,
+  passwordHandlers,
+} from '../../modules/identity/routes.js';
+import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
@@ -28,6 +35,8 @@ export type AppDeps = {
   email: EmailSender;
   /** Origin of the web app, for links in emails. */
   webAppUrl: string;
+  /** TOTP secret encryption keys (ADR-14 D8): the current one seals; the previous one (if any) still opens. */
+  mfaEncryption: { current: EncryptionKey; previous?: EncryptionKey | undefined };
   /** D14: CAPTCHA hook for signup (P15). */
   signupGuard?: SignupGuard;
 };
@@ -41,6 +50,7 @@ export function createApp({
   email,
   webAppUrl,
   signupGuard,
+  mfaEncryption,
 }: AppDeps): Express {
   const app = express();
   // An array of addresses/subnets (never a hop count): see TrustedProxies.
@@ -77,11 +87,19 @@ export function createApp({
   });
   const passwords = new PasswordService({ identity: auth.identity, audit, limiter, mailer, webAppUrl });
   const cookies = { domain: cookieDomain };
+  const mfa = new MfaService({
+    identity: auth.identity,
+    sessions,
+    secretBox: new SecretBox(mfaEncryption.current, mfaEncryption.previous),
+    audit,
+    limiter,
+  });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
     ...accountHandlers({ accounts }),
     ...passwordHandlers({ passwords, cookies }),
+    ...mfaHandlers({ mfa, cookies }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

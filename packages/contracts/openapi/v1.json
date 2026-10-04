@@ -862,6 +862,276 @@
           }
         }
       }
+    },
+    "/v1/auth/mfa/totp/enrollment": {
+      "post": {
+        "operationId": "beginTotpEnrollment",
+        "summary": "Start TOTP enrolment: a new secret for an authenticator app",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A new, unconfirmed secret (replaces any earlier unconfirmed one)",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "The body holds a secret shown once",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "The body holds a secret shown once"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrollment"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MFA_ALREADY_ENROLLED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/mfa/totp/confirm": {
+      "post": {
+        "operationId": "confirmTotpEnrollment",
+        "summary": "Confirm TOTP enrolment with a code; the enrolment session becomes a full session",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmTotpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enrolled: a full session (new cookies) and the recovery codes, shown once",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              },
+              "Cache-Control": {
+                "required": true,
+                "description": "The body holds a secret shown once",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "The body holds a secret shown once"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrolled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_MFA_CODE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MFA_ALREADY_ENROLLED — or enrolment was not started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/mfa/verify": {
+      "post": {
+        "operationId": "verifyMfa",
+        "summary": "Second login step for platform accounts (uses the MFA challenge cookie set by login)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMfaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_MFA_CODE (try again; 5 attempts per challenge) or INVALID_OR_EXPIRED_TOKEN (sign in again)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -996,6 +1266,52 @@
           "currentPassword",
           "newPassword"
         ]
+      },
+      "ConfirmTotpRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/TotpCode"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "TotpCode": {
+        "type": "string",
+        "pattern": "^\\d{6}$"
+      },
+      "VerifyMfaRequest": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/TotpCode"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "recoveryCode": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "recoveryCode"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "Either the current authenticator code or one recovery code"
       },
       "AmountMinor": {
         "type": "string",
@@ -1186,6 +1502,47 @@
         ],
         "additionalProperties": false,
         "description": "If the email has an account, a link has been sent to it. Identical for every email."
+      },
+      "TotpEnrollment": {
+        "type": "object",
+        "properties": {
+          "otpauthUri": {
+            "type": "string",
+            "format": "starts_with",
+            "pattern": "^otpauth:\\/\\/totp\\/.*"
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^[A-Z2-7]+$"
+          }
+        },
+        "required": [
+          "otpauthUri",
+          "secret"
+        ],
+        "additionalProperties": false,
+        "description": "Shown once. Not stored by the client."
+      },
+      "TotpEnrolled": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "recoveryCodes": {
+            "minItems": 10,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "session",
+          "recoveryCodes"
+        ],
+        "additionalProperties": false
       },
       "Id": {
         "type": "string",

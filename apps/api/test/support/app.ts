@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { pino } from 'pino';
 import { afterAll, inject } from 'vitest';
 import { AccessTokens } from '../../src/modules/identity/access-tokens.js';
@@ -10,6 +11,8 @@ import { newSigningJwk } from './keys.js';
 
 export const TEST_WEB_ORIGIN = 'https://app.alphakolect.test';
 export const TEST_WEB_APP_URL = TEST_WEB_ORIGIN;
+/** A throwaway TOTP-secret encryption key for the test run. */
+export const TEST_MFA_KEY = { kid: 'test-mfa', key: randomBytes(32) };
 
 /**
  * The real app wired to the run's test database (as alphakolect_app) and a throwaway signing key.
@@ -35,6 +38,7 @@ export async function createTestApp(
     auth,
     email,
     webAppUrl: TEST_WEB_APP_URL,
+    mfaEncryption: { current: TEST_MFA_KEY },
     ...options,
   });
   return { app, db, auth, email };

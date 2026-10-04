@@ -28,6 +28,10 @@ const app = createApp({
   db,
   email,
   webAppUrl: config.webAppUrl,
+  mfaEncryption: {
+    current: config.auth.mfaEncryptionKey,
+    previous: config.auth.previousMfaEncryptionKey,
+  },
   cookieDomain: config.cookieDomain,
   trustProxy: config.trustProxy,
   auth: {

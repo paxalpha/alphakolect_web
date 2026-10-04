@@ -138,6 +138,15 @@ Concrete values for §3.1–§3.2, decided before P3 implementation (P3 readines
 | D15 Hashing library | ~~`@node-rs/argon2`~~ **`hash-wasm` (amended 2026-10-03, owner-approved):** Windows Application Control on the development PC blocks `@node-rs/argon2`'s unsigned native binary; `hash-wasm` runs the same argon2id in WebAssembly, identically locally, in CI and in production. Unchanged: argon2id m = 19 MiB, t = 2, p = 1 (OWASP minimum; may be raised), with rehash on login when parameters change. |
 | D16 Multiple memberships | Deferred to P4 (an owner has exactly one membership in P3). |
 
+**P3.5 review decisions (2026-10-04, owner-approved; appended, D1–D16 unchanged):**
+
+| Item | Decision |
+|---|---|
+| Refresh auditing | **Every refresh outcome is audited** (exit criterion 11): a successful refresh as a lightweight `auth.refresh` event (identity, session, audience, request metadata); failures as `auth.refresh` failures; reuse of a rotated token as the distinct, high-severity `auth.refresh_token_reuse` event. No token or other secret is ever recorded. |
+| Login CSRF | Kept as implemented: login accepts only `application/json`, which a cross-site HTML form cannot send without a CORS preflight. No CSRF token on login; D7's CSRF rule stays for cookie-authenticated state changes. |
+| Client IP | `X-Forwarded-For` is believed **only from a configured trusted reverse proxy, named by address** (`TRUST_PROXY`: `loopback` by default, or explicit IPs/CIDR subnets; hop counts are refused because they trust whoever connects). Production invariant: the API listener is reachable only through the proxy (nginx on the host, firewall). |
+| Password reset and verification | **A password reset does not verify an email address.** Only the email-verification flow verifies an identity and moves its merchant from `pending_verification` to `active`. Implemented in P3.7 (the P3 `reset_password` function currently also sets `email_verified_at`; a new migration removes that). |
+
 ---
 
 ## 4. Multi-tenancy model

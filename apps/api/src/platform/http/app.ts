@@ -10,10 +10,13 @@ import { API_PREFIX, buildV1Router } from './routes.js';
 export type AppDeps = {
   logger: Logger;
   auth: AuthDeps;
+  /** Proxy hops trusted for req.ip (rate-limit keys). Default: only a proxy on this host. */
+  trustProxy?: false | 'loopback' | number;
 };
 
-export function createApp({ logger, auth }: AppDeps): Express {
+export function createApp({ logger, auth, trustProxy = 'loopback' }: AppDeps): Express {
   const app = express();
+  app.set('trust proxy', trustProxy);
 
   app.disable('x-powered-by');
 

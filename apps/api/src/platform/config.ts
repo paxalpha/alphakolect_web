@@ -83,6 +83,13 @@ const EnvSchema = z.object({
   MFA_ENCRYPTION_KEY_PREVIOUS: encryptionKey.optional(),
   // CSRF defence (ADR-14 D7): empty means no origin may make cookie-authenticated state changes.
   WEB_ORIGINS: originList,
+  // Cookie Domain for the web session cookies (production: .alphakolect.com); unset = host-only (D7).
+  COOKIE_DOMAIN: z
+    .string()
+    .regex(/^.?[a-z0-9-]+(.[a-z0-9-]+)+$/, 'must be a domain such as .alphakolect.com')
+    .optional(),
+  // Which proxy hops to trust for the client IP (rate limits): 'loopback' trusts only a proxy on this host.
+  TRUST_PROXY: z.enum(['false', 'loopback', '1', '2']).default('loopback'),
 });
 
 export type Config = Readonly<{
@@ -91,6 +98,8 @@ export type Config = Readonly<{
   logLevel: z.infer<typeof EnvSchema>['LOG_LEVEL'];
   databaseUrl: string;
   webOrigins: ReadonlySet<string>;
+  cookieDomain: string | undefined;
+  trustProxy: false | 'loopback' | number;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -130,6 +139,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
     webOrigins: e.WEB_ORIGINS,
+    cookieDomain: e.COOKIE_DOMAIN,
+    trustProxy:
+      e.TRUST_PROXY === 'false' ? false : e.TRUST_PROXY === 'loopback' ? 'loopback' : Number(e.TRUST_PROXY),
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

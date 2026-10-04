@@ -123,3 +123,85 @@ export const getSession = defineEndpoint({
     200: { description: 'The current session', schema: Session },
   },
 });
+
+// ── signup and email verification (D2, D12) ─────────────────────────────────────────────────────
+
+export const NewPassword = z.string().min(1).max(1024).meta({
+  id: 'NewPassword',
+  description:
+    '12-128 characters, no composition rules; very common passwords are refused (422 WEAK_PASSWORD, D10)',
+});
+
+export const SignupRequest = z
+  .object({
+    email: Email,
+    password: NewPassword,
+    businessName: z.string().trim().min(2).max(120),
+  })
+  .meta({ id: 'SignupRequest' });
+
+export type SignupRequest = z.infer<typeof SignupRequest>;
+
+/** The same answer whether or not the email already has an account (D12). */
+export const VerificationPending = z.object({ status: z.literal('verification_email_sent') }).meta({
+  id: 'VerificationPending',
+  description: 'If the email can receive a verification link, one has been sent. Identical for every email.',
+});
+
+export type VerificationPending = z.infer<typeof VerificationPending>;
+
+export const VerifyEmailRequest = z
+  .object({
+    /** From the link in the verification email (sent in the URL fragment, never to a server log). */
+    token: z.string().min(1).max(256),
+  })
+  .meta({ id: 'VerifyEmailRequest' });
+
+export type VerifyEmailRequest = z.infer<typeof VerifyEmailRequest>;
+
+export const ResendVerificationRequest = z.object({ email: Email }).meta({ id: 'ResendVerificationRequest' });
+
+export type ResendVerificationRequest = z.infer<typeof ResendVerificationRequest>;
+
+export const signup = defineEndpoint({
+  id: 'signup',
+  method: 'post',
+  path: '/v1/auth/signup',
+  audience: 'public',
+  summary: 'Create a business and its owner account; a verification email follows',
+  request: { body: SignupRequest },
+  responses: {
+    202: { description: 'Accepted — identical whether or not the email is new', schema: VerificationPending },
+    400: error('VALIDATION_ERROR'),
+    422: error('WEAK_PASSWORD'),
+    429: rateLimited,
+  },
+});
+
+export const verifyEmail = defineEndpoint({
+  id: 'verifyEmail',
+  method: 'post',
+  path: '/v1/auth/email/verify',
+  audience: 'public',
+  summary: 'Confirm an email address with the token from the verification email',
+  request: { body: VerifyEmailRequest },
+  responses: {
+    204: { description: 'Email verified (and the business activated); the owner can now sign in' },
+    400: error('INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR'),
+    429: rateLimited,
+  },
+});
+
+export const resendVerification = defineEndpoint({
+  id: 'resendVerification',
+  method: 'post',
+  path: '/v1/auth/email/resend',
+  audience: 'public',
+  summary: 'Send a new verification email',
+  request: { body: ResendVerificationRequest },
+  responses: {
+    202: { description: 'Accepted — identical for every email (D12)', schema: VerificationPending },
+    400: error('VALIDATION_ERROR'),
+    429: rateLimited,
+  },
+});

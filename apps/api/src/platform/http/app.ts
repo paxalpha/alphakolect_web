@@ -3,11 +3,13 @@ import { pinoHttp } from 'pino-http';
 import type { Logger } from 'pino';
 import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
+import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
-import { authHandlers } from '../../modules/identity/routes.js';
+import { accountHandlers, authHandlers } from '../../modules/identity/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
+import { Mailer, type EmailSender } from '../email.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { resolveRequestId } from './request-id.js';
@@ -21,9 +23,24 @@ export type AppDeps = {
   cookieDomain?: string | undefined;
   /** Reverse proxies whose X-Forwarded-For sets req.ip (rate limits, audit), by address. Default: this host only. */
   trustProxy?: TrustedProxies;
+  /** Outgoing email (ADR-14 D1): SMTP in the server, in-memory in tests. */
+  email: EmailSender;
+  /** Origin of the web app, for links in emails. */
+  webAppUrl: string;
+  /** D14: CAPTCHA hook for signup (P15). */
+  signupGuard?: SignupGuard;
 };
 
-export function createApp({ logger, db, auth, cookieDomain, trustProxy = ['loopback'] }: AppDeps): Express {
+export function createApp({
+  logger,
+  db,
+  auth,
+  cookieDomain,
+  trustProxy = ['loopback'],
+  email,
+  webAppUrl,
+  signupGuard,
+}: AppDeps): Express {
   const app = express();
   // An array of addresses/subnets (never a hop count): see TrustedProxies.
   app.set('trust proxy', trustProxy === false ? false : [...trustProxy]);
@@ -40,15 +57,26 @@ export function createApp({ logger, db, auth, cookieDomain, trustProxy = ['loopb
   );
   app.use(express.json({ limit: '100kb' }));
 
+  const audit = new AuditLog(db);
+  const limiter = new RateLimiter(auth.identity);
   const sessions = new SessionService({
     identity: auth.identity,
     accessTokens: auth.accessTokens,
-    audit: new AuditLog(db),
-    limiter: new RateLimiter(auth.identity),
+    audit,
+    limiter,
+  });
+  const accounts = new AccountService({
+    identity: auth.identity,
+    audit,
+    limiter,
+    mailer: new Mailer(email, logger),
+    webAppUrl,
+    ...(signupGuard ? { signupGuard } : {}),
   });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies: { domain: cookieDomain }, webOrigins: auth.webOrigins }),
+    ...accountHandlers({ accounts }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

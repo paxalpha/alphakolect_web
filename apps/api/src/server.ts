@@ -4,6 +4,7 @@ import { ConfigError, loadConfig, type Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
 import { createApp } from './platform/http/app.js';
 import { createLogger } from './platform/logger.js';
+import { SmtpEmailSender } from './platform/smtp-email-sender.js';
 
 function readConfig(): Config {
   try {
@@ -21,9 +22,12 @@ function readConfig(): Config {
 const config = readConfig();
 const logger = createLogger(config);
 const db = createDb(config.databaseUrl);
+const email = new SmtpEmailSender(config.email.smtpUrl, config.email.from);
 const app = createApp({
   logger,
   db,
+  email,
+  webAppUrl: config.webAppUrl,
   cookieDomain: config.cookieDomain,
   trustProxy: config.trustProxy,
   auth: {
@@ -41,6 +45,7 @@ function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, 'Shutting down');
   server.close((err) => {
     void db.close();
+    email.close();
     if (err) {
       logger.error({ err }, 'Error during shutdown');
       process.exit(1);

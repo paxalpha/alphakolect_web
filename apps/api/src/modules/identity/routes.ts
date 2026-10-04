@@ -1,8 +1,18 @@
-import { AUTH_COOKIES, type LoginRequest, type LoginResponse, type Session } from '@alphakolect/contracts';
+import {
+  AUTH_COOKIES,
+  type LoginRequest,
+  type LoginResponse,
+  type ResendVerificationRequest,
+  type Session,
+  type SignupRequest,
+  type VerificationPending,
+  type VerifyEmailRequest,
+} from '@alphakolect/contracts';
 import type { Request, RequestHandler, Response } from 'express';
 import { AppError } from '../../platform/errors.js';
 import { assertCsrf, parseCookies, type AuthContext } from '../../platform/http/authenticate.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from './access-tokens.js';
+import type { AccountService } from './accounts.js';
 import {
   clearSessionCookies,
   setMfaChallengeCookie,
@@ -94,4 +104,26 @@ export function authHandlers({ sessions, cookies, webOrigins }: AuthHandlerDeps)
   };
 
   return { login, refreshSession, logout, getSession };
+}
+
+/** Signup and email verification. The 202 answers are identical for every email (D12). */
+export function accountHandlers({ accounts }: { accounts: AccountService }) {
+  const pending: VerificationPending = { status: 'verification_email_sent' };
+
+  const signup: RequestHandler = async (req, res) => {
+    await accounts.signup(req.body as SignupRequest, contextOf(req));
+    res.status(202).json(pending);
+  };
+
+  const verifyEmail: RequestHandler = async (req, res) => {
+    await accounts.verifyEmail((req.body as VerifyEmailRequest).token, contextOf(req));
+    res.status(204).end();
+  };
+
+  const resendVerification: RequestHandler = async (req, res) => {
+    await accounts.resendVerification(req.body as ResendVerificationRequest, contextOf(req));
+    res.status(202).json(pending);
+  };
+
+  return { signup, verifyEmail, resendVerification };
 }

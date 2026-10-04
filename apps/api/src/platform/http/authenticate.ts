@@ -62,6 +62,26 @@ function sameSecret(a: string | undefined, b: string | undefined): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/**
+ * D7 CSRF defence for a cookie-carrying state change: an allowed Origin, and the CSRF header equal to the CSRF
+ * cookie (double-submit). Used here and by the refresh endpoint, which is cookie-driven but not authenticated
+ * by an access token.
+ */
+export function assertCsrf(
+  req: Request,
+  cookies: ReadonlyMap<string, string>,
+  webOrigins: ReadonlySet<string>,
+): void {
+  const origin = req.headers.origin;
+  if (
+    !origin ||
+    !webOrigins.has(origin) ||
+    !sameSecret(req.get(CSRF_HEADER), cookies.get(AUTH_COOKIES.csrf))
+  ) {
+    throw new AppError(403, 'CSRF_FAILED', 'Request could not be verified');
+  }
+}
+
 function presentedCredential(req: Request, endpoint: EndpointContract) {
   const allowed = new Set(endpoint.security ?? []);
   const authorization = req.headers.authorization;
@@ -112,15 +132,7 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
       }
 
       if (credential.transport === 'cookie' && !SAFE_METHODS.has(req.method)) {
-        const origin = req.headers.origin;
-        const csrfHeader = req.get(CSRF_HEADER);
-        if (
-          !origin ||
-          !deps.webOrigins.has(origin) ||
-          !sameSecret(csrfHeader, credential.cookies.get(AUTH_COOKIES.csrf))
-        ) {
-          throw new AppError(403, 'CSRF_FAILED', 'Request could not be verified');
-        }
+        assertCsrf(req, credential.cookies, deps.webOrigins);
       }
 
       req.auth = Object.freeze({

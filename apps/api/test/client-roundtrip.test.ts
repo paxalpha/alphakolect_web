@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { getHealth } from '@alphakolect/contracts';
+import { ErrorResponse, getHealth } from '@alphakolect/contracts';
 import { createApiClient } from '@alphakolect/contracts/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp } from './support/app.js';
@@ -33,6 +33,18 @@ describe('generated client ↔ real API', () => {
     expect(data).toEqual({ status: 'ok' });
     // The body the generated client received also satisfies the zod contract it was generated from.
     expect(getHealth.responses[200].schema.parse(data)).toEqual({ status: 'ok' });
+  });
+
+  it('POST /v1/auth/login round-trips its typed request body and error envelope', async () => {
+    const client = createApiClient({ baseUrl });
+
+    const { data, error, response } = await client.POST('/v1/auth/login', {
+      body: { email: 'nobody-roundtrip@example.test', password: 'not a real password', audience: 'merchant' },
+    });
+
+    expect(data).toBeUndefined();
+    expect(response.status).toBe(401);
+    expect(ErrorResponse.parse(error).error.code).toBe('INVALID_CREDENTIALS');
   });
 
   it('carries a caller request id end to end', async () => {

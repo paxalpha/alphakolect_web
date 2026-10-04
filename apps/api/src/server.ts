@@ -23,6 +23,8 @@ const logger = createLogger(config);
 const db = createDb(config.databaseUrl);
 const app = createApp({
   logger,
+  db,
+  cookieDomain: config.cookieDomain,
   trustProxy: config.trustProxy,
   auth: {
     accessTokens: await AccessTokens.create(config.auth),

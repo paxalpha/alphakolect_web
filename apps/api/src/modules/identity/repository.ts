@@ -146,7 +146,12 @@ export class IdentityRepository {
     return row!;
   }
 
-  async rotateRefreshToken(oldHash: string, newHash: string, idleSeconds: number): Promise<RotationResult> {
+  /** `idleSeconds` null = the standard idle timeout of the session's audience and scope (D5). */
+  async rotateRefreshToken(
+    oldHash: string,
+    newHash: string,
+    idleSeconds: number | null = null,
+  ): Promise<RotationResult> {
     const [row] = await this.db.query<RotationResult>(
       `SELECT * FROM identity.rotate_refresh_token($1, $2, $3)`,
       [oldHash, newHash, idleSeconds],

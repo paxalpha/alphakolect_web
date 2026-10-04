@@ -24,6 +24,6 @@ export async function createTestApp() {
     identity: new IdentityRepository(db),
     webOrigins: new Set([TEST_WEB_ORIGIN]),
   };
-  const app = createApp({ logger: pino({ level: 'silent' }), auth });
+  const app = createApp({ logger: pino({ level: 'silent' }), db, auth });
   return { app, db, auth };
 }

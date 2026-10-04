@@ -1,6 +1,10 @@
 import {
   AUTH_COOKIES,
+  type ChangePasswordRequest,
+  type ForgotPasswordRequest,
   type LoginRequest,
+  type PasswordEmailPending,
+  type SetPasswordRequest,
   type LoginResponse,
   type ResendVerificationRequest,
   type Session,
@@ -13,6 +17,7 @@ import { AppError } from '../../platform/errors.js';
 import { assertCsrf, parseCookies, type AuthContext } from '../../platform/http/authenticate.js';
 import { ACCESS_TOKEN_TTL_SECONDS } from './access-tokens.js';
 import type { AccountService } from './accounts.js';
+import type { PasswordService } from './password-flows.js';
 import {
   clearSessionCookies,
   setMfaChallengeCookie,
@@ -126,4 +131,43 @@ export function accountHandlers({ accounts }: { accounts: AccountService }) {
   };
 
   return { signup, verifyEmail, resendVerification };
+}
+
+/**
+ * Forgot / reset / setup / change. Reset and change end every session of the account (D5), so they also clear
+ * this browser's session cookies.
+ */
+export function passwordHandlers({
+  passwords,
+  cookies,
+}: {
+  passwords: PasswordService;
+  cookies: CookieSettings;
+}) {
+  const sent: PasswordEmailPending = { status: 'password_email_sent' };
+
+  const forgotPassword: RequestHandler = async (req, res) => {
+    await passwords.forgot(req.body as ForgotPasswordRequest, contextOf(req));
+    res.status(202).json(sent);
+  };
+
+  const resetPassword: RequestHandler = async (req, res) => {
+    await passwords.reset(req.body as SetPasswordRequest, contextOf(req));
+    clearSessionCookies(res, cookies);
+    res.status(204).end();
+  };
+
+  const completeAccountSetup: RequestHandler = async (req, res) => {
+    await passwords.completeSetup(req.body as SetPasswordRequest, contextOf(req));
+    res.status(204).end();
+  };
+
+  const changePassword: RequestHandler = async (req, res) => {
+    const auth = req.auth!;
+    await passwords.change(auth, req.body as ChangePasswordRequest, contextOf(req));
+    if (auth.transport === 'cookie') clearSessionCookies(res, cookies);
+    res.status(204).end();
+  };
+
+  return { forgotPassword, resetPassword, completeAccountSetup, changePassword };
 }

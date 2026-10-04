@@ -5,7 +5,8 @@ import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
 import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
-import { accountHandlers, authHandlers } from '../../modules/identity/routes.js';
+import { PasswordService } from '../../modules/identity/password-flows.js';
+import { accountHandlers, authHandlers, passwordHandlers } from '../../modules/identity/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
@@ -65,18 +66,22 @@ export function createApp({
     audit,
     limiter,
   });
+  const mailer = new Mailer(email, logger);
   const accounts = new AccountService({
     identity: auth.identity,
     audit,
     limiter,
-    mailer: new Mailer(email, logger),
+    mailer,
     webAppUrl,
     ...(signupGuard ? { signupGuard } : {}),
   });
+  const passwords = new PasswordService({ identity: auth.identity, audit, limiter, mailer, webAppUrl });
+  const cookies = { domain: cookieDomain };
   const handlers = {
     ...healthHandlers,
-    ...authHandlers({ sessions, cookies: { domain: cookieDomain }, webOrigins: auth.webOrigins }),
+    ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
     ...accountHandlers({ accounts }),
+    ...passwordHandlers({ passwords, cookies }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

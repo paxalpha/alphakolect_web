@@ -205,3 +205,96 @@ export const resendVerification = defineEndpoint({
     429: rateLimited,
   },
 });
+
+// ── passwords: forgot, reset, first-password setup, change (§3.2, D5, D9, D10, D12) ──────────────
+
+export const PasswordEmailPending = z.object({ status: z.literal('password_email_sent') }).meta({
+  id: 'PasswordEmailPending',
+  description: 'If the email has an account, a link has been sent to it. Identical for every email.',
+});
+
+export type PasswordEmailPending = z.infer<typeof PasswordEmailPending>;
+
+export const ForgotPasswordRequest = z.object({ email: Email }).meta({ id: 'ForgotPasswordRequest' });
+
+export type ForgotPasswordRequest = z.infer<typeof ForgotPasswordRequest>;
+
+/** Reset and first-password setup: the token from the emailed link (URL fragment) and the new password. */
+export const SetPasswordRequest = z
+  .object({ token: z.string().min(1).max(256), password: NewPassword })
+  .meta({ id: 'SetPasswordRequest' });
+
+export type SetPasswordRequest = z.infer<typeof SetPasswordRequest>;
+
+export const ChangePasswordRequest = z
+  .object({ currentPassword: z.string().min(1).max(1024), newPassword: NewPassword })
+  .meta({ id: 'ChangePasswordRequest' });
+
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordRequest>;
+
+export const forgotPassword = defineEndpoint({
+  id: 'forgotPassword',
+  method: 'post',
+  path: '/v1/auth/password/forgot',
+  audience: 'public',
+  summary: 'Email a password reset link (or, for an account that has never had a password, a setup link)',
+  request: { body: ForgotPasswordRequest },
+  responses: {
+    202: { description: 'Accepted — identical for every email (D12)', schema: PasswordEmailPending },
+    400: error('VALIDATION_ERROR'),
+    429: rateLimited,
+  },
+});
+
+export const resetPassword = defineEndpoint({
+  id: 'resetPassword',
+  method: 'post',
+  path: '/v1/auth/password/reset',
+  audience: 'public',
+  summary: 'Set a new password with a reset link; every session of the account ends',
+  request: { body: SetPasswordRequest },
+  responses: {
+    204: {
+      description: 'Password changed; every session revoked and this browser signed out',
+      headers: SetCookie,
+    },
+    400: error('INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR'),
+    422: error('WEAK_PASSWORD — the link is not used up'),
+    429: rateLimited,
+  },
+});
+
+export const completeAccountSetup = defineEndpoint({
+  id: 'completeAccountSetup',
+  method: 'post',
+  path: '/v1/auth/password/setup',
+  audience: 'public',
+  summary: 'Set the first password of an account with its setup link (this also confirms the email)',
+  request: { body: SetPasswordRequest },
+  responses: {
+    204: { description: 'Password set and email confirmed; the account can now sign in' },
+    400: error('INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR'),
+    422: error('WEAK_PASSWORD — the link is not used up'),
+    429: rateLimited,
+  },
+});
+
+export const changePassword = defineEndpoint({
+  id: 'changePassword',
+  method: 'post',
+  path: '/v1/auth/password/change',
+  audience: 'authenticated',
+  summary: 'Change the password; every session of the account ends, including this one',
+  security: ['cookieSession', 'bearer'],
+  request: { body: ChangePasswordRequest },
+  responses: {
+    204: {
+      description: 'Password changed; every session revoked and this browser signed out',
+      headers: SetCookie,
+    },
+    400: error('VALIDATION_ERROR'),
+    401: error('INVALID_CREDENTIALS — the current password is wrong'),
+    422: error('WEAK_PASSWORD'),
+    429: rateLimited,
+  },
+});

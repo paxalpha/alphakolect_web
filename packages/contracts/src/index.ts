@@ -2,11 +2,15 @@
 // No application behaviour, database access, Express handlers, authentication or business rules.
 
 import {
+  changePassword,
+  completeAccountSetup,
+  forgotPassword,
   getSession,
   login,
   logout,
   refreshSession,
   resendVerification,
+  resetPassword,
   signup,
   verifyEmail,
 } from './endpoints/auth.js';
@@ -28,6 +32,10 @@ export const endpoints = {
   signup,
   verifyEmail,
   resendVerification,
+  forgotPassword,
+  resetPassword,
+  completeAccountSetup,
+  changePassword,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

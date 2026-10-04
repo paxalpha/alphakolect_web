@@ -193,14 +193,23 @@ describe('refresh rotation and reuse detection (§3.2, exit criterion 5)', () =>
   });
 
   it('without an explicit idle timeout, uses the standard one for the audience and scope (D5)', async () => {
-    const secondsLeft = (r: { refresh_expires_at: Date }) =>
-      (r.refresh_expires_at.getTime() - Date.now()) / 1000;
+    // The new token's lifetime, measured on the database clock alone. (Comparing its expiry with the test
+    // host's clock failed whenever the database container's clock ran a few ms ahead — found 2026-10-04.)
+    const lifetime = async (tokenHash: string) =>
+      Number(
+        (
+          await owner.query(
+            `SELECT extract(epoch FROM expires_at - created_at) AS s FROM identity.refresh_tokens WHERE token_hash = $1`,
+            [tokenHash],
+          )
+        ).rows[0].s,
+      );
 
     const merchant = await createSession();
-    const r1 = await rotate(merchant.refresh, hash(), null);
+    const next1 = hash();
+    const r1 = await rotate(merchant.refresh, next1, null);
     expect(r1.outcome).toBe('rotated');
-    expect(secondsLeft(r1)).toBeGreaterThan(MERCHANT.idle - 60);
-    expect(secondsLeft(r1)).toBeLessThanOrEqual(MERCHANT.idle);
+    expect(await lifetime(next1)).toBe(MERCHANT.idle);
 
     const p = await platformIdentity(false);
     const enrolment = await createSession({
@@ -211,9 +220,12 @@ describe('refresh rotation and reuse detection (§3.2, exit criterion 5)', () =>
       idle: 900,
       absolute: 900,
     });
-    const r2 = await rotate(enrolment.refresh, hash(), null);
+    const next2 = hash();
+    const r2 = await rotate(enrolment.refresh, next2, null);
     expect(r2).toMatchObject({ outcome: 'rotated', scope: 'mfa_enrollment' });
-    expect(secondsLeft(r2)).toBeLessThanOrEqual(900);
+    // Capped by the session's 900-second absolute expiry, which started slightly earlier.
+    expect(await lifetime(next2)).toBeLessThanOrEqual(900);
+    expect(await lifetime(next2)).toBeGreaterThan(800);
   });
 
   it('still refuses an explicit idle timeout above the audience cap', async () => {

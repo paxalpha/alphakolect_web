@@ -48,7 +48,7 @@ async function createSession(
   return { sessionId: rows[0].session_id as string, refresh };
 }
 
-const rotate = async (oldHash: string, newHash = hash(), idle = MERCHANT.idle) =>
+const rotate = async (oldHash: string, newHash = hash(), idle: number | null = MERCHANT.idle) =>
   (await app.query(`SELECT * FROM identity.rotate_refresh_token($1, $2, $3)`, [oldHash, newHash, idle]))
     .rows[0];
 
@@ -190,6 +190,35 @@ describe('refresh rotation and reuse detection (§3.2, exit criterion 5)', () =>
       sessionId,
     ]);
     expect(rows[0].revoke_reason).toBe('refresh_token_reuse');
+  });
+
+  it('without an explicit idle timeout, uses the standard one for the audience and scope (D5)', async () => {
+    const secondsLeft = (r: { refresh_expires_at: Date }) =>
+      (r.refresh_expires_at.getTime() - Date.now()) / 1000;
+
+    const merchant = await createSession();
+    const r1 = await rotate(merchant.refresh, hash(), null);
+    expect(r1.outcome).toBe('rotated');
+    expect(secondsLeft(r1)).toBeGreaterThan(MERCHANT.idle - 60);
+    expect(secondsLeft(r1)).toBeLessThanOrEqual(MERCHANT.idle);
+
+    const p = await platformIdentity(false);
+    const enrolment = await createSession({
+      identity: p.identityId,
+      audience: 'platform',
+      membership: p.membershipId,
+      scope: 'mfa_enrollment',
+      idle: 900,
+      absolute: 900,
+    });
+    const r2 = await rotate(enrolment.refresh, hash(), null);
+    expect(r2).toMatchObject({ outcome: 'rotated', scope: 'mfa_enrollment' });
+    expect(secondsLeft(r2)).toBeLessThanOrEqual(900);
+  });
+
+  it('still refuses an explicit idle timeout above the audience cap', async () => {
+    const { refresh } = await createSession();
+    await expectSqlState(rotate(refresh, hash(), MERCHANT.idle + 1), SQLSTATE.checkViolation);
   });
 
   it('rejects unknown, idle-expired and absolute-expired tokens', async () => {

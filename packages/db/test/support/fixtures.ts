@@ -15,6 +15,8 @@ export const FIXTURE = {
     savingsAccountId: '01900000-0000-7000-8000-0000000000a3',
     entryId: '01900000-0000-7000-8000-0000000000a4',
     auditEventId: '01900000-0000-7000-8000-0000000000a5',
+    ownerIdentityId: '01900000-0000-7000-8000-0000000000a6',
+    ownerMembershipId: '01900000-0000-7000-8000-0000000000a7',
   },
   B: {
     merchantId: MERCHANT_B,
@@ -23,12 +25,15 @@ export const FIXTURE = {
     savingsAccountId: '01900000-0000-7000-8000-0000000000b3',
     entryId: '01900000-0000-7000-8000-0000000000b4',
     auditEventId: '01900000-0000-7000-8000-0000000000b5',
+    ownerIdentityId: '01900000-0000-7000-8000-0000000000b6',
+    ownerMembershipId: '01900000-0000-7000-8000-0000000000b7',
   },
 } as const;
 
 /**
  * Insert two merchants, each with a ledger, two accounts, their balance projections, one balanced
- * journal entry (debit cash / credit customer savings, ₦500.00) and one audit event.
+ * journal entry (debit cash / credit customer savings, ₦500.00), one audit event, and an owner identity
+ * with its owner membership (no password).
  * Runs in one transaction on the given connection (the table owner, so it works before and after RLS).
  */
 export async function loadFixtures(db: Client): Promise<void> {
@@ -69,6 +74,14 @@ export async function loadFixtures(db: Client): Promise<void> {
         `INSERT INTO audit.audit_events (id, merchant_id, action, outcome, summary)
          VALUES ($1, $2, 'fixture.loaded', 'success', '{"fixture": true}')`,
         [f.auditEventId, f.merchantId],
+      );
+      await db.query(
+        `INSERT INTO identity.identities (id, email, status, email_verified_at) VALUES ($1, $2, 'active', now())`,
+        [f.ownerIdentityId, `owner-${label.toLowerCase()}@example.test`],
+      );
+      await db.query(
+        `INSERT INTO tenancy.merchant_memberships (id, merchant_id, identity_id, kind) VALUES ($1, $2, $3, 'owner')`,
+        [f.ownerMembershipId, f.merchantId, f.ownerIdentityId],
       );
     }
     await db.query('COMMIT');

@@ -37,10 +37,1282 @@
           }
         }
       }
+    },
+    "/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "summary": "Sign in with email and password",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in, or a second step is required",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_CREDENTIALS — identical for unknown accounts and wrong passwords",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "EMAIL_VERIFICATION_REQUIRED — only after correct credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/refresh": {
+      "post": {
+        "operationId": "refreshSession",
+        "summary": "Rotate the session (refresh cookie; send the X-CSRF-Token header)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "responses": {
+          "200": {
+            "description": "New session cookies",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the session cookies are cleared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "CSRF_FAILED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "summary": "End the current session",
+        "tags": [
+          "authenticated"
+        ],
+        "x-audience": "authenticated",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Signed out; session cookies cleared",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/session": {
+      "get": {
+        "operationId": "getSession",
+        "summary": "The current session",
+        "tags": [
+          "authenticated"
+        ],
+        "x-audience": "authenticated",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The current session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/signup": {
+      "post": {
+        "operationId": "signup",
+        "summary": "Create a business and its owner account; a verification email follows",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted — identical whether or not the email is new",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationPending"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "WEAK_PASSWORD",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/email/verify": {
+      "post": {
+        "operationId": "verifyEmail",
+        "summary": "Confirm an email address with the token from the verification email",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Email verified (and the business activated); the owner can now sign in"
+          },
+          "400": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/email/resend": {
+      "post": {
+        "operationId": "resendVerification",
+        "summary": "Send a new verification email",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted — identical for every email (D12)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationPending"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/password/forgot": {
+      "post": {
+        "operationId": "forgotPassword",
+        "summary": "Email a password reset link (or, for an account that has never had a password, a setup link)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Accepted — identical for every email (D12)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordEmailPending"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/password/reset": {
+      "post": {
+        "operationId": "resetPassword",
+        "summary": "Set a new password with a reset link; every session of the account ends",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed; every session revoked and this browser signed out",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "WEAK_PASSWORD — the link is not used up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/password/setup": {
+      "post": {
+        "operationId": "completeAccountSetup",
+        "summary": "Set the first password of an account with its setup link (this also confirms the email)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Password set and email confirmed; the account can now sign in"
+          },
+          "400": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the same for every reason; or VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "WEAK_PASSWORD — the link is not used up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/password/change": {
+      "post": {
+        "operationId": "changePassword",
+        "summary": "Change the password; every session of the account ends, including this one",
+        "tags": [
+          "authenticated"
+        ],
+        "x-audience": "authenticated",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          },
+          {
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed; every session revoked and this browser signed out",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_CREDENTIALS — the current password is wrong",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "WEAK_PASSWORD",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/mfa/totp/enrollment": {
+      "post": {
+        "operationId": "beginTotpEnrollment",
+        "summary": "Start TOTP enrolment: a new secret for an authenticator app",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A new, unconfirmed secret (replaces any earlier unconfirmed one)",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "The body holds a secret shown once",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "The body holds a secret shown once"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrollment"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MFA_ALREADY_ENROLLED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/mfa/totp/confirm": {
+      "post": {
+        "operationId": "confirmTotpEnrollment",
+        "summary": "Confirm TOTP enrolment with a code; the enrolment session becomes a full session",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-session-scope": "mfa_enrollment",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmTotpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enrolled: a full session (new cookies) and the recovery codes, shown once",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              },
+              "Cache-Control": {
+                "required": true,
+                "description": "The body holds a secret shown once",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "The body holds a secret shown once"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TotpEnrolled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_MFA_CODE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "MFA_ALREADY_ENROLLED — or enrolment was not started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/mfa/verify": {
+      "post": {
+        "operationId": "verifyMfa",
+        "summary": "Second login step for platform accounts (uses the MFA challenge cookie set by login)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMfaRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_MFA_CODE (try again; 5 attempts per challenge) or INVALID_OR_EXPIRED_TOKEN (sign in again)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "LoginRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "audience": {
+            "$ref": "#/components/schemas/WebAudience"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "audience"
+        ]
+      },
+      "Email": {
+        "type": "string",
+        "maxLength": 254,
+        "format": "email",
+        "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+        "example": "owner@example.com"
+      },
+      "WebAudience": {
+        "type": "string",
+        "enum": [
+          "platform",
+          "merchant"
+        ]
+      },
+      "SignupRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "password": {
+            "$ref": "#/components/schemas/NewPassword"
+          },
+          "businessName": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 120
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "businessName"
+        ]
+      },
+      "NewPassword": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "description": "12-128 characters, no composition rules; very common passwords are refused (422 WEAK_PASSWORD, D10)"
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "ResendVerificationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "SetPasswordRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "password": {
+            "$ref": "#/components/schemas/NewPassword"
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ]
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "newPassword": {
+            "$ref": "#/components/schemas/NewPassword"
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword"
+        ]
+      },
+      "ConfirmTotpRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/TotpCode"
+          }
+        },
+        "required": [
+          "code"
+        ]
+      },
+      "TotpCode": {
+        "type": "string",
+        "pattern": "^\\d{6}$"
+      },
+      "VerifyMfaRequest": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/TotpCode"
+              }
+            },
+            "required": [
+              "code"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "recoveryCode": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "required": [
+              "recoveryCode"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "description": "Either the current authenticator code or one recovery code"
+      },
       "AmountMinor": {
         "type": "string",
         "pattern": "^(0|[1-9][0-9]{0,18})$",
@@ -103,6 +1375,175 @@
         "pattern": "^[A-Z][A-Z0-9_]*$",
         "example": "NOT_FOUND"
       },
+      "LoginResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "authenticated"
+              },
+              "session": {
+                "$ref": "#/components/schemas/Session"
+              }
+            },
+            "required": [
+              "status",
+              "session"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "mfa_enrollment_required"
+              },
+              "session": {
+                "$ref": "#/components/schemas/Session"
+              }
+            },
+            "required": [
+              "status",
+              "session"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "const": "mfa_required"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        ],
+        "type": "object"
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "identityId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "audience": {
+            "$ref": "#/components/schemas/SessionAudience"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "full",
+              "mfa_enrollment"
+            ]
+          }
+        },
+        "required": [
+          "identityId",
+          "audience",
+          "membershipId",
+          "merchantId",
+          "scope"
+        ],
+        "additionalProperties": false,
+        "description": "The signed-in session (no tokens: those are in HttpOnly cookies)"
+      },
+      "SessionAudience": {
+        "type": "string",
+        "enum": [
+          "platform",
+          "merchant",
+          "agent"
+        ]
+      },
+      "VerificationPending": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "verification_email_sent"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "description": "If the email can receive a verification link, one has been sent. Identical for every email."
+      },
+      "PasswordEmailPending": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "password_email_sent"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "additionalProperties": false,
+        "description": "If the email has an account, a link has been sent to it. Identical for every email."
+      },
+      "TotpEnrollment": {
+        "type": "object",
+        "properties": {
+          "otpauthUri": {
+            "type": "string",
+            "format": "starts_with",
+            "pattern": "^otpauth:\\/\\/totp\\/.*"
+          },
+          "secret": {
+            "type": "string",
+            "pattern": "^[A-Z2-7]+$"
+          }
+        },
+        "required": [
+          "otpauthUri",
+          "secret"
+        ],
+        "additionalProperties": false,
+        "description": "Shown once. Not stored by the client."
+      },
+      "TotpEnrolled": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "recoveryCodes": {
+            "minItems": 10,
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "session",
+          "recoveryCodes"
+        ],
+        "additionalProperties": false
+      },
       "Id": {
         "type": "string",
         "format": "uuid",
@@ -130,6 +1571,26 @@
           "amountMinor": "150000",
           "currency": "NGN"
         }
+      }
+    },
+    "securitySchemes": {
+      "cookieSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Secure-ak_at",
+        "description": "Web audiences (platform, merchant): HttpOnly access-token cookie (ADR-14 D7)"
+      },
+      "csrfToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-CSRF-Token",
+        "description": "Echo of the __Secure-ak_csrf cookie, required on state-changing cookie requests"
+      },
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Mobile audiences (agent, customer): EdDSA-signed access token (ADR-14 D6)"
       }
     }
   }

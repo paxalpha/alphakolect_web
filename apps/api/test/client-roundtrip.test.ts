@@ -1,10 +1,9 @@
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { getHealth } from '@alphakolect/contracts';
+import { ErrorResponse, getHealth } from '@alphakolect/contracts';
 import { createApiClient } from '@alphakolect/contracts/client';
-import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp } from '../src/platform/http/app.js';
+import { createTestApp } from './support/app.js';
 
 // P2 exit criterion (amended 2026-10-03): the client GENERATED FROM openapi/v1.json round-trips against
 // the real API over real HTTP — the spec, the client and the Express handlers agree.
@@ -13,7 +12,7 @@ let server: Server;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = createApp({ logger: pino({ level: 'silent' }) }).listen(0, '127.0.0.1');
+  server = (await createTestApp()).app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -34,6 +33,18 @@ describe('generated client ↔ real API', () => {
     expect(data).toEqual({ status: 'ok' });
     // The body the generated client received also satisfies the zod contract it was generated from.
     expect(getHealth.responses[200].schema.parse(data)).toEqual({ status: 'ok' });
+  });
+
+  it('POST /v1/auth/login round-trips its typed request body and error envelope', async () => {
+    const client = createApiClient({ baseUrl });
+
+    const { data, error, response } = await client.POST('/v1/auth/login', {
+      body: { email: 'nobody-roundtrip@example.test', password: 'not a real password', audience: 'merchant' },
+    });
+
+    expect(data).toBeUndefined();
+    expect(response.status).toBe(401);
+    expect(ErrorResponse.parse(error).error.code).toBe('INVALID_CREDENTIALS');
   });
 
   it('carries a caller request id end to end', async () => {

@@ -21,6 +21,9 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   const known = err instanceof AppError ? err : fromBodyParser(err as BodyParserError);
 
   if (known) {
+    // 429s tell clients when to retry (rate limits, ADR-14 D13).
+    const retryAfter = (known.details as { retryAfterSeconds?: unknown } | undefined)?.retryAfterSeconds;
+    if (known.status === 429 && typeof retryAfter === 'number') res.set('Retry-After', String(retryAfter));
     if (known.status >= 500) req.log.error({ err }, known.message);
     res.status(known.status).json(errorBody(known, requestId));
     return;

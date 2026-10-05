@@ -1,6 +1,10 @@
+import { AccessTokens } from './modules/identity/access-tokens.js';
+import { IdentityRepository } from './modules/identity/repository.js';
 import { ConfigError, loadConfig, type Config } from './platform/config.js';
+import { createDb } from './platform/db.js';
 import { createApp } from './platform/http/app.js';
 import { createLogger } from './platform/logger.js';
+import { SmtpEmailSender } from './platform/smtp-email-sender.js';
 
 function readConfig(): Config {
   try {
@@ -17,7 +21,25 @@ function readConfig(): Config {
 
 const config = readConfig();
 const logger = createLogger(config);
-const app = createApp({ logger });
+const db = createDb(config.databaseUrl);
+const email = new SmtpEmailSender(config.email.smtpUrl, config.email.from);
+const app = createApp({
+  logger,
+  db,
+  email,
+  webAppUrl: config.webAppUrl,
+  mfaEncryption: {
+    current: config.auth.mfaEncryptionKey,
+    previous: config.auth.previousMfaEncryptionKey,
+  },
+  cookieDomain: config.cookieDomain,
+  trustProxy: config.trustProxy,
+  auth: {
+    accessTokens: await AccessTokens.create(config.auth),
+    identity: new IdentityRepository(db),
+    webOrigins: config.webOrigins,
+  },
+});
 
 const server = app.listen(config.port, () => {
   logger.info({ port: config.port, env: config.nodeEnv }, 'API listening');
@@ -26,6 +48,8 @@ const server = app.listen(config.port, () => {
 function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, 'Shutting down');
   server.close((err) => {
+    void db.close();
+    email.close();
     if (err) {
       logger.error({ err }, 'Error during shutdown');
       process.exit(1);

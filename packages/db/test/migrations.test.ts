@@ -26,12 +26,22 @@ const MODULE_SCHEMAS = [
 
 const TABLES = [
   'audit.audit_events',
+  'identity.identities',
+  'identity.mfa_challenges',
+  'identity.one_time_tokens',
+  'identity.platform_memberships',
+  'identity.recovery_codes',
+  'identity.refresh_tokens',
+  'identity.sessions',
+  'identity.totp_credentials',
   'ledger.accounts',
   'ledger.balance_projection',
   'ledger.journal_entries',
   'ledger.journal_lines',
   'ledger.ledgers',
+  'tenancy.merchant_memberships',
   'tenancy.merchants',
+  'util.rate_limit_counters',
 ];
 
 let owner: pg.Client;
@@ -56,18 +66,30 @@ describe('migrations from zero (P1 exit criterion)', () => {
     expect(rows.map((r) => r.migration_name)).toEqual(onDisk);
   });
 
-  it('re-running migrate deploy is a no-op', () => {
-    expect(migrateDeploy(inject('testDatabase'))).toMatch(/No pending migrations to apply/);
-  });
+  // These two start the Prisma CLI as a child process, which took 44 s on a memory-starved machine
+  // (2026-10-04) — longer than the 30 s default — so they get more time. The assertions are unchanged.
+  const CLI_TIMEOUT_MS = 120_000;
 
-  it('schema.prisma matches the migrated database exactly (no drift)', () => {
-    // Exit code 0 = no difference, 2 = the schema and the migrations disagree.
-    const { status, output } = runPrisma(
-      ['migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'],
-      inject('testDatabase'),
-    );
-    expect(status, output).toBe(0);
-  });
+  it(
+    're-running migrate deploy is a no-op',
+    () => {
+      expect(migrateDeploy(inject('testDatabase'))).toMatch(/No pending migrations to apply/);
+    },
+    CLI_TIMEOUT_MS,
+  );
+
+  it(
+    'schema.prisma matches the migrated database exactly (no drift)',
+    () => {
+      // Exit code 0 = no difference, 2 = the schema and the migrations disagree.
+      const { status, output } = runPrisma(
+        ['migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'],
+        inject('testDatabase'),
+      );
+      expect(status, output).toBe(0);
+    },
+    CLI_TIMEOUT_MS,
+  );
 
   it('created one schema per module (TARGET_ARCHITECTURE §19)', async () => {
     const { rows } = await owner.query(
@@ -77,7 +99,7 @@ describe('migrations from zero (P1 exit criterion)', () => {
     expect(rows.map((r) => r.nspname)).toEqual(MODULE_SCHEMAS);
   });
 
-  it('created exactly the P1 tables, all owned by the migrator (never the app role)', async () => {
+  it('created exactly the expected tables, all owned by the migrator (never the app role)', async () => {
     const { rows } = await owner.query(
       `SELECT n.nspname || '.' || c.relname AS name, pg_get_userbyid(c.relowner) AS owner
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

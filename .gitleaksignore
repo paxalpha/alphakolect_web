@@ -29,3 +29,12 @@ legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:115
 # these two entries cover the commit that introduced them before the marker existed.
 34fc4902d10dde483b005fec955ec0ad4fed5a13:apps/api/test/config.test.ts:database-url-with-password:4
 34fc4902d10dde483b005fec955ec0ad4fed5a13:apps/api/test/config.test.ts:database-url-with-password:23
+
+# --- P3 identity (verified 2026-10-04). Four are TypeScript type annotations — a field or variable whose
+# type is the private-JWK type — which the generic-api-key rule mistakes for keys; one is the public RFC 6238
+# TOTP test-vector secret (the base32 of the ASCII digits 1-0 repeated), used to check TOTP against the RFC.
+865c145571dbb33c6686ca288788c78b9af37190:apps/api/test/identity/mfa-primitives.test.ts:generic-api-key:48
+5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/src/modules/identity/access-tokens.ts:generic-api-key:42
+5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/src/platform/config.ts:generic-api-key:52
+5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/test/identity/access-tokens.test.ts:generic-api-key:18
+5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/test/identity/access-tokens.test.ts:generic-api-key:19

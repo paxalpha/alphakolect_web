@@ -5,7 +5,10 @@
   "description": "Database infrastructure only: Prisma schema, migrations, RLS/trigger/grant SQL, test fixtures (RESTRUCTURING_MAP §1)",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./testing": {
+      "@alphakolect/source": "./test/support/setup-db.ts"
+    }
   },
   "scripts": {
     "generate": "prisma generate",

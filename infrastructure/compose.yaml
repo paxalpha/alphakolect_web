@@ -32,6 +32,14 @@ services:
       timeout: 3s
       retries: 20
 
+  # Local email catcher (ADR-14 D1): the API's SMTP_URL defaults to smtp://127.0.0.1:1025 outside production.
+  # Nothing is delivered anywhere; read the messages at http://127.0.0.1:8025.
+  mailpit:
+    image: axllent/mailpit:v1.31.3
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+
 volumes:
   # PostgreSQL 16 per TARGET_ARCHITECTURE §19. (A data directory created by another major version
   # cannot be opened, so this volume name is version-specific.)

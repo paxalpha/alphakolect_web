@@ -4,7 +4,7 @@ import { AUTH_COOKIES, CSRF_HEADER } from '@alphakolect/contracts';
 import request from 'supertest';
 import { afterAll, describe, expect, inject, it, vi } from 'vitest';
 import { bootstrapSuperAdmin } from '../../src/modules/identity/bootstrap.js';
-import { MFA_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
+import { MFA_CHALLENGE_COOKIE, SELECTION_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
 import { totpCode, totpStep } from '../../src/modules/identity/totp.js';
 import { createDb } from '../../src/platform/db.js';
 import { createLogger } from '../../src/platform/logger.js';
@@ -190,8 +190,42 @@ describe('no secret leaves through a response, a log line or the audit log (exit
       jar: { [MFA_CHALLENGE_COOKIE]: third[MFA_CHALLENGE_COOKIE] },
     });
 
+    // P4.2 — the owner also works at a second business: login (409 + challenge) → choices → select
+    const secondOwner = `sweep-second-${randomBytes(5).toString('hex')}@example.test`;
+    await send('signup (second business)', 'post', '/v1/auth/signup', {
+      body: { email: secondOwner, password: p1, businessName: 'Sweep Two Ltd' },
+    });
+    await send('verify email (second business)', 'post', '/v1/auth/email/verify', {
+      body: { token: await linkToken(secondOwner, 'email_verification') },
+    });
+    const [ownerRow] = await migrator.query<{ id: string }>(
+      `SELECT id FROM identity.identities WHERE email = $1`,
+      [owner],
+    );
+    const ownerIdentity = ownerRow!.id;
+    await migrator.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind)
+       SELECT mm.merchant_id, $1, 'staff' FROM tenancy.merchant_memberships mm
+         JOIN identity.identities i ON i.id = mm.identity_id WHERE i.email = $2`,
+      [ownerIdentity, secondOwner],
+    );
+    const selecting: Jar = {};
+    await send('login (membership selection required)', 'post', '/v1/auth/login', {
+      body: { email: owner, password: p3, audience: 'merchant' },
+      jar: selecting,
+    });
+    const listed = await send('list login memberships', 'get', '/v1/auth/login/memberships', {
+      jar: { [SELECTION_CHALLENGE_COOKIE]: selecting[SELECTION_CHALLENGE_COOKIE] },
+    });
+    await send('select login membership', 'post', '/v1/auth/login/select', {
+      body: { selectionId: listed.body.memberships[0].selectionId },
+      jar: { [SELECTION_CHALLENGE_COOKIE]: selecting[SELECTION_CHALLENGE_COOKIE] },
+    });
+
     // the journeys themselves worked (so the sweep below saw real secrets)
-    const failedUnexpectedly = exchanges.filter((e) => e.res.status >= 400 && !/wrong|invalid/.test(e.label));
+    const failedUnexpectedly = exchanges.filter(
+      (e) => e.res.status >= 400 && !/wrong|invalid|selection required/.test(e.label),
+    );
     expect(
       failedUnexpectedly.map((e) => `${e.label}: ${e.res.status} ${JSON.stringify(e.res.body)}`),
     ).toEqual([]);

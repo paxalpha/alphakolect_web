@@ -117,6 +117,44 @@ export const logout = defineEndpoint({
   },
 });
 
+// ── membership selection (ADR-15 T4) ──────────────────────────────────────────────────────────
+
+export const MembershipChoice = z
+  .object({
+    /** Opaque to the client: send it back to POST /v1/auth/login/select. Never authorization by itself. */
+    selectionId: Id,
+    merchantName: z.string(),
+    kind: z.enum(['owner', 'staff']),
+  })
+  .meta({ id: 'MembershipChoice' });
+
+export const MembershipChoices = z
+  .object({ memberships: z.array(MembershipChoice).min(2) })
+  .meta({ id: 'MembershipChoices', description: 'The businesses this account may sign in to' });
+
+export type MembershipChoices = z.infer<typeof MembershipChoices>;
+
+const NoStoreChoices = z.object({
+  'Cache-Control': z.literal('no-store').meta({ description: 'The choices are never cached' }),
+});
+
+export const listLoginMemberships = defineEndpoint({
+  id: 'listLoginMemberships',
+  method: 'get',
+  path: '/v1/auth/login/memberships',
+  audience: 'public',
+  summary: 'The businesses to choose from (needs the selection challenge cookie set by a 409 login answer)',
+  responses: {
+    200: {
+      description: 'The choices; the challenge is not used up',
+      schema: MembershipChoices,
+      headers: NoStoreChoices,
+    },
+    401: error('INVALID_OR_EXPIRED_TOKEN — no valid selection challenge: sign in again'),
+    429: rateLimited,
+  },
+});
+
 export const getSession = defineEndpoint({
   id: 'getSession',
   method: 'get',

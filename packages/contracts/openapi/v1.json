@@ -1153,6 +1153,79 @@
         }
       }
     },
+    "/v1/auth/login/memberships": {
+      "get": {
+        "operationId": "listLoginMemberships",
+        "summary": "The businesses to choose from (needs the selection challenge cookie set by a 409 login answer)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "responses": {
+          "200": {
+            "description": "The choices; the challenge is not used up",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "The choices are never cached",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "The choices are never cached"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipChoices"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — no valid selection challenge: sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/platform/merchants/{merchantId}/deactivate": {
       "post": {
         "operationId": "deactivateMerchant",
@@ -1786,6 +1859,47 @@
         "required": [
           "status",
           "session"
+        ],
+        "additionalProperties": false
+      },
+      "MembershipChoices": {
+        "type": "object",
+        "properties": {
+          "memberships": {
+            "minItems": 2,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MembershipChoice"
+            }
+          }
+        },
+        "required": [
+          "memberships"
+        ],
+        "additionalProperties": false,
+        "description": "The businesses this account may sign in to"
+      },
+      "MembershipChoice": {
+        "type": "object",
+        "properties": {
+          "selectionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchantName": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "owner",
+              "staff"
+            ]
+          }
+        },
+        "required": [
+          "selectionId",
+          "merchantName",
+          "kind"
         ],
         "additionalProperties": false
       },

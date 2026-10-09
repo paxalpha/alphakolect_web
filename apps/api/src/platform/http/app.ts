@@ -12,6 +12,7 @@ import {
   authHandlers,
   mfaHandlers,
   passwordHandlers,
+  selectionHandlers,
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
 import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
@@ -102,6 +103,7 @@ export function createApp({
     ...accountHandlers({ accounts }),
     ...passwordHandlers({ passwords, cookies }),
     ...mfaHandlers({ mfa, cookies }),
+    ...selectionHandlers({ identity: auth.identity, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
   };
 

@@ -7,6 +7,7 @@ import {
   type PasswordEmailPending,
   type SetPasswordRequest,
   type LoginResponse,
+  type MembershipChoices,
   type MfaVerified,
   type ResendVerificationRequest,
   type Session,
@@ -28,13 +29,17 @@ import {
   clearMfaChallengeCookie,
   clearSessionCookies,
   MFA_CHALLENGE_COOKIE,
+  SELECTION_CHALLENGE_COOKIE,
+  clearSelectionChallengeCookie,
   setSelectionChallengeCookie,
   setMfaChallengeCookie,
   setSessionCookies,
   type CookieSettings,
 } from './cookies.js';
 import type { IssuedTokens, RequestContext, SessionService } from './sessions.js';
-import { newOpaqueToken } from './tokens.js';
+import type { RateLimiter } from './rate-limits.js';
+import type { IdentityRepository } from './repository.js';
+import { hashReceivedToken, newOpaqueToken } from './tokens.js';
 
 // /v1/auth handlers (contracts: packages/contracts/src/endpoints/auth.ts). Bodies are already validated against
 // the contract; authentication, where declared, is already done. P3 audiences are web audiences, so every
@@ -223,4 +228,44 @@ export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: Cookie
   };
 
   return { beginTotpEnrollment, confirmTotpEnrollment, verifyMfa };
+}
+
+/**
+ * The membership-selection step after a 409 login answer (ADR-15 T4). Driven by the HttpOnly selection challenge;
+ * nothing here is reachable without it. Choices are never cached and never sent with CORS headers.
+ */
+export function selectionHandlers({
+  identity,
+  limiter,
+  cookies,
+}: {
+  identity: IdentityRepository;
+  limiter: RateLimiter;
+  cookies: CookieSettings;
+}) {
+  const challengeHash = async (req: Request) => {
+    const hash = hashReceivedToken(parseCookies(req.headers.cookie).get(SELECTION_CHALLENGE_COOKIE));
+    await limiter.enforce('membership_selection', req.ip ?? 'unknown', hash);
+    return hash;
+  };
+
+  const listLoginMemberships: RequestHandler = async (req, res) => {
+    const hash = await challengeHash(req);
+    const choices = hash ? await identity.selectionChoices(hash) : [];
+    // Fewer than two left (none, or all but one became ineligible) or no valid challenge: sign in again.
+    if (choices.length < 2) {
+      clearSelectionChallengeCookie(res, cookies);
+      throw new AppError(401, 'INVALID_OR_EXPIRED_TOKEN', 'This sign-in has expired. Please sign in again.');
+    }
+    const body: MembershipChoices = {
+      memberships: choices.map((c) => ({
+        selectionId: c.membership_id,
+        merchantName: c.merchant_name ?? '',
+        kind: c.kind as 'owner' | 'staff',
+      })),
+    };
+    res.set('Cache-Control', 'no-store').json(body);
+  };
+
+  return { listLoginMemberships };
 }

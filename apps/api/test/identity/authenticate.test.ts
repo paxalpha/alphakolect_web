@@ -104,6 +104,16 @@ beforeAll(async () => {
     await hashPassword('a long enough passphrase'),
     'Auth Biz',
   );
+  // Verified, as a real owner is before signing in: only an active merchant's members get sessions (P4.1).
+  const verification = newOpaqueToken();
+  await auth.identity.issueOneTimeToken(
+    signup.identity_id!,
+    'email_verification',
+    verification.hash,
+    3600,
+    null,
+  );
+  await auth.identity.verifyEmail(verification.hash);
   const candidate = await auth.identity.loginCandidate(email, 'merchant');
   merchant = await session(signup.identity_id!, 'merchant', candidate!.membership_id!, 'full', {
     idleSeconds: 86400,

@@ -274,18 +274,29 @@ describe('passwords (§3.2, D5, D15)', () => {
 describe('narrow reads', () => {
   it('login_candidate returns what login needs for the audience, case-insensitively', async () => {
     const s = await signup();
+    await app.query(`SELECT identity.verify_email($1)`, [
+      (await issue(s.identity_id, 'email_verification')).hash,
+    ]);
     const { rows } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [
       s.email.toUpperCase(),
     ]);
     expect(rows[0]).toMatchObject({
       identity_id: s.identity_id,
       identity_status: 'active',
-      email_verified: false,
+      email_verified: true,
       password_hash: ARGON('initial'),
       membership_kind: 'owner',
       membership_status: 'active',
       mfa_enrolled: false,
     });
+  });
+
+  it('login_candidate offers no membership of a merchant that is not active (P4.1, ADR-15 T5)', async () => {
+    // Still pending verification: the credentials row comes back (so the API can answer
+    // EMAIL_VERIFICATION_REQUIRED after a correct password), but no membership is offered.
+    const s = await signup();
+    const { rows } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [s.email]);
+    expect(rows[0]).toMatchObject({ identity_id: s.identity_id, email_verified: false, membership_id: null });
   });
 
   it('returns no membership for an audience the identity does not belong to, and no row for unknown emails', async () => {

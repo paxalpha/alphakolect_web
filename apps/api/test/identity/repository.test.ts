@@ -45,6 +45,10 @@ describe('IdentityRepository (as alphakolect_app)', () => {
       await hashPassword('a long enough passphrase'),
       'Repo Biz',
     );
+    // Verified first: only an active merchant's members get sessions (P4.1).
+    const verification = newOpaqueToken();
+    await repo.issueOneTimeToken(signup.identity_id!, 'email_verification', verification.hash, 3600, null);
+    await repo.verifyEmail(verification.hash);
     const candidate = await repo.loginCandidate(address, 'merchant');
     const first = newOpaqueToken();
 

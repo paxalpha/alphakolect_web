@@ -40,8 +40,10 @@ const TABLES = [
   'ledger.journal_entries',
   'ledger.journal_lines',
   'ledger.ledgers',
+  'tenancy.branches',
   'tenancy.merchant_memberships',
   'tenancy.merchants',
+  'tenancy.roles',
   'util.rate_limit_counters',
 ];
 

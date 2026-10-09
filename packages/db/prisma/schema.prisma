@@ -47,6 +47,8 @@ model Merchant {
   balanceProjection BalanceProjection[]
   auditEvents       AuditEvent[]
   memberships       MerchantMembership[]
+  branches          Branch[]
+  roles             Role[]
 
   @@map("merchants")
   @@schema("tenancy")
@@ -145,6 +147,7 @@ model JournalLine {
   entry    JournalEntry @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   account  Account      @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
 
+  @@unique([merchantId, id])
   @@index([entryId])
   @@index([accountId])
   @@map("journal_lines")
@@ -370,6 +373,42 @@ model RecoveryCode {
 }
 
 /// Merchant audience membership — the minimal P3 slice (ADR-14 D2: owners only in P3; staff/agents P4).
+/// P4.3 (ADR-15 T7): tenant-owned; RLS, archive instead of delete, active name unique per merchant (SQL).
+model Branch {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  name       String
+  status     String    @default("active")
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  memberships MerchantMembership[]
+
+  @@unique([merchantId, id])
+  @@map("branches")
+  @@schema("tenancy")
+}
+
+/// P4.3 (ADR-15 T8): merchant-defined role names only; permissions are P5.
+model Role {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  name       String
+  status     String    @default("active")
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  memberships MerchantMembership[]
+
+  @@unique([merchantId, id])
+  @@map("roles")
+  @@schema("tenancy")
+}
+
 model MerchantMembership {
   id            String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
   merchantId    String    @map("merchant_id") @db.Uuid
@@ -378,9 +417,15 @@ model MerchantMembership {
   status        String    @default("active")
   deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Staff only (CHECK in SQL): the merchant-defined role (permissions attach in P5).
+  roleId        String?   @map("role_id") @db.Uuid
+  /// Staff only: restricted to this branch; NULL = all branches (the default, OPEN-2).
+  branchId      String?   @map("branch_id") @db.Uuid
 
   merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   identity Identity  @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role     Role?     @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch   Branch?   @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   sessions Session[]
 
   @@unique([merchantId, id])

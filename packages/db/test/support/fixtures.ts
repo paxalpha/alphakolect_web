@@ -17,6 +17,8 @@ export const FIXTURE = {
     auditEventId: '01900000-0000-7000-8000-0000000000a5',
     ownerIdentityId: '01900000-0000-7000-8000-0000000000a6',
     ownerMembershipId: '01900000-0000-7000-8000-0000000000a7',
+    branchId: '01900000-0000-7000-8000-0000000000a8',
+    roleId: '01900000-0000-7000-8000-0000000000a9',
   },
   B: {
     merchantId: MERCHANT_B,
@@ -27,6 +29,8 @@ export const FIXTURE = {
     auditEventId: '01900000-0000-7000-8000-0000000000b5',
     ownerIdentityId: '01900000-0000-7000-8000-0000000000b6',
     ownerMembershipId: '01900000-0000-7000-8000-0000000000b7',
+    branchId: '01900000-0000-7000-8000-0000000000b8',
+    roleId: '01900000-0000-7000-8000-0000000000b9',
   },
 } as const;
 
@@ -83,6 +87,14 @@ export async function loadFixtures(db: Client): Promise<void> {
         `INSERT INTO tenancy.merchant_memberships (id, merchant_id, identity_id, kind) VALUES ($1, $2, $3, 'owner')`,
         [f.ownerMembershipId, f.merchantId, f.ownerIdentityId],
       );
+      await db.query(`INSERT INTO tenancy.branches (id, merchant_id, name) VALUES ($1, $2, 'Head office')`, [
+        f.branchId,
+        f.merchantId,
+      ]);
+      await db.query(`INSERT INTO tenancy.roles (id, merchant_id, name) VALUES ($1, $2, 'Cashier')`, [
+        f.roleId,
+        f.merchantId,
+      ]);
     }
     await db.query('COMMIT');
   } catch (err) {

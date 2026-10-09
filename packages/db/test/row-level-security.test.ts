@@ -18,6 +18,8 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
   ['ledger.balance_projection', 'merchant_id'],
   ['audit.audit_events', 'merchant_id'],
   ['tenancy.merchant_memberships', 'merchant_id'],
+  ['tenancy.branches', 'merchant_id'],
+  ['tenancy.roles', 'merchant_id'],
 ];
 
 let app: pg.Client;

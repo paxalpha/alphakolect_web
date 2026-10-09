@@ -8,6 +8,13 @@ import type { CookieOptions, Response } from 'express';
 export const MFA_CHALLENGE_COOKIE = '__Secure-ak_mfa';
 export const REFRESH_PATH = '/v1/auth/refresh';
 export const MFA_PATH = '/v1/auth/mfa';
+/**
+ * The membership-selection challenge (ADR-15 T4): HttpOnly, 5 minutes, sent only to /v1/auth/login and below
+ * (the choices and the selection). Never in a response body for web audiences.
+ */
+export const SELECTION_CHALLENGE_COOKIE = '__Secure-ak_sel';
+export const SELECTION_PATH = '/v1/auth/login';
+export const SELECTION_CHALLENGE_SECONDS = 5 * 60;
 
 export type CookieSettings = { domain?: string | undefined };
 
@@ -70,6 +77,22 @@ export function clearMfaChallengeCookie(res: Response, settings: CookieSettings)
     secure: true,
     sameSite: 'lax',
     path: MFA_PATH,
+    ...(settings.domain ? { domain: settings.domain } : {}),
+  });
+}
+
+export function setSelectionChallengeCookie(res: Response, settings: CookieSettings, token: string): void {
+  res.cookie(SELECTION_CHALLENGE_COOKIE, token, {
+    ...base(settings, SELECTION_CHALLENGE_SECONDS, SELECTION_PATH),
+    httpOnly: true,
+  });
+}
+
+export function clearSelectionChallengeCookie(res: Response, settings: CookieSettings): void {
+  res.clearCookie(SELECTION_CHALLENGE_COOKIE, {
+    secure: true,
+    sameSite: 'lax',
+    path: SELECTION_PATH,
     ...(settings.domain ? { domain: settings.domain } : {}),
   });
 }

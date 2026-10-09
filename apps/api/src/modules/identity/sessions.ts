@@ -29,7 +29,9 @@ export type IssuedSession = { session: Session; tokens: IssuedTokens };
 
 export type LoginResult =
   | { kind: 'session'; status: 'authenticated' | 'mfa_enrollment_required'; issued: IssuedSession }
-  | { kind: 'mfa_challenge'; status: 'mfa_required'; challengeToken: string };
+  | { kind: 'mfa_challenge'; status: 'mfa_required'; challengeToken: string }
+  /** Several eligible memberships (ADR-15 T4): no session, a selection challenge for the client to continue with. */
+  | { kind: 'membership_selection'; challengeToken: string };
 
 const invalidCredentials = () =>
   new AppError(401, 'INVALID_CREDENTIALS', 'The email or password is incorrect');
@@ -105,10 +107,18 @@ export class SessionService {
       throw invalidCredentials();
     }
     if (resolved.membership_id === null) {
-      // Several eligible memberships. Until the selection step exists (P4.2 step 5) this is refused generically —
-      // still no guess and no session.
-      await fail('membership_selection_unavailable');
-      throw invalidCredentials();
+      // Several eligible memberships: the database stored the selection challenge; no session is created here.
+      await audit.record({
+        action: 'auth.login',
+        outcome: 'success',
+        actorIdentityId: candidate.identity_id,
+        actorAudience: input.audience,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        requestId: ctx.requestId,
+        summary: { stage: 'membership_selection_required', choices: resolved.eligible_count },
+      });
+      return { kind: 'membership_selection', challengeToken: selection.raw };
     }
     const membershipId = resolved.membership_id;
 

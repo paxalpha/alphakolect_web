@@ -107,6 +107,26 @@
               }
             }
           },
+          "409": {
+            "description": "MEMBERSHIP_SELECTION_REQUIRED — only after correct credentials, when several memberships are eligible: no session yet; a short-lived selection challenge is set as an HttpOnly cookie. Continue with GET /v1/auth/login/memberships and POST /v1/auth/login/select.",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
           "429": {
             "description": "RATE_LIMITED",
             "headers": {

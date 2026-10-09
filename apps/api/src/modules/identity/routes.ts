@@ -28,6 +28,7 @@ import {
   clearMfaChallengeCookie,
   clearSessionCookies,
   MFA_CHALLENGE_COOKIE,
+  setSelectionChallengeCookie,
   setMfaChallengeCookie,
   setSessionCookies,
   type CookieSettings,
@@ -75,6 +76,11 @@ const sessionOf = (auth: AuthContext): Session => ({
 export function authHandlers({ sessions, cookies, webOrigins }: AuthHandlerDeps) {
   const login: RequestHandler = async (req, res) => {
     const result = await sessions.login(req.body as LoginRequest, contextOf(req));
+    if (result.kind === 'membership_selection') {
+      // ADR-15 T4: no session yet — the challenge cookie lets the client fetch the choices and select one.
+      setSelectionChallengeCookie(res, cookies, result.challengeToken);
+      throw new AppError(409, 'MEMBERSHIP_SELECTION_REQUIRED', 'Choose which business to sign in to');
+    }
     if (result.kind === 'mfa_challenge') {
       setMfaChallengeCookie(res, cookies, result.challengeToken);
       const body: LoginResponse = { status: 'mfa_required' };

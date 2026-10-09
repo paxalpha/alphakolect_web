@@ -28,6 +28,7 @@ export const AUTH_ERROR_CODES = [
   'MFA_ENROLLMENT_REQUIRED', // platform identity has not enrolled TOTP yet (D8)
   'INVALID_MFA_CODE',
   'MFA_ALREADY_ENROLLED', // TOTP is already confirmed for this identity
+  'MEMBERSHIP_SELECTION_REQUIRED', // correct credentials, several eligible memberships: choose one (ADR-15 T4)
   'INVALID_OR_EXPIRED_TOKEN', // verification / reset / refresh token unusable — same for every reason
   'WEAK_PASSWORD', // fails the password policy (D10)
   'CSRF_FAILED',

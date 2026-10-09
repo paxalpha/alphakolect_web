@@ -80,6 +80,12 @@ export const login = defineEndpoint({
     400: error('VALIDATION_ERROR'),
     401: error('INVALID_CREDENTIALS — identical for unknown accounts and wrong passwords'),
     403: error('EMAIL_VERIFICATION_REQUIRED — only after correct credentials'),
+    409: {
+      ...error(
+        'MEMBERSHIP_SELECTION_REQUIRED — only after correct credentials, when several memberships are eligible: no session yet; a short-lived selection challenge is set as an HttpOnly cookie. Continue with GET /v1/auth/login/memberships and POST /v1/auth/login/select.',
+      ),
+      headers: SetCookie,
+    },
     429: rateLimited,
   },
 });

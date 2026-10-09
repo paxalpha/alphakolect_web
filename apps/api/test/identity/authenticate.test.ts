@@ -114,8 +114,12 @@ beforeAll(async () => {
     null,
   );
   await auth.identity.verifyEmail(verification.hash);
-  const candidate = await auth.identity.loginCandidate(email, 'merchant');
-  merchant = await session(signup.identity_id!, 'merchant', candidate!.membership_id!, 'full', {
+  const resolved = await auth.identity.resolveLoginMembership(
+    signup.identity_id!,
+    'merchant',
+    newOpaqueToken().hash,
+  );
+  merchant = await session(signup.identity_id!, 'merchant', resolved.membership_id!, 'full', {
     idleSeconds: 86400,
     absoluteSeconds: 1209600,
   });

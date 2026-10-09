@@ -231,7 +231,7 @@ describe('POST /v1/auth/login — merchant owner', () => {
     expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
   });
 
-  it('refuses merchant staff in P3 (D3: owners only until P4), like a wrong password', async () => {
+  it('signs in merchant staff (P4.2, ADR-15 T2; refused in P3 under D3)', async () => {
     const m = await merchantOwner();
     const email = uniqueEmail('staff');
     const {
@@ -240,13 +240,35 @@ describe('POST /v1/auth/login — merchant owner', () => {
       `INSERT INTO identity.identities (email, password_hash, email_verified_at) VALUES ($1, $2, now()) RETURNING id`,
       [email, await hashPassword(PASSWORD)],
     );
-    await owner.query(
-      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff')`,
+    const {
+      rows: [membership],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff') RETURNING id`,
       [m.merchantId, staff.id],
     );
     const res = await login({ email, password: PASSWORD, audience: 'merchant' });
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(res.status).toBe(200);
+    expect(LoginResponse.parse(res.body)).toMatchObject({
+      status: 'authenticated',
+      session: { identityId: staff.id, membershipId: membership.id, merchantId: m.merchantId },
+    });
+  });
+
+  it('never guesses between two eligible memberships: no session is created', async () => {
+    const m = await merchantOwner();
+    const other = await merchantOwner();
+    await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff')`,
+      [other.merchantId, m.identityId],
+    );
+    const res = await login({ email: m.email, password: PASSWORD, audience: 'merchant' });
+    expect(res.status).not.toBe(200);
+    expect(res.headers['set-cookie']).toBeUndefined();
+    const { rows } = await owner.query(
+      `SELECT count(*)::int AS n FROM identity.sessions WHERE identity_id = $1`,
+      [m.identityId],
+    );
+    expect(rows[0].n).toBe(0);
   });
 
   it('upgrades a password hash made with older parameters (D15)', async () => {

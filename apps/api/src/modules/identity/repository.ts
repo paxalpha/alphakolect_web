@@ -4,16 +4,17 @@ import type { SessionAudience } from './access-tokens.js';
 // Typed wrappers over the identity.* SECURITY DEFINER functions (ADR-14 D4) — the only way the API reaches
 // identity data. Every token argument is a SHA-256 hex HASH (see tokens.ts); raw tokens never reach the DB.
 
-export type LoginCandidate = {
+/** Credentials for the password check — no membership (P4.2). */
+export type LoginIdentity = {
   identity_id: string;
   identity_status: string;
   email_verified: boolean;
   password_hash: string | null;
-  membership_id: string | null;
-  membership_kind: string | null;
-  membership_status: string | null;
   mfa_enrolled: boolean;
 };
+
+/** A membership the caller may choose at login: no merchant id, nothing but what the chooser needs. */
+export type SelectionChoice = { membership_id: string; merchant_name: string | null; kind: string };
 
 export type ValidSession = {
   identity_id: string;
@@ -101,11 +102,35 @@ export class IdentityRepository {
     return row?.ok ?? false;
   }
 
-  async loginCandidate(email: string, audience: SessionAudience): Promise<LoginCandidate | null> {
-    const [row] = await this.db.query<LoginCandidate>(`SELECT * FROM identity.login_candidate($1, $2)`, [
-      email,
-      audience,
-    ]);
+  async loginIdentity(email: string): Promise<LoginIdentity | null> {
+    const [row] = await this.db.query<LoginIdentity>(`SELECT * FROM identity.login_identity($1)`, [email]);
+    return row ?? null;
+  }
+
+  /**
+   * After a successful password check only. One eligible membership ⇒ it is returned; several ⇒ a selection
+   * challenge is stored under `challengeHash` and no membership is returned (ADR-15 T4).
+   */
+  async resolveLoginMembership(identityId: string, audience: SessionAudience, challengeHash: string) {
+    const [row] = await this.db.query<{ eligible_count: number; membership_id: string | null }>(
+      `SELECT * FROM identity.resolve_login_membership($1, $2, $3)`,
+      [identityId, audience, challengeHash],
+    );
+    return row!;
+  }
+
+  /** The choices for a valid selection challenge; does not consume it. */
+  async selectionChoices(challengeHash: string): Promise<SelectionChoice[]> {
+    return this.db.query<SelectionChoice>(`SELECT * FROM identity.selection_choices($1)`, [challengeHash]);
+  }
+
+  /** Consumes the challenge (whatever the outcome) and returns the chosen membership if still eligible. */
+  async takeSelection(challengeHash: string, membershipId: string) {
+    const [row] = await this.db.query<{
+      identity_id: string;
+      audience: SessionAudience;
+      membership_id: string;
+    }>(`SELECT * FROM identity.take_selection($1, $2)`, [challengeHash, membershipId]);
     return row ?? null;
   }
 

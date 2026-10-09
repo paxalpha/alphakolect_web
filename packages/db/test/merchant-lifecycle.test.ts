@@ -340,9 +340,12 @@ describe('the merchant gate (T5)', () => {
       SQLSTATE.checkViolation,
     );
     const {
-      rows: [candidate],
-    } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [m.email]);
-    expect(candidate.membership_id).toBeNull(); // login answers the generic INVALID_CREDENTIALS
+      rows: [resolved],
+    } = await app.query(`SELECT * FROM identity.resolve_login_membership($1, 'merchant', $2)`, [
+      m.ownerIdentityId,
+      hash(),
+    ]);
+    expect(resolved).toEqual({ eligible_count: 0, membership_id: null }); // login answers INVALID_CREDENTIALS
   });
 
   it('deactivation changes no identity, membership or session row; reactivation restores only what is otherwise valid', async () => {

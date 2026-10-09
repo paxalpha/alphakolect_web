@@ -20,9 +20,6 @@ const LIFETIMES: Readonly<Record<SessionAudience, SessionLifetime>> = {
 /** D8: the session of a platform identity that must enrol TOTP first. */
 const ENROLMENT_LIFETIME: SessionLifetime = { idleSeconds: 900, absoluteSeconds: 900 };
 
-/** D3: who may sign in per web audience in P3. Platform staff and merchant staff arrive with P4/P5. */
-const P3_MEMBERSHIP_KIND = { platform: 'super_admin', merchant: 'owner' } as const;
-
 export type RequestContext = { ip: string; userAgent: string | null; requestId: string };
 
 /** Secrets for the client. Never logged, never in a response body. */
@@ -61,7 +58,8 @@ export class SessionService {
     const { identity, audit, limiter } = this.deps;
     await limiter.enforce('login', ctx.ip, input.email);
 
-    const candidate = await identity.loginCandidate(input.email, input.audience);
+    // Credentials only (P4.2): which membership to use is decided after the password check, by the database.
+    const candidate = await identity.loginIdentity(input.email);
     // D12: an unknown account costs the same password check as a known one and fails identically.
     const passwordOk = candidate?.password_hash
       ? await verifyPassword(input.password, candidate.password_hash)
@@ -93,14 +91,26 @@ export class SessionService {
       await fail('email_unverified');
       throw new AppError(403, 'EMAIL_VERIFICATION_REQUIRED', 'Verify your email address to sign in');
     }
-    if (
-      !candidate.membership_id ||
-      candidate.membership_status !== 'active' ||
-      candidate.membership_kind !== P3_MEMBERSHIP_KIND[input.audience]
-    ) {
+    // ADR-15 T4: never guess. Eligibility (active membership of a kind valid for the audience, in an active
+    // merchant; platform: the super admin) is decided by the database. Several eligible memberships create a
+    // selection challenge and no session.
+    const selection = newOpaqueToken();
+    const resolved = await identity.resolveLoginMembership(
+      candidate.identity_id,
+      input.audience,
+      selection.hash,
+    );
+    if (resolved.eligible_count === 0) {
       await fail('no_active_membership');
       throw invalidCredentials();
     }
+    if (resolved.membership_id === null) {
+      // Several eligible memberships. Until the selection step exists (P4.2 step 5) this is refused generically —
+      // still no guess and no session.
+      await fail('membership_selection_unavailable');
+      throw invalidCredentials();
+    }
+    const membershipId = resolved.membership_id;
 
     // D15: upgrade hashes made with older parameters. Best effort: a lost race (another login rehashed first) is fine.
     if (needsRehash(candidate.password_hash!)) {
@@ -118,7 +128,7 @@ export class SessionService {
         merchantId,
         actorIdentityId: candidate.identity_id,
         actorAudience: input.audience,
-        actorMembershipId: candidate.membership_id,
+        actorMembershipId: membershipId,
         ip: ctx.ip,
         userAgent: ctx.userAgent,
         requestId: ctx.requestId,
@@ -129,7 +139,7 @@ export class SessionService {
     // D8: platform identities always need a second factor.
     if (input.audience === 'platform' && candidate.mfa_enrolled) {
       const challenge = newOpaqueToken();
-      await identity.createMfaChallenge(candidate.identity_id, candidate.membership_id, challenge.hash);
+      await identity.createMfaChallenge(candidate.identity_id, membershipId, challenge.hash);
       await succeed('mfa_required', null);
       return { kind: 'mfa_challenge', status: 'mfa_required', challengeToken: challenge.raw };
     }
@@ -138,7 +148,7 @@ export class SessionService {
     const issued = await this.startSession({
       identityId: candidate.identity_id,
       audience: input.audience,
-      membershipId: candidate.membership_id,
+      membershipId,
       scope: enrolmentOnly ? 'mfa_enrollment' : 'full',
       ctx,
     });

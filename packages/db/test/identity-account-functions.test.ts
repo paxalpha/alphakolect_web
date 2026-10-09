@@ -272,40 +272,29 @@ describe('passwords (§3.2, D5, D15)', () => {
 });
 
 describe('narrow reads', () => {
-  it('login_candidate returns what login needs for the audience, case-insensitively', async () => {
+  it('login_identity returns credentials only, case-insensitively — no membership (P4.2)', async () => {
     const s = await signup();
-    await app.query(`SELECT identity.verify_email($1)`, [
-      (await issue(s.identity_id, 'email_verification')).hash,
-    ]);
-    const { rows } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [
+    const { rows, fields } = await app.query(`SELECT * FROM identity.login_identity($1)`, [
       s.email.toUpperCase(),
     ]);
-    expect(rows[0]).toMatchObject({
+    expect(fields.map((f) => f.name)).toEqual([
+      'identity_id',
+      'identity_status',
+      'email_verified',
+      'password_hash',
+      'mfa_enrolled',
+    ]);
+    expect(rows[0]).toEqual({
       identity_id: s.identity_id,
       identity_status: 'active',
-      email_verified: true,
+      email_verified: false,
       password_hash: ARGON('initial'),
-      membership_kind: 'owner',
-      membership_status: 'active',
       mfa_enrolled: false,
     });
   });
 
-  it('login_candidate offers no membership of a merchant that is not active (P4.1, ADR-15 T5)', async () => {
-    // Still pending verification: the credentials row comes back (so the API can answer
-    // EMAIL_VERIFICATION_REQUIRED after a correct password), but no membership is offered.
-    const s = await signup();
-    const { rows } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [s.email]);
-    expect(rows[0]).toMatchObject({ identity_id: s.identity_id, email_verified: false, membership_id: null });
-  });
-
-  it('returns no membership for an audience the identity does not belong to, and no row for unknown emails', async () => {
-    const s = await signup();
-    const platform = await app.query(`SELECT * FROM identity.login_candidate($1, 'platform')`, [s.email]);
-    expect(platform.rows[0]).toMatchObject({ identity_id: s.identity_id, membership_id: null });
-    const unknown = await app.query(
-      `SELECT * FROM identity.login_candidate('nobody@example.test', 'merchant')`,
-    );
+  it('login_identity returns no row for an unknown email', async () => {
+    const unknown = await app.query(`SELECT * FROM identity.login_identity('nobody@example.test')`);
     expect(unknown.rowCount).toBe(0);
   });
 

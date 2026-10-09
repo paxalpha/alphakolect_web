@@ -212,15 +212,16 @@ model Identity {
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  platformMembership  PlatformMembership?
-  merchantMemberships MerchantMembership[]
-  sessions            Session[]
-  oneTimeTokens       OneTimeToken[]
-  mfaChallenges       MfaChallenge[]
-  totpCredential      TotpCredential?
-  recoveryCodes       RecoveryCode[]
-  journalEntries      JournalEntry[]       @relation("JournalEntryCreator")
-  auditEvents         AuditEvent[]         @relation("AuditActor")
+  platformMembership            PlatformMembership?
+  merchantMemberships           MerchantMembership[]
+  sessions                      Session[]
+  oneTimeTokens                 OneTimeToken[]
+  mfaChallenges                 MfaChallenge[]
+  membershipSelectionChallenges MembershipSelectionChallenge[]
+  totpCredential                TotpCredential?
+  recoveryCodes                 RecoveryCode[]
+  journalEntries                JournalEntry[]                 @relation("JournalEntryCreator")
+  auditEvents                   AuditEvent[]                   @relation("AuditActor")
 
   @@map("identities")
   @@schema("identity")
@@ -304,6 +305,22 @@ model OneTimeToken {
 }
 
 /// Pending second factor of a platform login (D8): 5 minutes, 5 attempts.
+/// P4.2 login membership selection (ADR-15 T4): 5 minutes, single use, hash only (CHECKs in SQL).
+model MembershipSelectionChallenge {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId String    @map("identity_id") @db.Uuid
+  audience   String
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("membership_selection_challenges")
+  @@schema("identity")
+}
+
 model MfaChallenge {
   id                   String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
   identityId           String    @map("identity_id") @db.Uuid

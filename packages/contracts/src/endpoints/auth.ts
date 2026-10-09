@@ -155,6 +155,38 @@ export const listLoginMemberships = defineEndpoint({
   },
 });
 
+export const SelectMembershipRequest = z.object({ selectionId: Id }).meta({ id: 'SelectMembershipRequest' });
+
+export type SelectMembershipRequest = z.infer<typeof SelectMembershipRequest>;
+
+/** Its own schema (not LoginResponse), like MfaVerified: signed in to the chosen business. */
+export const MembershipSelected = z
+  .object({ status: z.literal('authenticated'), session: Session })
+  .meta({ id: 'MembershipSelected' });
+
+export type MembershipSelected = z.infer<typeof MembershipSelected>;
+
+export const selectLoginMembership = defineEndpoint({
+  id: 'selectLoginMembership',
+  method: 'post',
+  path: '/v1/auth/login/select',
+  audience: 'public',
+  summary: 'Sign in to the chosen business (uses the selection challenge cookie; JSON only)',
+  request: { body: SelectMembershipRequest },
+  responses: {
+    200: {
+      description: 'Signed in; the selection challenge is used up',
+      schema: MembershipSelected,
+      headers: SetCookie,
+    },
+    400: error('VALIDATION_ERROR'),
+    401: error(
+      'INVALID_OR_EXPIRED_TOKEN — no valid challenge, or the choice is not (or no longer) available: the challenge is used up either way; sign in again',
+    ),
+    429: rateLimited,
+  },
+});
+
 export const getSession = defineEndpoint({
   id: 'getSession',
   method: 'get',

@@ -1226,6 +1226,98 @@
         }
       }
     },
+    "/v1/auth/login/select": {
+      "post": {
+        "operationId": "selectLoginMembership",
+        "summary": "Sign in to the chosen business (uses the selection challenge cookie; JSON only)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectMembershipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in; the selection challenge is used up",
+            "headers": {
+              "Set-Cookie": {
+                "required": true,
+                "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)",
+                "schema": {
+                  "type": "string",
+                  "description": "Session cookies: __Secure-ak_at, __Secure-ak_rt and __Secure-ak_csrf (HttpOnly except the CSRF cookie)"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MembershipSelected"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — no valid challenge, or the choice is not (or no longer) available: the challenge is used up either way; sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "Retry-After": {
+                "required": true,
+                "description": "Seconds to wait before retrying",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait before retrying"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/platform/merchants/{merchantId}/deactivate": {
       "post": {
         "operationId": "deactivateMerchant",
@@ -1594,6 +1686,17 @@
         ],
         "description": "Either the current authenticator code or one recovery code"
       },
+      "SelectMembershipRequest": {
+        "type": "object",
+        "properties": {
+          "selectionId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "selectionId"
+        ]
+      },
       "DeactivateMerchantRequest": {
         "type": "object",
         "properties": {
@@ -1900,6 +2003,23 @@
           "selectionId",
           "merchantName",
           "kind"
+        ],
+        "additionalProperties": false
+      },
+      "MembershipSelected": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "authenticated"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "required": [
+          "status",
+          "session"
         ],
         "additionalProperties": false
       },

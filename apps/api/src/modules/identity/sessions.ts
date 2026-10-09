@@ -167,6 +167,48 @@ export class SessionService {
     return { kind: 'session', status, issued };
   }
 
+  /**
+   * The selection step (ADR-15 T4, T16): the database locks and consumes the challenge whatever the outcome, then
+   * re-checks that the choice is still eligible; only then is a session created, bound to that one membership.
+   * Web (merchant audience) only — platform sign-in never needs a choice; agents use their own endpoints (P4.7).
+   */
+  async selectMembership(
+    challengeHash: string | null,
+    selectionId: string,
+    ctx: RequestContext,
+  ): Promise<IssuedSession> {
+    const { identity, audit } = this.deps;
+    const taken = challengeHash ? await identity.takeSelection(challengeHash, selectionId) : null;
+    const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
+    if (!taken || taken.audience !== 'merchant') {
+      await audit.record({
+        action: 'auth.login_select',
+        outcome: 'failure',
+        ...(taken ? { actorIdentityId: taken.identity_id } : {}),
+        ...request,
+        summary: { reason: challengeHash ? 'not_available' : 'no_challenge' },
+      });
+      throw invalidRefresh();
+    }
+    const issued = await this.startSession({
+      identityId: taken.identity_id,
+      audience: 'merchant',
+      membershipId: taken.membership_id,
+      scope: 'full',
+      ctx,
+    });
+    await audit.record({
+      action: 'auth.login_select',
+      outcome: 'success',
+      merchantId: issued.session.merchantId,
+      actorIdentityId: taken.identity_id,
+      actorAudience: 'merchant',
+      actorMembershipId: taken.membership_id,
+      ...request,
+    });
+    return issued;
+  }
+
   /** Create a session and its first tokens. Also used after a successful MFA step (P3.8). */
   async startSession(args: {
     identityId: string;

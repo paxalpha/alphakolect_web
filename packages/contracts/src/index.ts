@@ -14,6 +14,7 @@ import {
   refreshSession,
   resendVerification,
   resetPassword,
+  selectLoginMembership,
   signup,
   verifyEmail,
   verifyMfa,
@@ -46,6 +47,7 @@ export const endpoints = {
   confirmTotpEnrollment,
   verifyMfa,
   listLoginMemberships,
+  selectLoginMembership,
   deactivateMerchant,
   reactivateMerchant,
 } as const;

@@ -8,6 +8,8 @@ import {
   type SetPasswordRequest,
   type LoginResponse,
   type MembershipChoices,
+  type MembershipSelected,
+  type SelectMembershipRequest,
   type MfaVerified,
   type ResendVerificationRequest,
   type Session,
@@ -236,10 +238,12 @@ export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: Cookie
  */
 export function selectionHandlers({
   identity,
+  sessions,
   limiter,
   cookies,
 }: {
   identity: IdentityRepository;
+  sessions: SessionService;
   limiter: RateLimiter;
   cookies: CookieSettings;
 }) {
@@ -267,5 +271,21 @@ export function selectionHandlers({
     res.set('Cache-Control', 'no-store').json(body);
   };
 
-  return { listLoginMemberships };
+  // JSON only (express.json parses nothing else, so the body fails validation): a cross-site HTML form cannot
+  // post a selection — the same stance as login and MFA verify.
+  const selectLoginMembership: RequestHandler = async (req, res) => {
+    const hash = await challengeHash(req);
+    // The challenge is single use: the cookie goes whatever happens next.
+    clearSelectionChallengeCookie(res, cookies);
+    const issued = await sessions.selectMembership(
+      hash,
+      (req.body as SelectMembershipRequest).selectionId,
+      contextOf(req),
+    );
+    setCookiesFor(res, cookies, issued.tokens, newOpaqueToken().raw);
+    const body: MembershipSelected = { status: 'authenticated', session: issued.session };
+    res.json(body);
+  };
+
+  return { listLoginMemberships, selectLoginMembership };
 }

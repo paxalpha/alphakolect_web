@@ -103,7 +103,7 @@ export function createApp({
     ...accountHandlers({ accounts }),
     ...passwordHandlers({ passwords, cookies }),
     ...mfaHandlers({ mfa, cookies }),
-    ...selectionHandlers({ identity: auth.identity, limiter, cookies }),
+    ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
   };
 

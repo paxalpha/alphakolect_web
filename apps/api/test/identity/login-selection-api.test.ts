@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { MembershipChoices } from '@alphakolect/contracts';
+import { AUTH_COOKIES, MembershipChoices, MembershipSelected } from '@alphakolect/contracts';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -157,5 +157,157 @@ describe('GET /v1/auth/login/memberships', () => {
       expect(res.status).toBe(429);
       expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
     });
+  });
+});
+
+const select = (challenge: string | null, selectionId: string) => {
+  const req = request(app).post('/v1/auth/login/select').set('X-Forwarded-For', clientIp());
+  if (challenge !== null) req.set('Cookie', `${SELECTION_CHALLENGE_COOKIE}=${challenge}`);
+  return req.send({ selectionId });
+};
+
+const sessionsOf = async (identityId: string) =>
+  (await owner.query(`SELECT count(*)::int AS n FROM identity.sessions WHERE identity_id = $1`, [identityId]))
+    .rows[0].n as number;
+
+const accessCookie = (res: request.Response) =>
+  ((res.headers['set-cookie'] as unknown as string[]) ?? [])
+    .find((c) => c.startsWith(`${AUTH_COOKIES.access}=`))
+    ?.split(';')[0]
+    ?.split('=')[1];
+
+describe('POST /v1/auth/login/select', () => {
+  it('signs in to exactly the chosen business, uses the challenge up and clears its cookie', async () => {
+    const b = await twoBusinesses();
+    const challenge = await challengeFor(b.email);
+    expect(await sessionsOf(b.identityId)).toBe(0); // nothing before the selection
+
+    const res = await select(challenge, b.staffAtAlpha);
+    expect(res.status).toBe(200);
+    expect(MembershipSelected.parse(res.body)).toEqual({
+      status: 'authenticated',
+      session: {
+        identityId: b.identityId,
+        audience: 'merchant',
+        membershipId: b.staffAtAlpha,
+        merchantId: b.alpha.merchantId,
+        scope: 'full',
+      },
+    });
+    expect(clearsChallenge(res)).toBe(true);
+    expect(await consumed(challenge)).toBe(true);
+    expect(await sessionsOf(b.identityId)).toBe(1);
+    expect(JSON.stringify(res.body)).not.toContain(challenge);
+
+    const me = await request(app)
+      .get('/v1/auth/session')
+      .set('Cookie', `${AUTH_COOKIES.access}=${accessCookie(res)}`);
+    expect(me.body).toMatchObject({ membershipId: b.staffAtAlpha, merchantId: b.alpha.merchantId });
+  });
+
+  it('a replay gets 401, even for the other choice', async () => {
+    const b = await twoBusinesses();
+    const challenge = await challengeFor(b.email);
+    expect((await select(challenge, b.ownerAtZeta)).status).toBe(200);
+    const replay = await select(challenge, b.staffAtAlpha);
+    expect(replay.status).toBe(401);
+    expect(replay.body.error.code).toBe('INVALID_OR_EXPIRED_TOKEN');
+    expect(await sessionsOf(b.identityId)).toBe(1);
+  });
+
+  it('a choice that is no longer available (merchant deactivated after listing) gets 401, uses the challenge up, and creates nothing', async () => {
+    const b = await twoBusinesses();
+    const challenge = await challengeFor(b.email);
+    expect((await choices(challenge)).status).toBe(200);
+    await owner.query(
+      `UPDATE tenancy.merchants SET status = 'deactivated', deactivated_at = now(), deactivation_reason = 'test' WHERE id = $1`,
+      [b.alpha.merchantId],
+    );
+    const res = await select(challenge, b.staffAtAlpha);
+    expect(res.status).toBe(401);
+    expect(clearsChallenge(res)).toBe(true);
+    expect(await consumed(challenge)).toBe(true); // decision (b): used up whatever the outcome
+    expect(await sessionsOf(b.identityId)).toBe(0);
+    expect((await select(challenge, b.ownerAtZeta)).status).toBe(401); // sign in again
+  });
+
+  it('someone else’s membership id is never selectable', async () => {
+    const b = await twoBusinesses();
+    const stranger = await verifiedMerchant('Stranger Ltd');
+    const { rows } = await owner.query(`SELECT id FROM tenancy.merchant_memberships WHERE identity_id = $1`, [
+      stranger.identityId,
+    ]);
+    const res = await select(await challengeFor(b.email), rows[0].id);
+    expect(res.status).toBe(401);
+    expect(await sessionsOf(b.identityId)).toBe(0);
+    expect(await sessionsOf(stranger.identityId)).toBe(0);
+  });
+
+  it('refuses without a challenge, and refuses a form-encoded or text body (JSON only)', async () => {
+    const b = await twoBusinesses();
+    expect((await select(null, b.ownerAtZeta)).status).toBe(401);
+    const challenge = await challengeFor(b.email);
+    for (const type of ['application/x-www-form-urlencoded', 'text/plain']) {
+      const res = await request(app)
+        .post('/v1/auth/login/select')
+        .set('X-Forwarded-For', clientIp())
+        .set('Cookie', `${SELECTION_CHALLENGE_COOKIE}=${challenge}`)
+        .set('Content-Type', type)
+        .send(`selectionId=${b.ownerAtZeta}`);
+      expect(res.status).toBe(400);
+    }
+    expect(await sessionsOf(b.identityId)).toBe(0);
+  });
+
+  it('the web endpoint never completes an agent-audience selection (agents have their own endpoints, P4.7)', async () => {
+    const field = await verifiedMerchant('Field A');
+    const field2 = await verifiedMerchant('Field B');
+    const agent = await verifiedMerchant('Agent Home');
+    const agentIds: string[] = [];
+    for (const m of [field, field2]) {
+      const {
+        rows: [row],
+      } = await owner.query(
+        `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'agent') RETURNING id`,
+        [m.merchantId, agent.identityId],
+      );
+      agentIds.push(row.id);
+    }
+    const challenge = newOpaqueToken();
+    expect(
+      (await repo.resolveLoginMembership(agent.identityId, 'agent', challenge.hash)).eligible_count,
+    ).toBe(2);
+    const res = await select(challenge.raw, agentIds[0]!);
+    expect(res.status).toBe(401);
+    expect(await sessionsOf(agent.identityId)).toBe(0);
+  });
+
+  it('two concurrent selections with one challenge: exactly one session', async () => {
+    const b = await twoBusinesses();
+    const challenge = await challengeFor(b.email);
+    const results = await Promise.all([select(challenge, b.ownerAtZeta), select(challenge, b.staffAtAlpha)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
+    expect(await sessionsOf(b.identityId)).toBe(1);
+  });
+
+  it('audits success and failure without the challenge or its hash', async () => {
+    const b = await twoBusinesses();
+    const challenge = await challengeFor(b.email);
+    const ok = await select(challenge, b.ownerAtZeta);
+    const replay = await select(challenge, b.ownerAtZeta);
+    const { rows } = await owner.query(
+      `SELECT action, outcome, merchant_id, actor_membership_id, summary, row_to_json(a)::text AS raw
+         FROM audit.audit_events a WHERE request_id = ANY($1) ORDER BY occurred_at`,
+      [[ok.headers['x-request-id'], replay.headers['x-request-id']]],
+    );
+    expect(rows.map((r) => [r.action, r.outcome])).toEqual([
+      ['auth.login_select', 'success'],
+      ['auth.login_select', 'failure'],
+    ]);
+    expect(rows[0]).toMatchObject({ merchant_id: b.zeta.merchantId, actor_membership_id: b.ownerAtZeta });
+    for (const r of rows) {
+      expect(r.raw).not.toContain(challenge);
+      expect(r.raw).not.toContain(hashOpaqueToken(challenge));
+    }
   });
 });

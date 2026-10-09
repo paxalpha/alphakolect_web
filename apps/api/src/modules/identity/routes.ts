@@ -7,6 +7,7 @@ import {
   type PasswordEmailPending,
   type SetPasswordRequest,
   type LoginResponse,
+  type MfaVerified,
   type ResendVerificationRequest,
   type Session,
   type SignupRequest,
@@ -205,7 +206,7 @@ export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: Cookie
       const issued = await mfa.verifyChallenge(challenge, req.body as VerifyMfaRequest, contextOf(req));
       clearMfaChallengeCookie(res, cookies);
       setCookiesFor(res, cookies, issued.tokens, newOpaqueToken().raw);
-      const body: LoginResponse = { status: 'authenticated', session: issued.session };
+      const body: MfaVerified = { status: 'authenticated', session: issued.session };
       res.json(body);
     } catch (err) {
       // A wrong code keeps the challenge (up to 5 attempts); a dead challenge means signing in again.

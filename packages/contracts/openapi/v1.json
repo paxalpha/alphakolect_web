@@ -1075,7 +1075,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/LoginResponse"
+                  "$ref": "#/components/schemas/MfaVerified"
                 }
               }
             }
@@ -1749,6 +1749,23 @@
         "required": [
           "session",
           "recoveryCodes"
+        ],
+        "additionalProperties": false
+      },
+      "MfaVerified": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "authenticated"
+          },
+          "session": {
+            "$ref": "#/components/schemas/Session"
+          }
+        },
+        "required": [
+          "status",
+          "session"
         ],
         "additionalProperties": false
       },

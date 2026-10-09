@@ -386,6 +386,16 @@ export const confirmTotpEnrollment = defineEndpoint({
   },
 });
 
+/**
+ * The only answer of the MFA second step: signed in. Its own schema (not LoginResponse), so a change to the login
+ * outcomes can never silently change the MFA contract (ADR-15; measured with oasdiff 2026-10-09).
+ */
+export const MfaVerified = z
+  .object({ status: z.literal('authenticated'), session: Session })
+  .meta({ id: 'MfaVerified' });
+
+export type MfaVerified = z.infer<typeof MfaVerified>;
+
 export const verifyMfa = defineEndpoint({
   id: 'verifyMfa',
   method: 'post',
@@ -394,7 +404,7 @@ export const verifyMfa = defineEndpoint({
   summary: 'Second login step for platform accounts (uses the MFA challenge cookie set by login)',
   request: { body: VerifyMfaRequest },
   responses: {
-    200: { description: 'Signed in', schema: LoginResponse, headers: SetCookie },
+    200: { description: 'Signed in', schema: MfaVerified, headers: SetCookie },
     400: error('VALIDATION_ERROR'),
     401: error(
       'INVALID_MFA_CODE (try again; 5 attempts per challenge) or INVALID_OR_EXPIRED_TOKEN (sign in again)',

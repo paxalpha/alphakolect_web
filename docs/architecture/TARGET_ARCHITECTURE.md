@@ -37,6 +37,7 @@ Conventions: **MUST** = invariant the implementation and tests enforce. **ADR-n*
 | ADR-12 | **The new system is built in a new, clean repository under the `paxalpha` GitHub organisation** (fresh `git init`, never this repo's history); this repo (`mayowae/Alphaweb`) is frozen as the legacy archive and behavioural reference (decided 2026-09-26). | No inherited secret-laden history, no root-file conflict, start not gated on SEC-3/SEC-4. Supersedes the in-repo quarantine (§26) for the new code. |
 | ADR-13 | **This repository (`paxalpha/alphakolect_web`) is the reconstruction workspace.** The imported legacy application is quarantined, unchanged in layout, under **`legacy/current-system/`**; the new system is built beside it in `apps/` and `packages/` per §21. Governing documents live in `docs/`. Nothing deploys from this repository. (Owner decision, 2026-09-26; refines ADR-12 and supersedes the `legacy/app` / `legacy/ops` / `legacy/docs` split in §26.) | The repo already holds the clean-history import (ADR-12). Keeping the legacy layout intact keeps it runnable as a behavioural reference (its frontend imports root folders by relative path); a split would break it for no benefit. |
 | ADR-14 | **Identity & session decisions for P3** (owner-approved 2026-10-03; details in §3.3): email via an `EmailSender` port (outbox/provider in P12); signup creates only identity + merchant + owner membership; P3 audiences are platform super admin and merchant owner; the app role reaches `identity.*` only through `SECURITY DEFINER` functions; EdDSA JWT access tokens with `kid`, re-validated against the session on every request; cookies + CSRF for platform/merchant, bearer for agent/customer; mandatory platform TOTP with encrypted secrets and recovery codes; operator CLI bootstrap of the first super admin. | Resolves the P3 readiness decisions D1–D16 before implementation, so P3 is built once against fixed rules. |
+| ADR-15 | **Tenancy, memberships and tenant context for P4** (owner-approved 2026-10-09; details in §3.4): P4 is tenancy and isolation, P5 permissions and policies, P10 billing suspension; merchant staff and agents come online (platform staff in P5); one validated membership per session, chosen by an explicit selection step when several are eligible — never by the server guessing; membership, merchant status, role and branch re-read on every request; merchant lifecycle with platform-admin activation/deactivation; one optional branch per staff membership; merchant-defined roles as data only until P5; invitations only in their own table until accepted; atomic ownership transfer with exactly one owner enforced at commit; audience-checked refresh rotation; scoped repositories, RLS and composite keys on every tenant table. | Resolves the P4 design before implementation (E1–E7 and five follow-up decisions), so tenancy is built once against fixed rules and the tenant-isolation matrix has a precise target. |
 
 ---
 
@@ -147,6 +148,80 @@ Concrete values for §3.1–§3.2, decided before P3 implementation (P3 readines
 | Client IP | `X-Forwarded-For` is believed **only from a configured trusted reverse proxy, named by address** (`TRUST_PROXY`: `loopback` by default, or explicit IPs/CIDR subnets; hop counts are refused because they trust whoever connects). Production invariant: the API listener is reachable only through the proxy (nginx on the host, firewall). |
 | Password reset and verification | **A password reset does not verify an email address.** Only the email-verification flow verifies an identity and moves its merchant from `pending_verification` to `active`. Implemented in P3.7 (the P3 `reset_password` function currently also sets `email_verified_at`; a new migration removes that). |
 | D9 first super admin — set-password link (2026-10-04) | **Option A.** The bootstrap CLI creates the passwordless platform identity and super-admin membership and emails a **dedicated account-setup link**, not a reset link: its own token purpose (`account_setup`), single use, 24 h, stored hashed, issuable only for an identity that has never had a password, superseded by a newer one. Completing it sets the first password and verifies the email (possession of a link sent to the address); the next login gets the enrolment-only session (D8). The CLI never asserts verification itself. Forgot-password on an account without a password sends a fresh setup link. Invariant: **an email becomes verified only through possession of a verification or setup link sent to it.** |
+
+### 3.4 Tenancy & membership decisions (ADR-15, owner-approved 2026-10-09)
+
+Concrete rules for §3.1 and §4, decided before P4 implementation (P4 readiness decisions E1–E7 and five follow-up
+decisions, all 2026-10-09). The P4 scope, exit criteria and work packages are in RESTRUCTURING_MAP §7.2.
+
+| # | Decision |
+|---|---|
+| T1 Phase boundary | **P4** = tenancy and isolation; **P5** = permission catalog, policies, central authorization, authorization matrix; **P10** = billing-triggered suspension. P4 carries role data and only the minimum checks needed to resolve memberships and enforce tenant boundaries (T9). |
+| T2 Audiences | P4 brings **merchant staff** (web, cookies) and **agents** (mobile, bearer) online. Platform staff remain P5. Super-admin behaviour is unchanged. |
+| T3 One membership per session | A session is bound to exactly one validated membership, chosen at session creation; it never changes tenant — switching business creates a new session. A client-supplied `merchantId` is never accepted (§4). A selection identifier is never authorization: it is re-validated against the authenticated identity and the current state. |
+| T4 Login never guesses | Authentication and membership selection are separate steps. One eligible membership ⇒ it is used; several ⇒ the selection step below; **no merchant session exists before the selection is validated**. `identity.login_candidate` (which picked the oldest membership with `ORDER BY 1 LIMIT 1`) is replaced and dropped. |
+| T5 Freshness | Membership status and kind, **merchant status**, role and branch restriction are re-read from the database on every request (extending P3's `validate_session`). No authorization cache: a change applies to the next request. |
+| T6 Merchant lifecycle | `pending_verification` → `active` (email verification) ⇄ `deactivated` (platform admin only, with a reason, audited). Only `active` merchants have usable sessions or usable invitations. `merchants.status` gets a CHECK. Billing suspension (P10) adds its state then. |
+| T7 Branches | Tenant-owned `tenancy.branches`. A staff membership may be restricted to **one** branch (`branch_id`); **null = all branches, the default** (OPEN-2). A multi-branch join table can be added later if needed. |
+| T8 Roles | Merchant-defined `tenancy.roles`; a staff membership references one role. In P4 a role is data only; P5 attaches permissions. Owners and agents have no role (fixed capability sets, BR-3). |
+| T9 P4 interim checks | Until P5: merchant-management endpoints require membership kind `owner`; staff and agents use only session/self endpoints; platform lifecycle actions require the super admin. Explicit kind checks in one place, replaced wholesale by P5 policies — not a permission system. |
+| T10 Invitations | The owner invites by email + kind (+ role, + branch for staff). Invitations live **only** in `tenancy.invitations` (tenant-owned; single use; expiring; token stored hashed; bound to merchant, email and kind; revocable) — no membership row exists before acceptance. **New identity:** issuing creates a passwordless identity and P3's account-setup token for it, linked to the invitation; completing setup sets the password, verifies the email and, in the same transaction, creates the membership — **after re-checking the invitation at that point** (locked; not used, revoked or expired; merchant and identity active). If it is no longer valid, setup completes and no membership is created. The owner's response is identical whether or not the email already has an account (D12). |
+| T11 Existing-identity acceptance | The invitation link **plus the account's password**: the server validates the invitation (unused, unexpired, unrevoked, merchant active), that its email is the identity's, that the identity is active and verified, and the password; rate-limited; one generic error for every failure; membership creation and invitation consumption in one transaction. Never bypasses email verification, password setup or MFA. |
+| T12 Agents | Bearer sign-in and refresh on **dedicated agent endpoints**; the web login and refresh contracts are unchanged. Lifetimes per D5. A deactivated agent cannot authenticate from the next request (BR-10.6b). No agent MFA in P4 (D8 is platform-only). |
+| T13 Database enforcement | Every new tenant table: `merchant_id NOT NULL`, `UNIQUE (merchant_id, id)`, composite FKs for tenant references, RLS on `app.merchant_id`, default-deny grants. Identity data stays behind `SECURITY DEFINER` functions (D4). Forward-only migrations; P1–P3 migrations untouched. |
+| T14 Scoped repositories | Tenant data is reached only through repositories whose functions take a `TenantContext` and run in a transaction that sets `app.merchant_id` locally. No unscoped repository for tenant data; platform cross-tenant reads (P5) are separate, permission-gated services. |
+| T15 Errors | Cross-tenant access ⇒ **404**, indistinguishable from "does not exist"; a known resource in the caller's own tenant that they may not touch ⇒ 403. |
+| T16 Capabilities never bypass current state | Invitation tokens, setup tokens, MFA challenges and membership-selection challenges prove only what they were issued for. Each use re-checks, at that moment, the identity's status and verification, the membership's status and kind and the merchant's status. |
+| T17 Ownership transfer | Platform admin only (OPEN-1); the new owner must already be an active member. One `SECURITY DEFINER` function: the old owner's kind becomes `staff` — also when the admin chooses to deactivate them, because the one-owner index ignores status — then the new owner is promoted; both or neither. The existing index `UNIQUE (merchant_id) WHERE kind = 'owner'` keeps **at most one** owner; a deferred constraint trigger adds **exactly one** at commit. Audited with both identities. |
+
+**Membership selection (T4) — contract.** `POST /v1/auth/login` keeps its 200 response (`LoginResponse` unchanged).
+When the verified identity has more than one eligible membership it answers **`409 MEMBERSHIP_SELECTION_REQUIRED`**
+— only after the password check, like `403 EMAIL_VERIFICATION_REQUIRED` — and sets a **selection challenge**
+(opaque, 5 min, single use, stored hashed, bound to the identity and audience) in an HttpOnly, path-scoped cookie.
+No session is created. `GET /v1/auth/login/memberships` returns the typed choices
+`[{ selectionId, merchantName, kind }]` only to the holder of a valid challenge; it **does not consume** the
+challenge, is rate-limited, sent `Cache-Control: no-store` and never with CORS headers. `POST /v1/auth/login/select`
+**validates and consumes the challenge atomically**, re-checks that the chosen membership is still eligible (membership,
+merchant and identity state) and only then creates the session. Agents get the same flow inside the bodies of
+`POST /v1/auth/agent/login` and `POST /v1/auth/agent/login/select` (D7). The guarantee that choices are never shown
+before a successful password check rests on the challenge — created only after that check — and is tested directly:
+without a valid, password-verified challenge, no request can obtain the choices. `/v1/auth/mfa/verify` gets its own
+response schema, decoupling it from `LoginResponse` (non-breaking; contract hardening).
+
+Evidence for this shape: CI's pinned oasdiff 1.32.1 (`breaking --fail-on ERR`) classifies a new `LoginResponse`
+variant as **breaking** (`response-body-one-of-added`, on `/login` and, through the shared schema, `/mfa/verify`),
+while a new `409` on `/login`, new endpoints, a widened request enum and a separate `/mfa/verify` schema are all
+non-breaking (2026-10-09, with a control that removes an endpoint and is correctly reported as breaking). The check
+stays enabled.
+
+**Agent refresh (T12).** `POST /v1/auth/agent/refresh` with `{ refreshToken }` in the body (never a query string;
+the field is redacted from logs) returns new tokens in the body; rotation and reuse detection as in P3; the agent
+membership is re-validated. **Rotation is audience-checked in the database:** `identity.rotate_refresh_token` gains a
+`p_audiences` argument and returns `invalid` **without rotating** when the session's audience is not one of them
+(cookie endpoint: platform, merchant; agent endpoint: agent). Without this, a web refresh token posted to the agent
+endpoint would be rotated and returned in a JSON body. The previous three-argument function is dropped in the same
+migration (a new argument creates a new Postgres function), and a test asserts it is gone.
+
+**Function and transaction contracts.** `SECURITY DEFINER` functions run as the table owner and bypass RLS, so every
+function touching tenant rows takes the `merchant_id` from the caller's `TenantContext`, filters on it explicitly and
+has a cross-tenant test. Pinned `search_path`, `REVOKE ALL FROM PUBLIC`, EXECUTE for `alphakolect_app` only.
+
+| Function | Contract |
+|---|---|
+| `identity.login_identity(email)` | credentials only, for the password check; replaces `login_candidate` |
+| `identity.eligible_memberships(identity, audience)` | active memberships of a kind valid for the audience in an active merchant; minimal data; ordered by merchant name |
+| `identity.create_selection_challenge(identity, audience, hash)` · `take_selection(hash, membership)` | issue the challenge after the password check; take = lock, consume, re-check eligibility, return the membership or nothing |
+| `identity.rotate_refresh_token(old, new, idle, audiences)` | audience-checked rotation (above) |
+| `tenancy.issue_invitation(merchant, inviter, email, kind, role, branch, hash, ttl)` | one transaction; inviter must be the merchant's active owner; for a new email also the passwordless identity and its linked setup token; same result shape for new and existing emails |
+| `tenancy.revoke_invitation(merchant, invitation, by)` | scoped to `merchant` |
+| `tenancy.accept_invitation(hash, identity)` | after the password check; invitation `FOR UPDATE`; T11 checks; membership + consumption together |
+| `identity.complete_account_setup(token, password)` (replaced) | as P3, plus a linked invitation re-checked `FOR UPDATE` and turned into the membership (T10) |
+| `tenancy.update_membership(merchant, membership, …)` | role/branch change, deactivate/reactivate; never the owner's own row; never sets kind `owner` |
+| `tenancy.set_merchant_status(merchant, status, reason)` · `tenancy.transfer_ownership(merchant, new_owner, deactivate_old)` | platform only (T6, T17) |
+| `identity.active_membership` · `validate_session` (replaced) | + merchant `active`; return kind, role and branch (T5) |
+
+Each command runs in **one database transaction** in the service: `set_config('app.merchant_id', …, true)`, the
+function call(s) and the **audit insert** — an audit row exists if and only if the change committed.
 
 ---
 

@@ -1132,6 +1132,194 @@
           }
         }
       }
+    },
+    "/v1/platform/merchants/{merchantId}/deactivate": {
+      "post": {
+        "operationId": "deactivateMerchant",
+        "summary": "Deactivate a merchant: its members can no longer sign in or use their sessions",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "merchantId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeactivateMerchantRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantLifecycle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — only a platform super admin may change a merchant’s status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — e.g. deactivating a merchant that is already deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/merchants/{merchantId}/reactivate": {
+      "post": {
+        "operationId": "reactivateMerchant",
+        "summary": "Reactivate a merchant (active if its owner’s email is verified, otherwise pending verification)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "merchantId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MerchantLifecycle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — only a platform super admin may change a merchant’s status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — e.g. deactivating a merchant that is already deactivated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1313,6 +1501,19 @@
         ],
         "description": "Either the current authenticator code or one recovery code"
       },
+      "DeactivateMerchantRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
       "AmountMinor": {
         "type": "string",
         "pattern": "^(0|[1-9][0-9]{0,18})$",
@@ -1323,6 +1524,13 @@
         "type": "string",
         "const": "NGN",
         "description": "ISO 4217 currency code. Only NGN is accepted."
+      },
+      "Id": {
+        "type": "string",
+        "format": "uuid",
+        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
+        "description": "UUIDv7 identifier",
+        "example": "01900000-0000-7000-8000-00000000000a"
       },
       "HealthResponse": {
         "type": "object",
@@ -1544,12 +1752,30 @@
         ],
         "additionalProperties": false
       },
-      "Id": {
+      "MerchantLifecycle": {
+        "type": "object",
+        "properties": {
+          "merchantId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MerchantStatus"
+          }
+        },
+        "required": [
+          "merchantId",
+          "status"
+        ],
+        "additionalProperties": false,
+        "description": "The merchant’s status after the change"
+      },
+      "MerchantStatus": {
         "type": "string",
-        "format": "uuid",
-        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-7[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12})$",
-        "description": "UUIDv7 identifier",
-        "example": "01900000-0000-7000-8000-00000000000a"
+        "enum": [
+          "pending_verification",
+          "active",
+          "deactivated"
+        ]
       },
       "Money": {
         "type": "object",

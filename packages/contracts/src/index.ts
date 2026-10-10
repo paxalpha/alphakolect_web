@@ -20,12 +20,26 @@ import {
   verifyMfa,
 } from './endpoints/auth.js';
 import { getHealth } from './endpoints/health.js';
+import {
+  createBranch,
+  createRole,
+  getBranch,
+  getCurrentMembership,
+  getMerchantProfile,
+  getRole,
+  listBranches,
+  listRoles,
+  updateBranch,
+  updateMerchantProfile,
+  updateRole,
+} from './endpoints/merchant.js';
 import { deactivateMerchant, reactivateMerchant } from './endpoints/platform.js';
 
 export * from './auth.js';
 export * from './primitives.js';
 export * from './registry.js';
 export * from './endpoints/auth.js';
+export * from './endpoints/merchant.js';
 export * from './endpoints/platform.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
@@ -50,6 +64,17 @@ export const endpoints = {
   selectLoginMembership,
   deactivateMerchant,
   reactivateMerchant,
+  getCurrentMembership,
+  getMerchantProfile,
+  updateMerchantProfile,
+  listBranches,
+  createBranch,
+  getBranch,
+  updateBranch,
+  listRoles,
+  createRole,
+  getRole,
+  updateRole,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

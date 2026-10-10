@@ -16,7 +16,8 @@ import {
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
 import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
-import { platformMerchantHandlers } from '../../modules/tenancy/routes.js';
+import { MerchantSettingsService } from '../../modules/tenancy/merchant-settings.js';
+import { merchantHandlers, platformMerchantHandlers } from '../../modules/tenancy/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
@@ -105,6 +106,7 @@ export function createApp({
     ...mfaHandlers({ mfa, cookies }),
     ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
+    ...merchantHandlers({ settings: new MerchantSettingsService({ db, audit }) }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

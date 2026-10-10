@@ -25,6 +25,9 @@ const WEB_AUDIENCES: readonly SessionAudience[] = ['platform', 'merchant'];
 
 export type RequestContext = { ip: string; userAgent: string | null; requestId: string };
 
+/** Credentials for any audience: the web login (platform, merchant) or the agent login (ADR-15 T12). */
+export type SignInRequest = Omit<LoginRequest, 'audience'> & { audience: SessionAudience };
+
 /** Secrets for the client. Never logged, never in a response body. */
 export type IssuedTokens = { accessToken: string; refreshToken: string; refreshExpiresAt: Date };
 
@@ -59,7 +62,7 @@ export class SessionService {
     },
   ) {}
 
-  async login(input: LoginRequest, ctx: RequestContext): Promise<LoginResult> {
+  async login(input: SignInRequest, ctx: RequestContext): Promise<LoginResult> {
     const { identity, audit, limiter } = this.deps;
     await limiter.enforce('login', ctx.ip, input.email);
 
@@ -173,17 +176,19 @@ export class SessionService {
   /**
    * The selection step (ADR-15 T4, T16): the database locks and consumes the challenge whatever the outcome, then
    * re-checks that the choice is still eligible; only then is a session created, bound to that one membership.
-   * Web (merchant audience) only — platform sign-in never needs a choice; agents use their own endpoints (P4.7).
+   * Merchant (web) or agent (P4.7, its own endpoint) — platform sign-in never needs a choice. A challenge issued
+   * for one audience is never redeemed at the other's endpoint.
    */
   async selectMembership(
     challengeHash: string | null,
     selectionId: string,
     ctx: RequestContext,
+    audience: 'merchant' | 'agent' = 'merchant',
   ): Promise<IssuedSession> {
     const { identity, audit } = this.deps;
     const taken = challengeHash ? await identity.takeSelection(challengeHash, selectionId) : null;
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
-    if (!taken || taken.audience !== 'merchant') {
+    if (!taken || taken.audience !== audience) {
       await audit.record({
         action: 'auth.login_select',
         outcome: 'failure',
@@ -195,7 +200,7 @@ export class SessionService {
     }
     const issued = await this.startSession({
       identityId: taken.identity_id,
-      audience: 'merchant',
+      audience,
       membershipId: taken.membership_id,
       scope: 'full',
       ctx,
@@ -205,7 +210,7 @@ export class SessionService {
       outcome: 'success',
       merchantId: issued.session.merchantId,
       actorIdentityId: taken.identity_id,
-      actorAudience: 'merchant',
+      actorAudience: audience,
       actorMembershipId: taken.membership_id,
       ...request,
     });
@@ -254,7 +259,11 @@ export class SessionService {
    * Every outcome is audited (P3.5 review): success lightly; failure; and reuse as a distinct, high-severity
    * security event. Tokens never reach the audit log.
    */
-  async refresh(rawRefreshToken: string | undefined, ctx: RequestContext): Promise<IssuedSession> {
+  async refresh(
+    rawRefreshToken: string | undefined,
+    ctx: RequestContext,
+    audiences: readonly SessionAudience[] = WEB_AUDIENCES,
+  ): Promise<IssuedSession> {
     const { identity, accessTokens, audit, limiter } = this.deps;
     await limiter.enforce('refresh', ctx.ip);
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
@@ -267,8 +276,8 @@ export class SessionService {
     if (!oldHash) throw await failed(rawRefreshToken ? 'malformed_token' : 'no_token');
 
     const next = newOpaqueToken();
-    // The cookie endpoint serves the web audiences only; agent tokens are refreshed on their own endpoint (T12).
-    const rotated = await identity.rotateRefreshToken(oldHash, next.hash, WEB_AUDIENCES);
+    // Each endpoint rotates only its own audiences' tokens: cookies the web ones, the agent endpoint agents' (T12).
+    const rotated = await identity.rotateRefreshToken(oldHash, next.hash, audiences);
     if (rotated.outcome === 'reuse_detected') {
       await audit.record({
         action: 'auth.refresh_token_reuse',

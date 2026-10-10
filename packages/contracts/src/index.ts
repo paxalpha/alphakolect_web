@@ -1,6 +1,7 @@
 // @alphakolect/contracts — API shapes only: zod schemas, the endpoint registry and API primitives.
 // No application behaviour, database access, Express handlers, authentication or business rules.
 
+import { agentLogin, agentRefresh, agentSelectMembership, getAgentMembership } from './endpoints/agent.js';
 import {
   acceptInvitation,
   beginTotpEnrollment,
@@ -49,6 +50,7 @@ export * from './primitives.js';
 export * from './registry.js';
 export * from './endpoints/auth.js';
 export * from './endpoints/merchant.js';
+export * from './endpoints/agent.js';
 export * from './endpoints/platform.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
@@ -94,6 +96,10 @@ export const endpoints = {
   createInvitation,
   revokeInvitation,
   acceptInvitation,
+  agentLogin,
+  agentSelectMembership,
+  agentRefresh,
+  getAgentMembership,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

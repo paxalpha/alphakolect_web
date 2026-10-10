@@ -47,4 +47,17 @@ describe('login membership choices are exposed by one operation only (ADR-15 T4)
   it('the guard can see the schema at all (it is defined and referenced)', () => {
     expect(spec.components.schemas.MembershipChoice).toBeDefined();
   });
+
+  // P4.7: agents get their choices in the body of the agent login response — also only after the password check.
+  it('only agentLogin can return AgentMembershipChoice', () => {
+    const exposing: string[] = [];
+    for (const methods of Object.values(spec.paths)) {
+      for (const op of Object.values(methods)) {
+        if (refsIn(op.responses).has('#/components/schemas/AgentMembershipChoice'))
+          exposing.push(op.operationId);
+      }
+    }
+    expect(spec.components.schemas.AgentMembershipChoice).toBeDefined();
+    expect(exposing).toEqual(['agentLogin']);
+  });
 });

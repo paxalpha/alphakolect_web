@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
 import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
+import { agentHandlers } from '../../modules/identity/agent-routes.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
@@ -112,6 +113,7 @@ export function createApp({
     mailer,
     webAppUrl,
   });
+  const settings = new MerchantSettingsService({ db, audit });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
@@ -121,11 +123,12 @@ export function createApp({
     ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
     ...merchantHandlers({
-      settings: new MerchantSettingsService({ db, audit }),
+      settings,
       members: new MembershipService({ db, audit }),
       invitations,
     }),
     ...invitationAcceptHandlers({ invitations }),
+    ...agentHandlers({ identity: auth.identity, sessions, limiter, settings }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

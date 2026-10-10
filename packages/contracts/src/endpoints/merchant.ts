@@ -238,3 +238,111 @@ export const updateRole = defineEndpoint({
     ...nameTaken,
   },
 });
+
+// ── members (P4.5; ADR-15 T5, T7–T9, T15) ──────────────────────────────────────────────────────────
+
+export const MembershipStatus = z.enum(['active', 'deactivated']).meta({ id: 'MembershipStatus' });
+
+export const Member = z
+  .object({
+    membershipId: Id,
+    kind: MembershipKind,
+    status: MembershipStatus,
+    email: z.string(),
+    /** Staff only. */
+    roleId: Id.nullable(),
+    /** Staff only; null = all branches. */
+    branchId: Id.nullable(),
+    createdAt: Timestamp,
+    deactivatedAt: Timestamp.nullable(),
+  })
+  .meta({ id: 'Member', description: 'A member of the business (owner, staff or agent)' });
+
+export type Member = z.infer<typeof Member>;
+
+export const MemberList = z
+  .object({ items: z.array(Member), nextCursor: z.string().nullable() })
+  .meta({ id: 'MemberList', description: 'Every member, oldest first; nextCursor is always null for now' });
+
+export type MemberList = z.infer<typeof MemberList>;
+
+export const AssignMemberRequest = z
+  .object({
+    /** An active role of this business. */
+    roleId: Id,
+    /** An active branch of this business, or null for all branches. */
+    branchId: Id.nullable(),
+  })
+  .meta({ id: 'AssignMemberRequest' });
+
+export type AssignMemberRequest = z.infer<typeof AssignMemberRequest>;
+
+const MemberParams = z.object({ membershipId: Id });
+const memberErrors = {
+  ...invalid,
+  403: error('FORBIDDEN — only the business owner; and never the owner’s own membership (use a transfer)'),
+  ...notFound,
+};
+
+export const listMembers = defineEndpoint({
+  id: 'listMembers',
+  method: 'get',
+  path: '/v1/merchant/members',
+  ...merchantSession,
+  summary: 'The business’s members, active and deactivated (owner)',
+  responses: { 200: { description: 'All members', schema: MemberList }, ...ownerOnly },
+});
+
+export const getMember = defineEndpoint({
+  id: 'getMember',
+  method: 'get',
+  path: '/v1/merchant/members/{membershipId}',
+  ...merchantSession,
+  summary: 'One member (owner)',
+  request: { params: MemberParams },
+  responses: { 200: { description: 'The member', schema: Member }, ...invalid, ...ownerOnly, ...notFound },
+});
+
+export const assignMember = defineEndpoint({
+  id: 'assignMember',
+  method: 'post',
+  path: '/v1/merchant/members/{membershipId}/assignment',
+  ...merchantSession,
+  summary: 'Set a staff member’s role and branch (owner); applies from their next request',
+  request: { params: MemberParams, body: AssignMemberRequest },
+  responses: {
+    200: { description: 'The member', schema: Member },
+    ...memberErrors,
+    409: error(
+      'INVALID_ASSIGNMENT — not a staff member, or the role/branch is not an active one of this business',
+    ),
+  },
+});
+
+export const deactivateMember = defineEndpoint({
+  id: 'deactivateMember',
+  method: 'post',
+  path: '/v1/merchant/members/{membershipId}/deactivate',
+  ...merchantSession,
+  summary: 'Deactivate a staff member or agent (owner): signed out at once',
+  request: { params: MemberParams },
+  responses: {
+    200: { description: 'The member', schema: Member },
+    ...memberErrors,
+    409: error('INVALID_LIFECYCLE_TRANSITION — already deactivated'),
+  },
+});
+
+export const reactivateMember = defineEndpoint({
+  id: 'reactivateMember',
+  method: 'post',
+  path: '/v1/merchant/members/{membershipId}/reactivate',
+  ...merchantSession,
+  summary: 'Reactivate a staff member or agent (owner); they sign in again',
+  request: { params: MemberParams },
+  responses: {
+    200: { description: 'The member', schema: Member },
+    ...memberErrors,
+    409: error('INVALID_LIFECYCLE_TRANSITION — not deactivated'),
+  },
+});

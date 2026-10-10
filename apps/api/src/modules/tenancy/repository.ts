@@ -28,6 +28,31 @@ export type CatalogRow = {
 
 export type CatalogTable = 'branches' | 'roles';
 
+export type MemberRow = {
+  membership_id: string;
+  kind: 'owner' | 'staff' | 'agent';
+  status: 'active' | 'deactivated';
+  role_id: string | null;
+  branch_id: string | null;
+  email: string;
+  created_at: Date;
+  deactivated_at: Date | null;
+};
+
+export type MembershipAction = 'assign' | 'deactivate' | 'reactivate';
+
+export type MembershipChange = {
+  outcome:
+    | 'ok'
+    | 'forbidden'
+    | 'not_found'
+    | 'owner_protected'
+    | 'invalid_target'
+    | 'invalid_assignment'
+    | 'invalid_transition';
+  membership_id: string | null;
+};
+
 /** A uniqueness violation of the one-active-name-per-merchant index of `table`. */
 export class NameTakenError extends Error {
   constructor(readonly table: CatalogTable) {
@@ -139,5 +164,33 @@ export const tenancyRepository = {
     } catch (err) {
       throw nameTaken(err, table) ? new NameTakenError(table) : err;
     }
+  },
+
+  /**
+   * The business's members with their email (tenancy.list_members, P4.5). Authority is decided in the database from
+   * the session: only the active owner's session sees anything.
+   */
+  async members(tx: TenantTx, membershipId: string | null = null): Promise<MemberRow[]> {
+    const { sessionId } = scopeOf(tx);
+    return tx.query<MemberRow>(
+      `SELECT membership_id, kind, status, role_id, branch_id, email, created_at, deactivated_at
+         FROM tenancy.list_members($1, $2)`,
+      [sessionId, membershipId],
+    );
+  },
+
+  /** tenancy.update_membership (P4.5): authority, tenant and every rule are decided in the database. */
+  async changeMembership(
+    tx: TenantTx,
+    membershipId: string,
+    action: MembershipAction,
+    assignment: { roleId: string; branchId: string | null } | null,
+  ): Promise<MembershipChange> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<MembershipChange>(
+      `SELECT outcome, membership_id FROM tenancy.update_membership($1, $2, $3, $4, $5)`,
+      [sessionId, membershipId, action, assignment?.roleId ?? null, assignment?.branchId ?? null],
+    );
+    return row!;
   },
 } satisfies Record<string, (tx: TenantTx, ...args: never[]) => Promise<unknown>>;

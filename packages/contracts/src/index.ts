@@ -21,14 +21,19 @@ import {
 } from './endpoints/auth.js';
 import { getHealth } from './endpoints/health.js';
 import {
+  assignMember,
   createBranch,
   createRole,
+  deactivateMember,
   getBranch,
   getCurrentMembership,
+  getMember,
   getMerchantProfile,
   getRole,
   listBranches,
+  listMembers,
   listRoles,
+  reactivateMember,
   updateBranch,
   updateMerchantProfile,
   updateRole,
@@ -75,6 +80,11 @@ export const endpoints = {
   createRole,
   getRole,
   updateRole,
+  listMembers,
+  getMember,
+  assignMember,
+  deactivateMember,
+  reactivateMember,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

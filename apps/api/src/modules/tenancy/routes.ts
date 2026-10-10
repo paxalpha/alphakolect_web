@@ -1,9 +1,12 @@
 import type {
+  AssignMemberRequest,
   Branch,
   BranchList,
   CreateCatalogItemRequest,
   CurrentMembership,
   DeactivateMerchantRequest,
+  Member,
+  MemberList,
   MerchantLifecycle,
   MerchantProfile,
   Role,
@@ -16,6 +19,7 @@ import { tenantContextOf } from '../../platform/tenant.js';
 import type { RequestContext } from '../identity/sessions.js';
 import type { MerchantLifecycleService } from './merchant-lifecycle.js';
 import { toBranch, toRole, type MerchantSettingsService } from './merchant-settings.js';
+import { toMember, type MembershipService } from './memberships.js';
 
 // /v1/platform/merchants/{merchantId}/… (contracts: packages/contracts/src/endpoints/platform.ts). Path parameters
 // and bodies are already validated against the contract; the platform session is already authenticated (cookie,
@@ -56,10 +60,17 @@ export function platformMerchantHandlers({ lifecycle }: { lifecycle: MerchantLif
 
 // /v1/merchant/… (contracts: packages/contracts/src/endpoints/merchant.ts). The merchant session is already
 // authenticated and re-validated; its TenantContext is the only tenant these handlers know (§4).
-export function merchantHandlers({ settings }: { settings: MerchantSettingsService }) {
+export function merchantHandlers({
+  settings,
+  members,
+}: {
+  settings: MerchantSettingsService;
+  members: MembershipService;
+}) {
   const tenant = (req: Request) => tenantContextOf(req.auth);
   const branchId = (req: Request) => String(req.params.branchId);
   const roleId = (req: Request) => String(req.params.roleId);
+  const membershipId = (req: Request) => String(req.params.membershipId);
 
   const getCurrentMembership: RequestHandler = async (req, res) => {
     const body: CurrentMembership = await settings.currentMembership(tenant(req));
@@ -130,7 +141,41 @@ export function merchantHandlers({ settings }: { settings: MerchantSettingsServi
     res.json(body);
   };
 
+  const listMembers: RequestHandler = async (req, res) => {
+    const body: MemberList = { items: (await members.list(tenant(req))).map(toMember), nextCursor: null };
+    res.json(body);
+  };
+
+  const getMember: RequestHandler = async (req, res) => {
+    const body: Member = toMember(await members.get(tenant(req), membershipId(req)));
+    res.json(body);
+  };
+
+  const assignMember: RequestHandler = async (req, res) => {
+    const assignment = req.body as AssignMemberRequest;
+    const row = await members.change(tenant(req), membershipId(req), 'assign', assignment, contextOf(req));
+    const body: Member = toMember(row);
+    res.json(body);
+  };
+
+  const deactivateMember: RequestHandler = async (req, res) => {
+    const row = await members.change(tenant(req), membershipId(req), 'deactivate', null, contextOf(req));
+    const body: Member = toMember(row);
+    res.json(body);
+  };
+
+  const reactivateMember: RequestHandler = async (req, res) => {
+    const row = await members.change(tenant(req), membershipId(req), 'reactivate', null, contextOf(req));
+    const body: Member = toMember(row);
+    res.json(body);
+  };
+
   return {
+    listMembers,
+    getMember,
+    assignMember,
+    deactivateMember,
+    reactivateMember,
     getCurrentMembership,
     getMerchantProfile,
     updateMerchantProfile,

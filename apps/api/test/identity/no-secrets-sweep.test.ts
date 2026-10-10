@@ -204,9 +204,12 @@ describe('no secret leaves through a response, a log line or the audit log (exit
     );
     const ownerIdentity = ownerRow!.id;
     await migrator.query(
-      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind)
-       SELECT mm.merchant_id, $1, 'staff' FROM tenancy.merchant_memberships mm
-         JOIN identity.identities i ON i.id = mm.identity_id WHERE i.email = $2`,
+      `WITH m AS (SELECT mm.merchant_id FROM tenancy.merchant_memberships mm
+                   JOIN identity.identities i ON i.id = mm.identity_id WHERE i.email = $2),
+            r AS (INSERT INTO tenancy.roles (merchant_id, name)
+                  SELECT m.merchant_id, 'Staff ' || gen_random_uuid() FROM m RETURNING id, merchant_id)
+       INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+       SELECT r.merchant_id, $1, 'staff', r.id FROM r`,
       [ownerIdentity, secondOwner],
     );
     const selecting: Jar = {};

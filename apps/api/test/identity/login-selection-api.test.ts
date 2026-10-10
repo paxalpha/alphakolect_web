@@ -40,7 +40,9 @@ async function twoBusinesses() {
   const {
     rows: [staff],
   } = await owner.query(
-    `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff') RETURNING id`,
+    `WITH r AS (INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Staff ' || gen_random_uuid()) RETURNING id)
+     INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+     SELECT $1, $2, 'staff', r.id FROM r RETURNING id`,
     [alpha.merchantId, zeta.identityId],
   );
   const {

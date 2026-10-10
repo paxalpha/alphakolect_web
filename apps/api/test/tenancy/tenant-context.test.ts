@@ -50,6 +50,8 @@ describe('tenantContextOf', () => {
 
   it('refuses a platform session, a missing tenant, an unknown kind and no session at all', () => {
     expect(() => tenantContextOf(auth({ audience: 'platform', merchantId: null, kind: 'super_admin' }))).toThrow();
+    // The audience alone decides, even if a platform context somehow carried a tenant and a membership kind.
+    expect(() => tenantContextOf(auth({ audience: 'platform', kind: 'owner' }))).toThrow();
     expect(() => tenantContextOf(auth({ merchantId: null }))).toThrow();
     expect(() => tenantContextOf(auth({ kind: 'super_admin' }))).toThrow();
     expect(() => tenantContextOf(undefined)).toThrow();

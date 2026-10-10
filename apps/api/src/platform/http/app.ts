@@ -17,8 +17,13 @@ import {
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
 import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
 import { MerchantSettingsService } from '../../modules/tenancy/merchant-settings.js';
+import { InvitationService } from '../../modules/tenancy/invitations.js';
 import { MembershipService } from '../../modules/tenancy/memberships.js';
-import { merchantHandlers, platformMerchantHandlers } from '../../modules/tenancy/routes.js';
+import {
+  invitationAcceptHandlers,
+  merchantHandlers,
+  platformMerchantHandlers,
+} from '../../modules/tenancy/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
@@ -99,6 +104,14 @@ export function createApp({
     audit,
     limiter,
   });
+  const invitations = new InvitationService({
+    db,
+    identity: auth.identity,
+    audit,
+    limiter,
+    mailer,
+    webAppUrl,
+  });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
@@ -110,7 +123,9 @@ export function createApp({
     ...merchantHandlers({
       settings: new MerchantSettingsService({ db, audit }),
       members: new MembershipService({ db, audit }),
+      invitations,
     }),
+    ...invitationAcceptHandlers({ invitations }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

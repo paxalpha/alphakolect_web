@@ -1,10 +1,14 @@
 import type {
+  AcceptInvitationRequest,
   AssignMemberRequest,
   Branch,
   BranchList,
   CreateCatalogItemRequest,
+  CreateInvitationRequest,
   CurrentMembership,
   DeactivateMerchantRequest,
+  Invitation,
+  InvitationList,
   Member,
   MemberList,
   MerchantLifecycle,
@@ -21,6 +25,7 @@ import { tenantContextOf } from '../../platform/tenant.js';
 import type { RequestContext } from '../identity/sessions.js';
 import type { MerchantLifecycleService } from './merchant-lifecycle.js';
 import { toBranch, toRole, type MerchantSettingsService } from './merchant-settings.js';
+import { toInvitation, type InvitationService } from './invitations.js';
 import { toMember, type MembershipService } from './memberships.js';
 
 // /v1/platform/merchants/{merchantId}/… (contracts: packages/contracts/src/endpoints/platform.ts). Path parameters
@@ -75,14 +80,17 @@ export function platformMerchantHandlers({ lifecycle }: { lifecycle: MerchantLif
 export function merchantHandlers({
   settings,
   members,
+  invitations,
 }: {
   settings: MerchantSettingsService;
   members: MembershipService;
+  invitations: InvitationService;
 }) {
   const tenant = (req: Request) => tenantContextOf(req.auth);
   const branchId = (req: Request) => String(req.params.branchId);
   const roleId = (req: Request) => String(req.params.roleId);
   const membershipId = (req: Request) => String(req.params.membershipId);
+  const invitationId = (req: Request) => String(req.params.invitationId);
 
   const getCurrentMembership: RequestHandler = async (req, res) => {
     const body: CurrentMembership = await settings.currentMembership(tenant(req));
@@ -182,7 +190,32 @@ export function merchantHandlers({
     res.json(body);
   };
 
+  const listInvitations: RequestHandler = async (req, res) => {
+    const now = new Date();
+    const body: InvitationList = {
+      items: (await invitations.list(tenant(req))).map((row) => toInvitation(row, now)),
+      nextCursor: null,
+    };
+    res.json(body);
+  };
+
+  const createInvitation: RequestHandler = async (req, res) => {
+    const input = req.body as CreateInvitationRequest;
+    const body: Invitation = toInvitation(await invitations.create(tenant(req), input, contextOf(req)));
+    res.status(201).json(body);
+  };
+
+  const revokeInvitation: RequestHandler = async (req, res) => {
+    const body: Invitation = toInvitation(
+      await invitations.revoke(tenant(req), invitationId(req), contextOf(req)),
+    );
+    res.json(body);
+  };
+
   return {
+    listInvitations,
+    createInvitation,
+    revokeInvitation,
     listMembers,
     getMember,
     assignMember,
@@ -200,4 +233,14 @@ export function merchantHandlers({
     getRole,
     updateRole,
   };
+}
+
+// POST /v1/auth/invitations/accept — public (no session): the invitation link plus the account's password (T11).
+// JSON only, like login: a cross-site HTML form cannot produce a body that passes validation.
+export function invitationAcceptHandlers({ invitations }: { invitations: InvitationService }) {
+  const acceptInvitation: RequestHandler = async (req, res) => {
+    await invitations.accept(req.body as AcceptInvitationRequest, contextOf(req));
+    res.status(204).end();
+  };
+  return { acceptInvitation };
 }

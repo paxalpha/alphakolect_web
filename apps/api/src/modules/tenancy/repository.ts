@@ -41,6 +41,28 @@ export type MemberRow = {
 
 export type MembershipAction = 'assign' | 'deactivate' | 'reactivate';
 
+export type InvitationRow = {
+  id: string;
+  email: string;
+  kind: 'staff' | 'agent';
+  role_id: string | null;
+  branch_id: string | null;
+  expires_at: Date;
+  accepted_at: Date | null;
+  revoked_at: Date | null;
+  created_at: Date;
+};
+
+export type IssuedInvitation = {
+  outcome: 'ok' | 'forbidden' | 'invalid_assignment' | 'already_member';
+  invitation_id: string | null;
+  /** For the API only — never shown to the owner (D12). */
+  delivery: 'setup' | 'accept' | 'none' | null;
+};
+
+const INVITATION_COLUMNS =
+  'id, email, kind, role_id, branch_id, expires_at, accepted_at, revoked_at, created_at';
+
 export type MembershipChange = {
   outcome:
     | 'ok'
@@ -192,5 +214,53 @@ export const tenancyRepository = {
       [sessionId, membershipId, action, assignment?.roleId ?? null, assignment?.branchId ?? null],
     );
     return row!;
+  },
+
+  /** The business's invitations, newest first (the token hash is not readable by the app at all). */
+  async invitations(tx: TenantTx, invitationId: string | null = null): Promise<InvitationRow[]> {
+    const { merchantId } = scopeOf(tx);
+    return tx.query<InvitationRow>(
+      `SELECT ${INVITATION_COLUMNS} FROM tenancy.invitations
+        WHERE merchant_id = $1 AND ($2::uuid IS NULL OR id = $2)
+        ORDER BY created_at DESC, id DESC`,
+      [merchantId, invitationId],
+    );
+  },
+
+  /** tenancy.issue_invitation (P4.6): authority, tenant and every rule are decided in the database. */
+  async issueInvitation(
+    tx: TenantTx,
+    invite: { email: string; kind: 'staff' | 'agent'; roleId: string | null; branchId: string | null },
+    tokenHash: string,
+    setupTokenHash: string,
+    ttlSeconds: number,
+  ): Promise<IssuedInvitation> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<IssuedInvitation>(
+      `SELECT outcome, invitation_id, delivery FROM tenancy.issue_invitation($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        sessionId,
+        invite.email,
+        invite.kind,
+        invite.roleId,
+        invite.branchId,
+        tokenHash,
+        setupTokenHash,
+        ttlSeconds,
+      ],
+    );
+    return row!;
+  },
+
+  async revokeInvitation(
+    tx: TenantTx,
+    invitationId: string,
+  ): Promise<'ok' | 'forbidden' | 'not_found' | 'invalid_transition'> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<{ outcome: 'ok' | 'forbidden' | 'not_found' | 'invalid_transition' }>(
+      `SELECT outcome FROM tenancy.revoke_invitation($1, $2)`,
+      [sessionId, invitationId],
+    );
+    return row!.outcome;
   },
 } satisfies Record<string, (tx: TenantTx, ...args: never[]) => Promise<unknown>>;

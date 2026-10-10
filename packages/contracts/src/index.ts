@@ -2,6 +2,7 @@
 // No application behaviour, database access, Express handlers, authentication or business rules.
 
 import {
+  acceptInvitation,
   beginTotpEnrollment,
   changePassword,
   completeAccountSetup,
@@ -23,6 +24,7 @@ import { getHealth } from './endpoints/health.js';
 import {
   assignMember,
   createBranch,
+  createInvitation,
   createRole,
   deactivateMember,
   getBranch,
@@ -31,9 +33,11 @@ import {
   getMerchantProfile,
   getRole,
   listBranches,
+  listInvitations,
   listMembers,
   listRoles,
   reactivateMember,
+  revokeInvitation,
   updateBranch,
   updateMerchantProfile,
   updateRole,
@@ -86,6 +90,10 @@ export const endpoints = {
   deactivateMember,
   reactivateMember,
   transferOwnership,
+  listInvitations,
+  createInvitation,
+  revokeInvitation,
+  acceptInvitation,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

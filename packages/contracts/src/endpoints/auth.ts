@@ -355,6 +355,36 @@ export const completeAccountSetup = defineEndpoint({
   },
 });
 
+// ── invitations: an existing account accepts with its password (ADR-15 T11) ─────────────────────────
+
+export const AcceptInvitationRequest = z
+  .object({
+    /** From the invitation link. */
+    token: z.string().min(1).max(256),
+    email: Email,
+    password: z.string().min(1).max(1024),
+  })
+  .meta({ id: 'AcceptInvitationRequest' });
+
+export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequest>;
+
+export const acceptInvitation = defineEndpoint({
+  id: 'acceptInvitation',
+  method: 'post',
+  path: '/v1/auth/invitations/accept',
+  audience: 'public',
+  summary:
+    'Join a business with an invitation link and the password of the invited account (then sign in as usual)',
+  request: { body: AcceptInvitationRequest },
+  responses: {
+    204: { description: 'Joined: the membership exists from now on' },
+    400: error(
+      'INVALID_INVITATION — the same for every reason (link, email, password, expiry, the business); or VALIDATION_ERROR',
+    ),
+    429: rateLimited,
+  },
+});
+
 export const changePassword = defineEndpoint({
   id: 'changePassword',
   method: 'post',

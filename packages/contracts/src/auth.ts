@@ -34,6 +34,7 @@ export const AUTH_ERROR_CODES = [
   'CSRF_FAILED',
   'WRONG_AUDIENCE', // session of one audience used on another audience's endpoint
   'RATE_LIMITED',
+  'INVALID_INVITATION', // invitation acceptance failed — one answer for every reason (ADR-15 T11)
 ] as const;
 
 export type AuthErrorCode = (typeof AUTH_ERROR_CODES)[number];

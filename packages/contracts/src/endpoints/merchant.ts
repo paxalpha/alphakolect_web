@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { ErrorResponse, Id } from '../primitives.js';
 import { defineEndpoint } from '../registry.js';
+import { Email } from './auth.js';
 import { MerchantStatus } from './platform.js';
 
 // /v1/merchant — the merchant web audience (cookie sessions). P4.4 (TARGET_ARCHITECTURE §4, ADR-15 T3, T7–T9, T15).
@@ -344,5 +345,96 @@ export const reactivateMember = defineEndpoint({
     200: { description: 'The member', schema: Member },
     ...memberErrors,
     409: error('INVALID_LIFECYCLE_TRANSITION — not deactivated'),
+  },
+});
+
+// ── invitations (P4.6; ADR-15 T10, T11; D12) ───────────────────────────────────────────────────────
+
+export const InvitationStatus = z
+  .enum(['pending', 'accepted', 'revoked', 'expired'])
+  .meta({ id: 'InvitationStatus' });
+
+export const Invitation = z
+  .object({
+    invitationId: Id,
+    email: z.string(),
+    kind: z.enum(['staff', 'agent']),
+    roleId: Id.nullable(),
+    branchId: Id.nullable(),
+    status: InvitationStatus,
+    expiresAt: Timestamp,
+    createdAt: Timestamp,
+  })
+  .meta({ id: 'Invitation' });
+
+export type Invitation = z.infer<typeof Invitation>;
+
+export const InvitationList = z
+  .object({ items: z.array(Invitation), nextCursor: z.string().nullable() })
+  .meta({
+    id: 'InvitationList',
+    description: 'Every invitation, newest first; nextCursor is always null for now',
+  });
+
+export type InvitationList = z.infer<typeof InvitationList>;
+
+export const CreateInvitationRequest = z
+  .object({
+    email: Email,
+    kind: z.enum(['staff', 'agent']),
+    /** Staff: required, an active role of this business. Agents: omitted or null. */
+    roleId: Id.nullable().optional(),
+    /** Staff: an active branch of this business, or null/omitted for all branches. Agents: omitted or null. */
+    branchId: Id.nullable().optional(),
+  })
+  .meta({
+    id: 'CreateInvitationRequest',
+    description: 'The answer is the same whether or not the email already has an AlphaKolect account',
+  });
+
+export type CreateInvitationRequest = z.infer<typeof CreateInvitationRequest>;
+
+const InvitationParams = z.object({ invitationId: Id });
+
+export const listInvitations = defineEndpoint({
+  id: 'listInvitations',
+  method: 'get',
+  path: '/v1/merchant/invitations',
+  ...merchantSession,
+  summary: 'The business’s invitations (owner)',
+  responses: { 200: { description: 'All invitations', schema: InvitationList }, ...ownerOnly },
+});
+
+export const createInvitation = defineEndpoint({
+  id: 'createInvitation',
+  method: 'post',
+  path: '/v1/merchant/invitations',
+  ...merchantSession,
+  summary: 'Invite a staff member or agent by email (owner); replaces an open invitation to the same email',
+  request: { body: CreateInvitationRequest },
+  responses: {
+    201: { description: 'Invited; the email is on its way', schema: Invitation },
+    ...invalid,
+    ...ownerOnly,
+    409: error(
+      'INVALID_ASSIGNMENT — the role/branch is not an active one of this business (or set for an agent); ALREADY_MEMBER',
+    ),
+    429: error('RATE_LIMITED'),
+  },
+});
+
+export const revokeInvitation = defineEndpoint({
+  id: 'revokeInvitation',
+  method: 'post',
+  path: '/v1/merchant/invitations/{invitationId}/revoke',
+  ...merchantSession,
+  summary: 'Withdraw a pending invitation (owner)',
+  request: { params: InvitationParams },
+  responses: {
+    200: { description: 'Revoked', schema: Invitation },
+    ...invalid,
+    ...ownerOnly,
+    ...notFound,
+    409: error('INVALID_LIFECYCLE_TRANSITION — already accepted or revoked'),
   },
 });

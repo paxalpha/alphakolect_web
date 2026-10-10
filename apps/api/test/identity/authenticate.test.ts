@@ -168,6 +168,9 @@ describe('who gets in', () => {
       audience: 'merchant',
       membershipId: merchant.claims.mid,
       scope: 'full',
+      kind: 'owner',
+      roleId: null,
+      branchId: null,
       transport: 'cookie',
     });
     expect(res.body.merchantId).toMatch(/^[0-9a-f-]{36}$/);
@@ -176,7 +179,7 @@ describe('who gets in', () => {
   it('an agent bearer session on an agent endpoint', async () => {
     const res = await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ audience: 'agent', transport: 'bearer' });
+    expect(res.body).toMatchObject({ audience: 'agent', kind: 'agent', roleId: null, transport: 'bearer' });
   });
 
   it("any audience on an 'authenticated' endpoint", async () => {

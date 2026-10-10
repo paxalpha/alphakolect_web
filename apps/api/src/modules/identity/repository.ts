@@ -22,6 +22,11 @@ export type ValidSession = {
   membership_id: string;
   merchant_id: string | null;
   scope: 'full' | 'mfa_enrollment';
+  /** Merchant membership kind (owner | staff | agent) or platform role — current, re-read per call (T5). */
+  kind: string;
+  /** A staff member's role and branch restriction (null = all branches); null for everyone else. */
+  role_id: string | null;
+  branch_id: string | null;
 };
 
 export type RotationResult = {

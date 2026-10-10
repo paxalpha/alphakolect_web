@@ -290,6 +290,9 @@ describe('atomicity', () => {
       membershipId: admin.membershipId,
       merchantId: null,
       scope: 'full',
+      kind: 'super_admin',
+      roleId: null,
+      branchId: null,
       transport: 'cookie',
     };
     await expect(

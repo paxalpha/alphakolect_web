@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -193,6 +194,84 @@ describe('a staff membership’s role and branch', () => {
     );
     return m.id as string;
   }
+
+  it('a staff membership must have a role (ADR-15 T8): none at creation, none taken away', async () => {
+    const {
+      rows: [identity],
+    } = await owner.query(`INSERT INTO identity.identities (email) VALUES ($1) RETURNING id`, [
+      `roleless-${process.pid}-${randomBytes(4).toString('hex')}@example.test`,
+    ]);
+    await expectSqlState(
+      owner.query(
+        `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff')`,
+        [A.merchantId, identity.id],
+      ),
+      SQLSTATE.checkViolation,
+    );
+    const id = await staffOfA();
+    await expectSqlState(
+      owner.query(`UPDATE tenancy.merchant_memberships SET role_id = NULL WHERE id = $1`, [id]),
+      SQLSTATE.checkViolation,
+    );
+  });
+
+  it('the T8 migration refuses to run over role-less staff instead of inventing roles (its own guard, in a rolled-back transaction)', async () => {
+    const sql = readFileSync(
+      new URL('../prisma/migrations/20261010000100_staff_role_required/migration.sql', import.meta.url),
+      'utf8',
+    );
+    const guard = /DO \$guard\$[\s\S]*?\$guard\$;/.exec(sql)?.[0];
+    expect(guard).toBeDefined();
+    await owner.query('BEGIN');
+    try {
+      await owner.query(
+        `ALTER TABLE tenancy.merchant_memberships DROP CONSTRAINT merchant_memberships_staff_has_role`,
+      );
+      const {
+        rows: [identity],
+      } = await owner.query(`INSERT INTO identity.identities (email) VALUES ($1) RETURNING id`, [
+        `legacy-staff-${process.pid}-${randomBytes(4).toString('hex')}@example.test`,
+      ]);
+      await owner.query(
+        `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff')`,
+        [A.merchantId, identity.id],
+      );
+      const err = await expectSqlState(owner.query(guard!), SQLSTATE.checkViolation);
+      expect(err.message).toMatch(/staff membership\(s\) without a role\. ADR-15 T8 requires one/);
+    } finally {
+      await owner.query('ROLLBACK');
+    }
+  });
+
+  it('a staff membership may move to another role of its own merchant', async () => {
+    const id = await staffOfA();
+    await owner.query(`UPDATE tenancy.merchant_memberships SET role_id = $2 WHERE id = $1`, [id, A.roleId]);
+    const { rows } = await owner.query(`SELECT role_id FROM tenancy.merchant_memberships WHERE id = $1`, [
+      id,
+    ]);
+    expect(rows[0].role_id).toBe(A.roleId);
+  });
+
+  it('an owner cannot become staff without a role (ownership transfer must assign one, T17)', async () => {
+    const m = await owner.query(
+      `INSERT INTO tenancy.merchants (name, status) VALUES ('Transfer Test', 'active') RETURNING id`,
+    );
+    const {
+      rows: [identity],
+    } = await owner.query(`INSERT INTO identity.identities (email) VALUES ($1) RETURNING id`, [
+      `former-owner-${process.pid}-${randomBytes(4).toString('hex')}@example.test`,
+    ]);
+    const {
+      rows: [membership],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'owner') RETURNING id`,
+      [m.rows[0].id, identity.id],
+    );
+    await expectSqlState(
+      owner.query(`UPDATE tenancy.merchant_memberships SET kind = 'staff' WHERE id = $1`, [membership.id]),
+      SQLSTATE.checkViolation,
+    );
+  });
 
   it('may reference its own merchant’s role and branch; NULL branch = all branches (the default)', async () => {
     const id = await staffOfA();

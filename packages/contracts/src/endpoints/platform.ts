@@ -56,3 +56,43 @@ export const reactivateMerchant = defineEndpoint({
   request: { params: MerchantParams },
   responses: { 200: { description: 'Reactivated', schema: MerchantLifecycle }, ...lifecycleErrors },
 });
+
+// ── ownership transfer (P4.5; ADR-15 T17, OPEN-1) ──────────────────────────────────────────────────
+
+export const TransferOwnershipRequest = z
+  .object({
+    /** An active staff member of this business, with a verified email, who becomes the owner. */
+    newOwnerMembershipId: Id,
+    /** The role the former owner holds as staff from now on: an active role of this business. */
+    formerOwnerRoleId: Id,
+    /** Also deactivate the former owner (signing them out everywhere). */
+    deactivateFormerOwner: z.boolean(),
+  })
+  .meta({ id: 'TransferOwnershipRequest' });
+
+export type TransferOwnershipRequest = z.infer<typeof TransferOwnershipRequest>;
+
+export const OwnershipTransferred = z
+  .object({ merchantId: Id, ownerMembershipId: Id, formerOwnerMembershipId: Id })
+  .meta({ id: 'OwnershipTransferred' });
+
+export type OwnershipTransferred = z.infer<typeof OwnershipTransferred>;
+
+export const transferOwnership = defineEndpoint({
+  id: 'transferOwnership',
+  method: 'post',
+  path: '/v1/platform/merchants/{merchantId}/transfer-ownership',
+  audience: 'platform',
+  summary: 'Make another staff member the owner; the former owner becomes staff (both or neither)',
+  security: ['cookieSession'],
+  request: { params: MerchantParams, body: TransferOwnershipRequest },
+  responses: {
+    200: { description: 'Transferred', schema: OwnershipTransferred },
+    400: error('VALIDATION_ERROR'),
+    403: error('FORBIDDEN — only a platform super admin'),
+    404: error('NOT_FOUND'),
+    409: error(
+      'INVALID_NEW_OWNER — not an active, verified staff member of this business; INVALID_ASSIGNMENT — the role is not an active one of this business',
+    ),
+  },
+});

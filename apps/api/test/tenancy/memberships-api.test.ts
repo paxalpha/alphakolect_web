@@ -1,13 +1,14 @@
-import { Member, MemberList } from '@alphakolect/contracts';
+import { Member, MemberList, OwnershipTransferred } from '@alphakolect/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestApp } from '../support/app.js';
 import { expectError, tenancyFixtures } from '../support/tenancy.js';
 
-// P4.5 through the real app and database (ADR-15 T5, T7–T9, T15): the owner manages members; every change applies
-// to the member's very next request; a stale session never acts on a state that no longer holds.
+// P4.5 through the real app and database (ADR-15 T5, T7–T9, T15, T17): the owner manages members; every change applies
+// to the member's very next request; a stale session never acts on a state that no longer holds; the platform super
+// admin transfers ownership atomically.
 
 const { app, auth } = await createTestApp();
-const { owner, business, member, call, auditFor } = tenancyFixtures(app, auth);
+const { owner, business, member, platformAdmin, call, auditFor } = tenancyFixtures(app, auth);
 
 const membership = (token: string) => call(token, 'get', '/v1/merchant/membership');
 
@@ -178,5 +179,112 @@ describe('assignment, deactivation and reactivation (owner)', () => {
       },
     ]);
     expect((await membership(other.token)).status).toBe(200);
+  });
+});
+
+describe('ownership transfer (platform super admin, T17)', () => {
+  const transfer = (token: string, merchantId: string, body: object) =>
+    call(token, 'post', `/v1/platform/merchants/${merchantId}/transfer-ownership`, body);
+
+  it('swaps owner and staff atomically; both existing sessions follow on their next request; audited with both identities', async () => {
+    const admin = await platformAdmin();
+    const b = await business();
+    const staff = await member(b, 'staff');
+    expect((await call(staff.token, 'get', '/v1/merchant/profile')).status).toBe(403);
+
+    const res = await transfer(admin.token, b.merchantId, {
+      newOwnerMembershipId: staff.membershipId,
+      formerOwnerRoleId: b.roleId,
+      deactivateFormerOwner: false,
+    });
+    expect(res.status).toBe(200);
+    expect(OwnershipTransferred.parse(res.body)).toEqual({
+      merchantId: b.merchantId,
+      ownerMembershipId: staff.membershipId,
+      formerOwnerMembershipId: b.owner.membershipId,
+    });
+
+    // Stale sessions act on the current state, not the one they were created in.
+    expect((await call(staff.token, 'get', '/v1/merchant/profile')).status).toBe(200);
+    expectError(await call(b.owner.token, 'get', '/v1/merchant/profile'), 403, 'FORBIDDEN');
+    expect((await membership(b.owner.token)).body).toMatchObject({ kind: 'staff', roleId: b.roleId });
+
+    expect(await auditFor(res)).toEqual([
+      {
+        action: 'platform.ownership_transferred',
+        outcome: 'success',
+        merchant_id: b.merchantId,
+        actor_identity_id: admin.identityId,
+        target_type: 'merchant',
+        target_id: b.merchantId,
+        summary: {
+          formerOwnerIdentityId: b.owner.identityId,
+          formerOwnerMembershipId: b.owner.membershipId,
+          newOwnerIdentityId: staff.identityId,
+          newOwnerMembershipId: staff.membershipId,
+          formerOwnerRoleId: b.roleId,
+          formerOwnerDeactivated: false,
+        },
+      },
+    ]);
+  });
+
+  it('can deactivate the former owner, who is signed out at once', async () => {
+    const admin = await platformAdmin();
+    const b = await business();
+    const staff = await member(b, 'staff');
+    const res = await transfer(admin.token, b.merchantId, {
+      newOwnerMembershipId: staff.membershipId,
+      formerOwnerRoleId: b.roleId,
+      deactivateFormerOwner: true,
+    });
+    expect(res.status).toBe(200);
+    expectError(await membership(b.owner.token), 401, 'UNAUTHENTICATED');
+  });
+
+  it('refusals change nothing and are audited', async () => {
+    const admin = await platformAdmin();
+    const b = await business();
+    const other = await business();
+    const unverified = await member(b, 'staff', { verified: false });
+    const staff = await member(b, 'staff');
+    const body = (newOwnerMembershipId: string, formerOwnerRoleId: string) => ({
+      newOwnerMembershipId,
+      formerOwnerRoleId,
+      deactivateFormerOwner: false,
+    });
+
+    const r1 = await transfer(admin.token, b.merchantId, body(unverified.membershipId, b.roleId));
+    expectError(r1, 409, 'INVALID_NEW_OWNER');
+    expect(await auditFor(r1)).toMatchObject([
+      { outcome: 'failure', summary: { reason: 'invalid_new_owner' } },
+    ]);
+    expectError(
+      await transfer(admin.token, b.merchantId, body(staff.membershipId, other.roleId)),
+      409,
+      'INVALID_ASSIGNMENT',
+    );
+    expectError(
+      await transfer(admin.token, other.merchantId, body(staff.membershipId, other.roleId)),
+      409,
+      'INVALID_NEW_OWNER',
+    );
+    expectError(
+      await transfer(admin.token, '01900000-0000-7000-8000-00000000dead', body(staff.membershipId, b.roleId)),
+      404,
+      'NOT_FOUND',
+    );
+    const support = await platformAdmin('support');
+    const r2 = await transfer(support.token, b.merchantId, body(staff.membershipId, b.roleId));
+    expectError(r2, 403, 'FORBIDDEN');
+    expect(await auditFor(r2)).toMatchObject([{ outcome: 'denied' }]);
+    expectError(
+      await transfer(b.owner.token, b.merchantId, body(staff.membershipId, b.roleId)),
+      403,
+      'WRONG_AUDIENCE',
+    );
+
+    expect((await call(b.owner.token, 'get', '/v1/merchant/profile')).status).toBe(200);
+    expect((await membership(staff.token)).body.kind).toBe('staff');
   });
 });

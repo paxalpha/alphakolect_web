@@ -2653,6 +2653,105 @@
           }
         }
       }
+    },
+    "/v1/platform/merchants/{merchantId}/transfer-ownership": {
+      "post": {
+        "operationId": "transferOwnership",
+        "summary": "Make another staff member the owner; the former owner becomes staff (both or neither)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "merchantId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TransferOwnershipRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Transferred",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnershipTransferred"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — only a platform super admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_NEW_OWNER — not an active, verified staff member of this business; INVALID_ASSIGNMENT — the role is not an active one of this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2925,6 +3024,25 @@
         "required": [
           "roleId",
           "branchId"
+        ]
+      },
+      "TransferOwnershipRequest": {
+        "type": "object",
+        "properties": {
+          "newOwnerMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "formerOwnerRoleId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "deactivateFormerOwner": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "newOwnerMembershipId",
+          "formerOwnerRoleId",
+          "deactivateFormerOwner"
         ]
       },
       "AmountMinor": {
@@ -3549,6 +3667,26 @@
           "active",
           "deactivated"
         ]
+      },
+      "OwnershipTransferred": {
+        "type": "object",
+        "properties": {
+          "merchantId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ownerMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "formerOwnerMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "merchantId",
+          "ownerMembershipId",
+          "formerOwnerMembershipId"
+        ],
+        "additionalProperties": false
       },
       "Money": {
         "type": "object",

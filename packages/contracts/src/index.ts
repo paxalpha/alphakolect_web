@@ -38,7 +38,7 @@ import {
   updateMerchantProfile,
   updateRole,
 } from './endpoints/merchant.js';
-import { deactivateMerchant, reactivateMerchant } from './endpoints/platform.js';
+import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
 
 export * from './auth.js';
 export * from './primitives.js';
@@ -85,6 +85,7 @@ export const endpoints = {
   assignMember,
   deactivateMember,
   reactivateMember,
+  transferOwnership,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

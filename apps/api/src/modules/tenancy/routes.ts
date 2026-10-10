@@ -9,8 +9,10 @@ import type {
   MemberList,
   MerchantLifecycle,
   MerchantProfile,
+  OwnershipTransferred,
   Role,
   RoleList,
+  TransferOwnershipRequest,
   UpdateCatalogItemRequest,
   UpdateMerchantProfileRequest,
 } from '@alphakolect/contracts';
@@ -55,7 +57,17 @@ export function platformMerchantHandlers({ lifecycle }: { lifecycle: MerchantLif
     res.json(body);
   };
 
-  return { deactivateMerchant, reactivateMerchant };
+  const transferOwnership: RequestHandler = async (req, res) => {
+    const body: OwnershipTransferred = await lifecycle.transferOwnership(
+      req.auth!,
+      String(req.params.merchantId),
+      req.body as TransferOwnershipRequest,
+      contextOf(req),
+    );
+    res.json(body);
+  };
+
+  return { deactivateMerchant, reactivateMerchant, transferOwnership };
 }
 
 // /v1/merchant/… (contracts: packages/contracts/src/endpoints/merchant.ts). The merchant session is already

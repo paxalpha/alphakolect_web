@@ -19,6 +19,7 @@ export const FIXTURE = {
     ownerMembershipId: '01900000-0000-7000-8000-0000000000a7',
     branchId: '01900000-0000-7000-8000-0000000000a8',
     roleId: '01900000-0000-7000-8000-0000000000a9',
+    invitationId: '01900000-0000-7000-8000-0000000000aa',
   },
   B: {
     merchantId: MERCHANT_B,
@@ -31,6 +32,7 @@ export const FIXTURE = {
     ownerMembershipId: '01900000-0000-7000-8000-0000000000b7',
     branchId: '01900000-0000-7000-8000-0000000000b8',
     roleId: '01900000-0000-7000-8000-0000000000b9',
+    invitationId: '01900000-0000-7000-8000-0000000000ba',
   },
 } as const;
 
@@ -95,6 +97,20 @@ export async function loadFixtures(db: Client): Promise<void> {
         f.roleId,
         f.merchantId,
       ]);
+      // An open agent invitation (P4.6) — only so every tenant table has a row per tenant.
+      await db.query(
+        `INSERT INTO tenancy.invitations
+           (id, merchant_id, email, kind, identity_id, invited_by_membership_id, token_hash, expires_at)
+         VALUES ($1, $2, $3, 'agent', $4, $5, $6, now() + interval '1 day')`,
+        [
+          f.invitationId,
+          f.merchantId,
+          `invitee-${label.toLowerCase()}@example.test`,
+          f.ownerIdentityId,
+          f.ownerMembershipId,
+          (label === 'A' ? 'a' : 'b').repeat(64),
+        ],
+      );
     }
     await db.query('COMMIT');
   } catch (err) {

@@ -20,6 +20,7 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
   ['tenancy.merchant_memberships', 'merchant_id'],
   ['tenancy.branches', 'merchant_id'],
   ['tenancy.roles', 'merchant_id'],
+  ['tenancy.invitations', 'merchant_id'],
 ];
 
 let app: pg.Client;

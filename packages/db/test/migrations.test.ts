@@ -41,6 +41,7 @@ const TABLES = [
   'ledger.journal_lines',
   'ledger.ledgers',
   'tenancy.branches',
+  'tenancy.invitations',
   'tenancy.merchant_memberships',
   'tenancy.merchants',
   'tenancy.roles',

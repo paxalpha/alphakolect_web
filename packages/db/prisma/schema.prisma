@@ -49,6 +49,7 @@ model Merchant {
   memberships       MerchantMembership[]
   branches          Branch[]
   roles             Role[]
+  invitations       Invitation[]
 
   @@map("merchants")
   @@schema("tenancy")
@@ -221,6 +222,7 @@ model Identity {
   oneTimeTokens                 OneTimeToken[]
   mfaChallenges                 MfaChallenge[]
   membershipSelectionChallenges MembershipSelectionChallenge[]
+  invitations                   Invitation[]
   totpCredential                TotpCredential?
   recoveryCodes                 RecoveryCode[]
   journalEntries                JournalEntry[]                 @relation("JournalEntryCreator")
@@ -385,6 +387,7 @@ model Branch {
 
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   memberships MerchantMembership[]
+  invitations Invitation[]
 
   @@unique([merchantId, id])
   @@map("branches")
@@ -403,6 +406,7 @@ model Role {
 
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   memberships MerchantMembership[]
+  invitations Invitation[]
 
   @@unique([merchantId, id])
   @@map("roles")
@@ -422,11 +426,13 @@ model MerchantMembership {
   /// Staff only: restricted to this branch; NULL = all branches (the default, OPEN-2).
   branchId      String?   @map("branch_id") @db.Uuid
 
-  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  identity Identity  @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  role     Role?     @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
-  branch   Branch?   @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
-  sessions Session[]
+  merchant            Merchant     @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  identity            Identity     @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role                Role?        @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch              Branch?      @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  sessions            Session[]
+  invitationsSent     Invitation[] @relation("InvitationInviter")
+  invitationsAccepted Invitation[] @relation("InvitationAcceptedMembership")
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
@@ -447,4 +453,37 @@ model RateLimitCounter {
   @@index([expiresAt])
   @@map("rate_limit_counters")
   @@schema("util")
+}
+
+/// P4.6 (ADR-15 T10, T11): an invitation until accepted — no membership exists before. Single use, expiring,
+/// revocable; the token is stored hashed and the app cannot read it. Written only by SECURITY DEFINER functions.
+/// Partial unique index (one open invitation per business and email) and CHECKs live in SQL.
+model Invitation {
+  id                    String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId            String    @map("merchant_id") @db.Uuid
+  email                 String
+  /// staff | agent
+  kind                  String
+  roleId                String?   @map("role_id") @db.Uuid
+  branchId              String?   @map("branch_id") @db.Uuid
+  identityId            String    @map("identity_id") @db.Uuid
+  invitedByMembershipId String    @map("invited_by_membership_id") @db.Uuid
+  tokenHash             String    @unique @map("token_hash") @db.Char(64)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  acceptedAt            DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedMembershipId  String?   @map("accepted_membership_id") @db.Uuid
+  revokedAt             DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant           Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role               Role?               @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch             Branch?             @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  identity           Identity            @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invitedBy          MerchantMembership  @relation("InvitationInviter", fields: [merchantId, invitedByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "invitations_merchant_id_invited_by_fkey")
+  acceptedMembership MerchantMembership? @relation("InvitationAcceptedMembership", fields: [merchantId, acceptedMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "invitations_merchant_id_accepted_membership_fkey")
+
+  @@unique([merchantId, id])
+  @@index([identityId])
+  @@map("invitations")
+  @@schema("tenancy")
 }

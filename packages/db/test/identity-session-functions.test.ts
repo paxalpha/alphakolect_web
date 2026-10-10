@@ -48,9 +48,14 @@ async function createSession(
   return { sessionId: rows[0].session_id as string, refresh };
 }
 
+// Every audience is served here; the audience check itself is tested in audience-checked-refresh.test.ts (P4.7).
 const rotate = async (oldHash: string, newHash = hash(), idle: number | null = MERCHANT.idle) =>
-  (await app.query(`SELECT * FROM identity.rotate_refresh_token($1, $2, $3)`, [oldHash, newHash, idle]))
-    .rows[0];
+  (
+    await app.query(
+      `SELECT * FROM identity.rotate_refresh_token($1, $2, $3, ARRAY['platform', 'merchant', 'agent'])`,
+      [oldHash, newHash, idle],
+    )
+  ).rows[0];
 
 const validate = async (sessionId: string) =>
   (await app.query(`SELECT * FROM identity.validate_session($1)`, [sessionId])).rows;

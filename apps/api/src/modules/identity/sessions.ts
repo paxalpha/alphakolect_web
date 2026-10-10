@@ -20,6 +20,9 @@ const LIFETIMES: Readonly<Record<SessionAudience, SessionLifetime>> = {
 /** D8: the session of a platform identity that must enrol TOTP first. */
 const ENROLMENT_LIFETIME: SessionLifetime = { idleSeconds: 900, absoluteSeconds: 900 };
 
+/** The audiences of the cookie (web) refresh endpoint; agents refresh on their own endpoint (ADR-15 T12). */
+const WEB_AUDIENCES: readonly SessionAudience[] = ['platform', 'merchant'];
+
 export type RequestContext = { ip: string; userAgent: string | null; requestId: string };
 
 /** Secrets for the client. Never logged, never in a response body. */
@@ -264,7 +267,8 @@ export class SessionService {
     if (!oldHash) throw await failed(rawRefreshToken ? 'malformed_token' : 'no_token');
 
     const next = newOpaqueToken();
-    const rotated = await identity.rotateRefreshToken(oldHash, next.hash);
+    // The cookie endpoint serves the web audiences only; agent tokens are refreshed on their own endpoint (T12).
+    const rotated = await identity.rotateRefreshToken(oldHash, next.hash, WEB_AUDIENCES);
     if (rotated.outcome === 'reuse_detected') {
       await audit.record({
         action: 'auth.refresh_token_reuse',

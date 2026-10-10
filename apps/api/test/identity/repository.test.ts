@@ -79,11 +79,12 @@ describe('IdentityRepository (as alphakolect_app)', () => {
     });
 
     const second = newOpaqueToken();
-    expect((await repo.rotateRefreshToken(first.hash, second.hash, MERCHANT.idleSeconds)).outcome).toBe(
-      'rotated',
-    );
     expect(
-      (await repo.rotateRefreshToken(first.hash, newOpaqueToken().hash, MERCHANT.idleSeconds)).outcome,
+      (await repo.rotateRefreshToken(first.hash, second.hash, ['merchant'], MERCHANT.idleSeconds)).outcome,
+    ).toBe('rotated');
+    expect(
+      (await repo.rotateRefreshToken(first.hash, newOpaqueToken().hash, ['merchant'], MERCHANT.idleSeconds))
+        .outcome,
     ).toBe('reuse_detected');
     expect(await repo.validateSession(session.session_id)).toBeNull();
   });

@@ -129,8 +129,12 @@ const validate = async (sessionId: string) =>
   (await app.query(`SELECT * FROM identity.validate_session($1)`, [sessionId])).rows;
 
 const rotate = async (oldHash: string) =>
-  (await app.query(`SELECT * FROM identity.rotate_refresh_token($1, $2, NULL)`, [oldHash, hash()])).rows[0]
-    .outcome as string;
+  (
+    await app.query(`SELECT * FROM identity.rotate_refresh_token($1, $2, NULL, ARRAY['merchant'])`, [
+      oldHash,
+      hash(),
+    ])
+  ).rows[0].outcome as string;
 
 let admin: Awaited<ReturnType<typeof superAdmin>>;
 beforeAll(async () => {

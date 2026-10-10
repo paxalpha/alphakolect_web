@@ -185,15 +185,20 @@ export class IdentityRepository {
     return row!;
   }
 
-  /** `idleSeconds` null = the standard idle timeout of the session's audience and scope (D5). */
+  /**
+   * `audiences`: the session audiences the calling endpoint serves — a token of any other audience is 'invalid',
+   * with no side effect (ADR-15 T12). `idleSeconds` null = the standard idle timeout of the session's audience
+   * and scope (D5).
+   */
   async rotateRefreshToken(
     oldHash: string,
     newHash: string,
+    audiences: readonly SessionAudience[],
     idleSeconds: number | null = null,
   ): Promise<RotationResult> {
     const [row] = await this.db.query<RotationResult>(
-      `SELECT * FROM identity.rotate_refresh_token($1, $2, $3)`,
-      [oldHash, newHash, idleSeconds],
+      `SELECT * FROM identity.rotate_refresh_token($1, $2, $3, $4)`,
+      [oldHash, newHash, idleSeconds, audiences],
     );
     return row!;
   }

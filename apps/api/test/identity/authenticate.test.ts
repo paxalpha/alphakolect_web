@@ -176,6 +176,48 @@ describe('who gets in', () => {
     expect(res.body.merchantId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('a staff member: their current role and branch, from the database (T5)', async () => {
+    const {
+      rows: [{ merchant_id: merchantId }],
+    } = await owner.query(`SELECT merchant_id FROM tenancy.merchant_memberships WHERE id = $1`, [
+      merchant.claims.mid,
+    ]);
+    const {
+      rows: [role],
+    } = await owner.query(
+      `INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Teller') RETURNING id`,
+      [merchantId],
+    );
+    const {
+      rows: [branch],
+    } = await owner.query(
+      `INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, 'Surulere') RETURNING id`,
+      [merchantId],
+    );
+    const {
+      rows: [identity],
+    } = await owner.query(
+      `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+      [`staff-${randomBytes(4).toString('hex')}@example.test`],
+    );
+    const {
+      rows: [m],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id, branch_id)
+       VALUES ($1, $2, 'staff', $3, $4) RETURNING id`,
+      [merchantId, identity.id, role.id, branch.id],
+    );
+    const staff = await session(identity.id, 'merchant', m.id, 'full', {
+      idleSeconds: 86400,
+      absoluteSeconds: 1209600,
+    });
+    const res = await get(E.merchantRead).set('Cookie', cookie(staff.token));
+    expect(res.body).toMatchObject({ kind: 'staff', roleId: role.id, branchId: branch.id });
+
+    await owner.query(`UPDATE tenancy.merchant_memberships SET branch_id = NULL WHERE id = $1`, [m.id]);
+    expect((await get(E.merchantRead).set('Cookie', cookie(staff.token))).body.branchId).toBeNull();
+  });
+
   it('an agent bearer session on an agent endpoint', async () => {
     const res = await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`);
     expect(res.status).toBe(200);

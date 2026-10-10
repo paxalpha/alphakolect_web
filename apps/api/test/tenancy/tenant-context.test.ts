@@ -49,7 +49,9 @@ describe('tenantContextOf', () => {
   });
 
   it('refuses a platform session, a missing tenant, an unknown kind and no session at all', () => {
-    expect(() => tenantContextOf(auth({ audience: 'platform', merchantId: null, kind: 'super_admin' }))).toThrow();
+    expect(() =>
+      tenantContextOf(auth({ audience: 'platform', merchantId: null, kind: 'super_admin' })),
+    ).toThrow();
     // The audience alone decides, even if a platform context somehow carried a tenant and a membership kind.
     expect(() => tenantContextOf(auth({ audience: 'platform', kind: 'owner' }))).toThrow();
     expect(() => tenantContextOf(auth({ merchantId: null }))).toThrow();
@@ -95,7 +97,9 @@ describe('requireOwner (T9 interim check)', () => {
   it('admits the owner and refuses staff and agents with 403 FORBIDDEN', () => {
     expect(() => requireOwner(as('owner'))).not.toThrow();
     for (const kind of ['staff', 'agent'] as const) {
-      expect(() => requireOwner(as(kind))).toThrow(expect.objectContaining({ status: 403, code: 'FORBIDDEN' }));
+      expect(() => requireOwner(as(kind))).toThrow(
+        expect.objectContaining({ status: 403, code: 'FORBIDDEN' }),
+      );
     }
   });
 });

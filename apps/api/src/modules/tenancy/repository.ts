@@ -5,7 +5,11 @@ import { scopeOf, type TenantTx } from '../../platform/tenant.js';
 // cannot be used outside a tenant scope. Each query also filters on that merchant explicitly: RLS is the last line
 // of defence, not the only one. A row of another merchant is simply not found.
 
-export type MerchantRow = { id: string; name: string; status: 'pending_verification' | 'active' | 'deactivated' };
+export type MerchantRow = {
+  id: string;
+  name: string;
+  status: 'pending_verification' | 'active' | 'deactivated';
+};
 
 export type MembershipRow = {
   id: string;
@@ -48,9 +52,10 @@ function nameTaken(err: unknown, table: CatalogTable): boolean {
 export const tenancyRepository = {
   async merchant(tx: TenantTx): Promise<MerchantRow | null> {
     const { merchantId } = scopeOf(tx);
-    const [row] = await tx.query<MerchantRow>(`SELECT id, name, status FROM tenancy.merchants WHERE id = $1`, [
-      merchantId,
-    ]);
+    const [row] = await tx.query<MerchantRow>(
+      `SELECT id, name, status FROM tenancy.merchants WHERE id = $1`,
+      [merchantId],
+    );
     return row ?? null;
   },
 

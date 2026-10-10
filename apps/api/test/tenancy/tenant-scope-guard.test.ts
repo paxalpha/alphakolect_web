@@ -83,7 +83,8 @@ describe('tenant data only through scoped repositories (T14)', () => {
       // Each `async name(tx: TenantTx, …) { … }` body starts with scopeOf(tx); no other query handle exists.
       const functions = [...text.matchAll(/async (\w+)\(\s*tx: TenantTx[^)]*\)[^{]*\{\n\s*(.*)/g)];
       expect(functions.map(([, name]) => name).sort(), file).toEqual(Object.keys(repository).sort());
-      for (const [, name, firstLine] of functions) expect(firstLine, `${file}: ${name}`).toMatch(/scopeOf\(tx\)/);
+      for (const [, name, firstLine] of functions)
+        expect(firstLine, `${file}: ${name}`).toMatch(/scopeOf\(tx\)/);
       expect(text, file).not.toMatch(/\bdb\.(query|transaction)\b/);
     }
   });

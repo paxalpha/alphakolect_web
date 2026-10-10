@@ -28,7 +28,9 @@ async function merchant(name: string): Promise<TenantContext> {
   );
   const {
     rows: [m],
-  } = await owner.query(`SELECT id FROM tenancy.merchant_memberships WHERE identity_id = $1`, [s.identity_id]);
+  } = await owner.query(`SELECT id FROM tenancy.merchant_memberships WHERE identity_id = $1`, [
+    s.identity_id,
+  ]);
   return Object.freeze({
     merchantId: s.merchant_id!,
     identityId: s.identity_id!,
@@ -91,7 +93,9 @@ describe.each(['branches', 'roles'] as const)('%s', (table) => {
   it('cannot change another tenant’s item: not found, and the item is untouched', async () => {
     const theirs = await as(b, (tx) => repo.createCatalogItem(tx, table, `Theirs ${table}`));
     expect(
-      await as(a, (tx) => repo.updateCatalogItem(tx, table, theirs.id, { name: 'Hijacked', status: 'archived' })),
+      await as(a, (tx) =>
+        repo.updateCatalogItem(tx, table, theirs.id, { name: 'Hijacked', status: 'archived' }),
+      ),
     ).toBeNull();
     expect(await as(b, (tx) => repo.getCatalogItem(tx, table, theirs.id))).toEqual(theirs);
   });
@@ -111,17 +115,23 @@ describe.each(['branches', 'roles'] as const)('%s', (table) => {
       as(a, (tx) => repo.updateCatalogItem(tx, table, first.id, { status: 'active' })),
     ).rejects.toBeInstanceOf(NameTakenError);
     await as(a, (tx) => repo.updateCatalogItem(tx, table, second.id, { name: `Dup ${table} 2` }));
-    expect(await as(a, (tx) => repo.updateCatalogItem(tx, table, first.id, { status: 'active' }))).toMatchObject(
-      { status: 'active', archived_at: null },
-    );
+    expect(
+      await as(a, (tx) => repo.updateCatalogItem(tx, table, first.id, { status: 'active' })),
+    ).toMatchObject({ status: 'active', archived_at: null });
   });
 
   it('keeps the archive date when an archived item is renamed or archived again', async () => {
     const item = await as(a, (tx) => repo.createCatalogItem(tx, table, `Keep ${table}`));
     const archived = await as(a, (tx) => repo.updateCatalogItem(tx, table, item.id, { status: 'archived' }));
-    const renamed = await as(a, (tx) => repo.updateCatalogItem(tx, table, item.id, { name: `Kept ${table}` }));
+    const renamed = await as(a, (tx) =>
+      repo.updateCatalogItem(tx, table, item.id, { name: `Kept ${table}` }),
+    );
     const again = await as(a, (tx) => repo.updateCatalogItem(tx, table, item.id, { status: 'archived' }));
-    expect(renamed).toMatchObject({ name: `Kept ${table}`, status: 'archived', archived_at: archived!.archived_at });
+    expect(renamed).toMatchObject({
+      name: `Kept ${table}`,
+      status: 'archived',
+      archived_at: archived!.archived_at,
+    });
     expect(again!.archived_at).toEqual(archived!.archived_at);
   });
 });

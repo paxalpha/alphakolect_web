@@ -353,6 +353,32 @@ in particular, successive pages are separate requests and do not form one snapsh
 operations has its own planned-footprint entry above; the guard fails if a lock or nested call is added to one of them
 without updating its entry.
 
+**Read-consistency guarantees — the acceptance criterion for every paginated read (R25).** Locking the authority rows
+freezes **authority**, not the **contents** of the list: at `READ COMMITTED` each statement takes its own snapshot,
+and nothing locks the listed rows. Each of the four sensitive reads, the two platform lists and (with O9) the members
+and invitations lists therefore promises exactly the following, and no more:
+
+1. **Authority:** checked under the authority locks, which are held until commit — a revocation committed before the
+   check refuses the read; one attempted during the read waits for it (§7.5).
+2. **One page = one statement:** the rows of a page come from one `SELECT`, so they reflect the committed state at
+   that statement's start — never a mix of before and after a concurrent change, never an uncommitted row. The read
+   neither waits for, nor blocks, writers of the listed rows.
+3. **Across pages, no snapshot:** each page is a separate request. Because every ordering key is immutable
+   (`occurred_at`/`id` of append-only audit events; `created_at`/`id` of merchants, memberships and invitations), a
+   row committed **before the first page** and still matching the filters is returned **exactly once** across the
+   pages. A row committed later appears only if its key sorts after the cursor; [Fact] an audit event's `occurred_at`
+   is its transaction's **start** time (§8.5), so a long transaction committing after a page was read can land on a
+   later page or only on a fresh first page. Mutable fields (a member's status, role, branch) are shown as of the page
+   that returns the row.
+
+Tests (P5.7 for the platform lists, P5.8 for the audit reads and O9 lists), each with a second connection: (a) an
+**uncommitted** insert and an uncommitted update of a listed row — the read returns without waiting, omits the
+insert and shows the committed version of the updated row; (b) an event committed between two page requests with a
+key **older** than the cursor appears on the later page, one with a key **newer** than the first page's first row
+appears on no later page, and no row is repeated; (c) a member's status changed between two pages — the row appears
+once, with the state at its page's read; (d) the §7.5 revocation race for each read. No test may assume that
+authority locks freeze the list.
+
 The resolver (§7.1) and the early policy check take no locks. Category 3 takes `FOR NO KEY UPDATE` on the **actor's**
 row in writes so any change to the actor (deactivation, role change) serializes with the actor's write, and the
 reciprocal case cannot cycle — two staff acting on each other both lock `{A, B}` in id order.
@@ -1158,7 +1184,7 @@ independent of the permission catalog); it is listed with them so it is complete
   the rows it returns, the repository writes none, and an injected failure of that insert returns no rows; a scratch
   second function that writes `platform.merchant_list_read` fails the writer guard; **pagination** — first and
   continuation pages, a page boundary inside a group of equal `created_at` values (no row lost or repeated), and a
-  cursor reused with different filters refused.
+  cursor reused with different filters refused; the **read-consistency tests (a)–(d) of §7.2** for both lists (R25).
 - **Done when:** platform staff have exactly their grants.
 
 ### P5.8 — Audit reads (and O9 list pagination)
@@ -1184,7 +1210,8 @@ independent of the permission catalog); it is listed with them so it is complete
   necessary; **pagination (R21)** — first page,
   continuation pages, a group of same-timestamp events split across a page boundary (no row lost or repeated), actor
   filtering, merchant filtering (platform), an empty window, a window over the O4 maximum refused **on both endpoints**, and a cursor reused with a
-  different window or filter refused with `400 INVALID_CURSOR`; the §8.5 query-plan validation recorded on
+  different window or filter refused with `400 INVALID_CURSOR`; the **read-consistency tests (a)–(d) of §7.2** for
+  both audit reads and, with O9, the members and invitations lists (R25); the §8.5 query-plan validation recorded on
   representative data.
 - **Done when:** every event class behaves as §8.2 states, proven by failure injection.
 
@@ -1248,7 +1275,9 @@ owner, in either case.
 5. Delegation ceiling and owner-only role management are enforced in the database; escalation tests green.
 6. Platform staff hold exactly their membership grants; reserved powers are super-admin only.
 7. Audit: closed catalog with allowlists; atomic / best-effort / sensitive-read classes proven by failure injection;
-   A7 resolved; audit reads isolated and audited.
+   A7 resolved; audit reads isolated and audited; every paginated read meets the read-consistency guarantees of §7.2
+   (one statement per page, immutable keys, exactly-once across pages for rows committed before the first page),
+   proven by the concurrency tests (R25).
 8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
 9. An owner-approved written D9 policy (§8.6) exists.
 10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).

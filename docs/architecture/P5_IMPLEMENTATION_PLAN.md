@@ -28,6 +28,39 @@ failure semantics (including A7); audit read APIs; tests proving P4 is preserved
 assignments, collections or remittances (D1 → P7/P8); permissions for features that do not exist yet (D2); billing
 suspension (P10); an IP/user-agent retention period (D9 stays open — §8.6).
 
+### 1.1 Obligations P5 inherits — where each is placed
+
+Every item that an earlier document assigns to P5, and where this plan discharges it. An item without a package here
+is not in P5 and says where it goes instead.
+
+| Source | Obligation | Where in this plan |
+|---|---|---|
+| RESTRUCTURING_MAP §7, P5 row | permission catalog | §6; P5.1 |
+| RESTRUCTURING_MAP §7, P5 row; ADR-15 T1 | policies; central authorization | §4, §5, §7; P5.2 (resolver), P5.3 (declarations), P5.4 (API), P5.5 (database) |
+| RESTRUCTURING_MAP §7, P5 row | audit hooks, audit module | §8; P5.3a (foundation), P5.8 (reads) |
+| RESTRUCTURING_MAP §7, P5 exit; ADR-15 T1 | authorization matrix green | P5.9; §13 item 2 |
+| RESTRUCTURING_MAP §7, P5 exit (BR-3) | agents record collections only for assigned customers | **not P5** — moved to P7/P8 by D1; roadmap amended in P5.0; §13 item 10 |
+| ADR-15 T2 | platform staff come online | §7.4; P5.7 |
+| ADR-15 T5 | no authorization cache; changes apply from the next request | §4 invariant 2; P5.2 tests |
+| ADR-15 T8 | P5 attaches permissions to roles | §6, §7.3; P5.6 |
+| ADR-15 T9 | interim kind checks replaced wholesale by policies | P5.4 (API, `requireOwner`/`ownerOrDenied`), P5.5 (SQL, with the SQL authority guard) |
+| ADR-15 T14 | platform cross-tenant reads as separate, permission-gated services | #35, #36 (P5.7); #34 (P5.8) |
+| ADR-15 T15, T16 | 404 across tenants, 403 within; capabilities never bypass current state | §4 invariant 8, §5 `capability` class; P5.9; P4 tests kept (§9.2) |
+| P4 closure review (B) | branch scope decided for every endpoint opened to staff; "branch isolation is a P5 exit criterion" | §7.6; P5.3, P5.4, P5.9; §13 item 11. End-to-end branch isolation needs a branch-owned resource, so P5 proves the declarations and the policy and claims no isolation (D7); the first branch-scoped resource (P7/P8) proves it end to end |
+| P4 closure review (C) | archived role grants nothing; restriction to an archived branch reaches nothing | D6: §4 invariant 5, P5.2 tests; D7: §7.6 |
+| P4 closure review (D) | members and invitations paginated before production; query-parameter validation first | validation: P5.3. Pagination of the two lists: **O9** |
+| P4 known limitation (1) | no platform endpoint lists a merchant's memberships | #36; P5.7 |
+| P4 known limitations (2), (3) | branch restriction unenforced; archiving does not affect holders | §7.6; D6, D7 |
+| P4 known limitation (6) | list endpoints return everything with `nextCursor: null` | O9 (members, invitations); P5's own lists are paginated (§8.5, P5.7) |
+| P4 known limitations (4), (5), (7) | setup emails from several businesses; owner-written business name in emails; best-effort email delivery | **not P5** — not authorization; unchanged (P12 outbox for delivery) |
+| P4 closure notes (TARGET_ARCHITECTURE §3.4) | authority from the session inside definer functions; deactivation revokes sessions | §8.5 (R19), §7.2 footprints (category 10); P5.5 |
+| TARGET_ARCHITECTURE §27 | threat model in `docs/security/` | P5.10 (as-built; `P5_AUDIT_REPORT.md` §15 is design-stage input) |
+| RESTRUCTURING_MAP §2.3, §2.4 | UI navigation from server-provided permissions; platform staff with grants (BR-3) | §5 (permission fields on `GET /v1/merchant/membership` — P5.4 — and `GET /v1/auth/session` — P5.7); D4 |
+| `P5_AUDIT_REPORT.md` §22.2 | A7: an audit failure turns 401/403 into 500 | §8.3; P5.3a |
+| `P5_AUDIT_REPORT.md` §22.4 | owner decisions D1, D4, D5, D9 | §3; D9: §8.6, P5.10, §13 item 9 |
+| Found in planning (§7.2, §8.1) | latent P4 deadlock (re-invite during account setup); no acceptance event on the setup path | §7.2 footprints, P5.5 test (h); #14, P5.5 |
+| Legacy system (§15) | per-staff audit view | O4 actor filter; P5.8 |
+
 **Constraints for every package:**
 
 1. No change weakens authentication, MFA, CSRF, refresh rotation, session revocation, RLS, composite keys, the
@@ -942,7 +975,8 @@ independent of the permission catalog); it is listed with them so it is complete
   customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
   owner; **O7 decided** (branch ceiling, §7.6) before the member and invitation behaviour is frozen; **O8 decided**
-  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; **O3 decided**
+  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; **O9 decided** (members and
+  invitations pagination) so that P5.8's scope is fixed; **O3 decided**
   before the merchant audit-read contract is frozen. The **platform audit-read contract is not
   frozen in P5.0**: O4 depends on a query-plan validation (§8.5) that needs representative data, so its freeze follows
   the sequence in P5.8. If O3 is still open at P5.0, the merchant audit-read contract is left out of the freeze too
@@ -1123,7 +1157,9 @@ independent of the permission catalog); it is listed with them so it is complete
 ### P5.8 — Audit module
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34); indexes; D9 documentation (§8.6). The audit foundation is P5.3a.
+  #34); indexes; D9 documentation (§8.6); if O9 is approved, cursor pagination of the members and invitations lists
+  (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
+  tests. The audit foundation is P5.3a.
 - **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
   `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
   recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page
@@ -1221,6 +1257,7 @@ merged.
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 | O7 | Branch ceiling for delegation (§7.6) | proposal: a branch-restricted actor acts only on members of their own branch and assigns or invites only with their own branch (never `NULL` = all branches); owner and unrestricted actors unaffected; built in P5.5 if approved, otherwise recorded as a limitation P7/P8 must close before its first branch-scoped resource. **Owner decision required before P5.0 freezes the member and invitation behaviour** |
 | O8 | Platform staff onboarding (§7.4) | proposal: (a) creation only for an email without an identity — an existing identity is refused, keeping platform accounts separate from merchant accounts; (b) a `reactivate` operation that restores the membership with no grants (grants are removed at deactivation), with a new atomic event added to §8.1 on approval — otherwise the "cannot re-add a deactivated person" limitation is recorded. **Owner decision required before P5.0 freezes the platform staff contracts** |
+| O9 | Members and invitations list pagination (P4 closure review (D): "before production"; P4 limitation (6)) | proposal: **include in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, the invitations list defaulting to open invitations, using the P5.3 query validation and the §8.5 cursor rules; additive (`nextCursor` already exists, so not breaking). No other phase owns it; if the owner declines, it stays an open pre-production obligation recorded in the P5 record. **Owner decision required before P5.0** |
 
 ## 15. Legacy context (background only — not a requirement)
 

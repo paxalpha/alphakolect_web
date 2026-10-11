@@ -740,9 +740,26 @@ signature changes for this (each is a single statement that does not commit by i
   invitation and setup token, as specified in §8.1. Identity flows (pattern B) take the actor from the identity the flow
   has just verified (password, token or session). Denials follow §8.2a rule 5. The §8.1 inventory is the authoritative
   list of which events use which pattern.
-- Merchant audit reads: through RLS (own tenant only), requiring `merchant.audit.read`. **[Open, O3 — proposal]**
-  which denial categories and fields are visible to the owner and to staff holding the permission; nothing beyond the
-  event's allowlisted summary is ever exposed.
+- Merchant audit reads: through the designated definer function `audit.read_merchant_events` (#33), requiring
+  `merchant.audit.read`, with tenant isolation enforced **inside the function** as specified below — not by RLS.
+  **[Open, O3 — proposal]** which denial categories and fields are visible to the owner and to staff holding the
+  permission; nothing beyond the event's allowlisted summary is ever exposed.
+- **Merchant-scoped definer reads never rely on RLS (R19).** [Fact] No table uses `FORCE ROW LEVEL SECURITY` and the
+  table owner (`alphakolect_migrator`) is exempt from RLS (RESTRUCTURING_MAP, P1 judgement calls); `SECURITY DEFINER`
+  functions run as that owner, so **inside them RLS filters nothing**. Every merchant-scoped definer read therefore:
+  1. derives the merchant **only** from the session, by re-running `identity.validate_session` inside the function —
+     it has no merchant parameter at all, and no caller-supplied id (event id, cursor, actor filter) can name a
+     merchant;
+  2. re-checks the actor's current permission under the §7.2 footprint locks;
+  3. applies an explicit `merchant_id = <session merchant>` predicate to **every** query on a tenant table, including
+     cursor-continuation queries;
+  4. leaves RLS enabled and the existing tenant-boundary protections untouched (RLS still guards every non-definer
+     path — it is the backstop, not the mechanism here);
+  5. writes its one read event and returns only the authorized rows in the same transaction (§8.2a rule 7).
+  The same rule already governs P4's definer functions (ADR-15 "Function and transaction contracts"); P5 extends it to
+  every new definer read, and the lock-order guard's parser adds a check: a query on a tenant table inside a definer
+  function without a `merchant_id` predicate bound to the session-derived merchant fails the guard (platform reads,
+  which are cross-tenant by design, are exempt by classification and are permission-gated and audited instead).
 - Platform audit reads: a definer function checking `platform.audit.read` (under the §7.5 lock), applying bounds and a
   cursor on `(occurred_at, id)`, and writing its own read event in the same transaction. Tenant RLS is not relaxed.
   **[Open, O4 — proposal]** at most 100 events per page and a required time window of at most 31 days, to be validated
@@ -866,7 +883,11 @@ parallel only after the resolver, registry and audit interfaces are frozen.
   refused and writes nothing; **sensitive reads (R16, R18)** — each of the four designated functions writes exactly one
   event per successful call, in the same transaction as the rows it returns, the repository writes none, and an injected
   failure of that insert returns no rows; a scratch second function that writes a sensitive-read pair (e.g.
-  `platform.merchant_list_read`) fails the writer guard.
+  `platform.merchant_list_read`) fails the writer guard; **merchant isolation of definer reads (R19)** — calling
+  `audit.read_merchant_events` **directly** with a valid session of merchant A returns none of merchant B's events,
+  including with a forged cursor positioned on one of B's events and an actor filter naming one of B's members; the same
+  attempts through `GET /v1/merchant/audit-events` with forged ids and cursors; both run with the real function owner
+  and as `alphakolect_app`, so they exercise the RLS exemption that makes the explicit predicate necessary.
 - **Done when:** no hard-coded `owner`/`super_admin` authority remains outside the resolver (SQL guard), and API and
   database agree in the matrix.
 

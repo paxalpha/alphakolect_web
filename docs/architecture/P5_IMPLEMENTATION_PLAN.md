@@ -94,8 +94,16 @@ session for privileged operations; **D12** privileged writes re-check current au
 7. **Declared authorization.** Every endpoint declares exactly one class (§5); the router refuses to start on a
    missing or invalid declaration; nothing defaults to public. **The authorization middleware fails closed:** any error
    while resolving or evaluating authority ends the request with an error, never with `next()` (the legacy
-   subscription middleware failed open on error — CURRENT_SYSTEM_INVENTORY / ARCHITECTURE_RECONNAISSANCE §5.2); a test
-   injects a resolver failure and asserts no handler runs.
+   subscription middleware failed open on error — CURRENT_SYSTEM_INVENTORY / ARCHITECTURE_RECONNAISSANCE §5.2).
+   **Failure versus denial:** an error while resolving or evaluating authority (database or network failure, an
+   unexpected resolver result) is an **operational error**: the request ends with **500 `INTERNAL_ERROR`** through the
+   existing error handler ([Fact] unknown errors are logged server-side and answered `500 INTERNAL_ERROR` with nothing
+   revealed — `apps/api/src/platform/http/error-handler.ts`), is logged with the request id and counted
+   (`authorization_resolution_failure`), and is **never** reported as 401/403 and **never** recorded as a denial
+   (`authz.denied` is written only for a resolved refusal, §8.2a rules 5–6). Genuine outcomes keep their codes: an
+   invalid or absent session 401, a resolved missing permission 403, another tenant's resource 404. Tests inject a
+   resolver failure and assert: no handler runs, the status is 500 with `INTERNAL_ERROR`, the metric and error log are
+   emitted, and no denial event is written.
 8. **Unchanged response semantics:** 401 invalid/absent session; 403 `WRONG_AUDIENCE`; 404 for another tenant's
    resource (and for a forged id); 403 `FORBIDDEN` for a known own-tenant resource without permission (T15).
 9. **Tenant RLS stays in force** after every permission check; the scoped repository is unchanged.

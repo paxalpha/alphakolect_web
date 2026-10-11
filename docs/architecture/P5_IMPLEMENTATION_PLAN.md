@@ -141,7 +141,8 @@ Classes (exactly one per endpoint, declared in the contract):
 | Effective permissions added to `GET /v1/merchant/membership` (new response field) | self | P5.4 |
 | Effective permissions added to `GET /v1/auth/session` (new response field; platform sessions — the platform console's navigation is built from server-provided permissions, RESTRUCTURING_MAP §2.4; empty for agents and enrolment-only sessions) | self | P5.7 |
 | `GET /v1/merchant/audit-events` (cursor-paginated) | `merchant.audit.read` | P5.8 |
-| `GET /v1/platform/merchants`, `GET /v1/platform/merchants/{merchantId}/members` | `platform.merchants.read` | P5.7 |
+| `GET /v1/platform/merchants` (list merchants) | `platform.merchants.read` | P5.7 |
+| `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships) | `platform.merchants.read` | P5.7 |
 | Platform staff: create/deactivate, set grants (`/v1/platform/staff…`) | `platform.staff.manage` (super admin) | P5.7 |
 | `GET /v1/platform/audit-events` (cursor-paginated) | `platform.audit.read` | P5.8 |
 
@@ -535,7 +536,7 @@ best effort). Each writer site is resolved to the exact pair it writes — SQL i
 and pattern match the writer: `mutateAudited` only pattern-B atomic pairs; SQL inserts only pattern-A atomic pairs
 in their planned function, or sensitive-read pairs in their **designated read function**; `recordBestEffort` only
 best-effort pairs. A sensitive-read pair written from TypeScript, or from any SQL function other than its designated
-read function, is rejected. The coverage
+read function (§8.1, #33–#36), is rejected. The coverage
 guard below requires exactly one writer per atomic pair.
 
 **Writer-guard mutation tests (P5.8):** (1) a best-effort `recordBestEffort` call for `auth.signup`/failure and for
@@ -589,11 +590,18 @@ once per audience.
 
 **Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
 
-| # | Identifier | Outcome | Writer |
-|---|---|---|---|
-| 33 | `merchant.audit_read` *new* | success | its designated read function (SQL) — the only writer |
-| 34 | `platform.audit_read` *new* | success | its designated read function (SQL) — the only writer |
-| 35 | `platform.merchants_read` *new* | success | the platform merchant / membership read functions (SQL) — the only writers |
+| # | Operation (endpoint) | Identifier | Outcome | Designated function — the only writer |
+|---|---|---|---|---|
+| 33 | merchant audit read (`GET /v1/merchant/audit-events`) | `merchant.audit_read` *new* | success | `audit.read_merchant_events` |
+| 34 | platform audit read (`GET /v1/platform/audit-events`) | `platform.audit_read` *new* | success | `audit.read_platform_events` |
+| 35 | platform merchant list (`GET /v1/platform/merchants`) | `platform.merchant_list_read` *new* | success | `tenancy.platform_list_merchants` |
+| 36 | platform merchant memberships (`GET /v1/platform/merchants/{merchantId}/members`) | `platform.merchant_members_read` *new* | success | `tenancy.platform_list_merchant_members` |
+
+**One operation, one function, one identifier (R18).** Each sensitive-read operation has exactly one designated
+function (working names above, fixed in P5.0) and its own event identifier, so the single-writer rule applies to
+sensitive reads exactly as to atomic pairs: the writer guard maps each sensitive-read pair to that one function and
+rejects the pair written anywhere else. Each designated function writes exactly one event per successful call, in the
+same transaction as the rows it returns (§8.2a rule 7).
 
 **Best-effort pairs** (written by `recordBestEffort` only):
 
@@ -604,7 +612,7 @@ once per audience.
 | `merchant.profile_updated`, `merchant.branch_created`, `merchant.branch_updated`, `merchant.role_created`, `merchant.role_updated`, `merchant.role_permissions_set` *new* | denied, failure |
 | `merchant.member_assigned`, `merchant.member_deactivated`, `merchant.member_reactivated`, `merchant.invitation_issued`, `merchant.invitation_revoked` | denied, failure |
 | `platform.merchant_deactivated`, `platform.merchant_reactivated`, `platform.ownership_transferred`, `platform.staff_created` *new*, `platform.staff_deactivated` *new*, `platform.grants_set` *new* | denied, failure |
-| `merchant.audit_read`, `platform.audit_read`, `platform.merchants_read` *new* | denied |
+| `merchant.audit_read`, `platform.audit_read`, `platform.merchant_list_read`, `platform.merchant_members_read` *new* | denied |
 | `authz.denied` *new* — refusals by the router's policy middleware (§8.2a rule 6) | denied |
 
 The catalog holds exactly these pairs; each best-effort row above expands to one catalog entry per (identifier,
@@ -840,8 +848,10 @@ parallel only after the resolver, registry and audit interfaces are frozen.
   of §7.2, 50 runs each, no `40P01`; the §8.2a contract tests; **invitation-acceptance attribution** on both paths —
   the `auth.invitation_accepted` row names the invitation's identity, `NULL` audience, the new membership, the
   invitation's merchant and the invitation, and a call to `accept_invitation` with a different `p_identity_id` is
-  refused and writes nothing; **sensitive reads (R16)** — each read writes exactly one event in the same transaction as
-  the rows it returns, the repository writes none, and an injected failure of that insert returns no rows.
+  refused and writes nothing; **sensitive reads (R16, R18)** — each of the four designated functions writes exactly one
+  event per successful call, in the same transaction as the rows it returns, the repository writes none, and an injected
+  failure of that insert returns no rows; a scratch second function that writes a sensitive-read pair (e.g.
+  `platform.merchant_list_read`) fails the writer guard.
 - **Done when:** no hard-coded `owner`/`super_admin` authority remains outside the resolver (SQL guard), and API and
   database agree in the matrix.
 
@@ -864,8 +874,10 @@ parallel only after the resolver, registry and audit interfaces are frozen.
   role); `identity.set_platform_grants(session, membership, permissions[])` and platform staff create/deactivate
   functions (super admin; actor and target platform memberships locked in one sorted call, target
   `FOR NO KEY UPDATE`, §7.5).
-- **Contracts/code:** platform staff management endpoints; `GET /v1/platform/merchants`,
-  `GET /v1/platform/merchants/{id}/members` (closes P4 limitation 1); each read writes its audit row first.
+- **Contracts/code:** platform staff management endpoints; `GET /v1/platform/merchants` through
+  `tenancy.platform_list_merchants` and `GET /v1/platform/merchants/{id}/members` through
+  `tenancy.platform_list_merchant_members` (closes P4 limitation 1); each designated function writes its one read event
+  (#35, #36) in the transaction that returns the rows.
 - **Tests:** staff without grants: sign-in + MFA works, nothing else; one grant ⇒ exactly that; revoked grant ⇒ next
   request; lifecycle, transfer, staff management refused for staff even if a grant is attempted (reserved); super
   admin unchanged; MFA enrolment/verification unchanged for staff; reads audited, refused if the audit insert fails;

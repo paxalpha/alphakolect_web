@@ -1296,6 +1296,8 @@ owner's answer; the decision-maker; the date; the source (for the owner's answer
 plan sections and contracts it affects; and the commit that applies it to this plan. Only then does the item's row
 below change to **DECIDED**, citing that entry. The positions agreed "unless the owner objects" (D2, D3, D6–D8,
 D10–D12, §3) are recorded the same way — as the owner's explicit confirmation, or as "no objection" with its date.
+Questionnaire mapping: A1 → O7; A2 → O3; B1 → O8(a); B2 → O8(b); B3 → the owner's preference for O4 (decided at P5.8
+step 2 on the spike's evidence); C1 → O9; Part D → the D9 policy (§8.6); E1–E8 → D2, D3, D6, D7, D8, D10, D11, D12.
 
 | # | Item | Proposed position |
 |---|---|---|

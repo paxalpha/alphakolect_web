@@ -197,6 +197,18 @@ describe('same tenant, wrong kind (T9)', () => {
   const merchantEndpoints = TENANT_ENDPOINTS.filter(([, e]) => e.audience === 'merchant');
   const forbids = (e: EndpointContract) => /^FORBIDDEN/.test(e.responses[403]?.description ?? '');
 
+  // ADR-15 T5/T7: a staff branch restriction is stored and re-read per request, but no branch-scoped data exists in
+  // P4, so nothing reads it yet. That is safe only while staff and agents can reach their own membership and nothing
+  // else. Any endpoint that opens to them fails here until its branch scope is decided (and tested) — P5 policies.
+  it('staff and agents reach only their own membership — nothing branch-scoped is open to them yet', () => {
+    expect(merchantEndpoints.filter(([, e]) => !forbids(e)).map(([id]) => id)).toEqual([
+      'getCurrentMembership',
+    ]);
+    expect(TENANT_ENDPOINTS.filter(([, e]) => e.audience === 'agent').map(([id]) => id)).toEqual([
+      'getAgentMembership',
+    ]);
+  });
+
   it.each(merchantEndpoints)(
     '%s: staff get 403 where the contract documents FORBIDDEN, success otherwise',
     async (id, e) => {

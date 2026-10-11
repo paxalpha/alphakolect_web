@@ -904,7 +904,8 @@ independent of the permission catalog); it is listed with them so it is complete
   `platform/tenant.ts` (`TenantContext.permissions`; `requireOwner` kept until P5.4).
 - **Tests:** owner = all merchant permissions; super admin = all platform; staff = role set; archived role ⇒ none;
   deactivated membership/merchant ⇒ 401; platform staff = grants only; one grant does not leak to another membership
-  of the same identity; revoke ⇒ next request; two-connection race (revoke vs write) behaves per §7.2; forged session
+  of the same identity; revoke ⇒ next request; two-connection race between `assert_authority` followed by a write and the revocations that
+  exist at this point (membership deactivation; role archive), in both orders, behaves per §7.2; forged session
   ids refused.
 - **Done when:** resolution is current, complete and isolated.
 
@@ -967,18 +968,35 @@ independent of the permission catalog); it is listed with them so it is complete
   over every definer); **mixed-version test** — the previous commit's direct-write repository code fails with
   `insufficient_privilege` against the migrated database, for every former direct write; **lock-order guard** (§7.2)
   green for every planned footprint, with its baseline control, its five mutation self-tests and its three
-  fail-closed self-tests (`EXECUTE`, unqualified call, unclassified reachable function); two-connection tests (a)–(k)
-  of §7.2, 50 runs each, no `40P01`; the §8.2a contract tests; **invitation-acceptance attribution** on both paths —
+  fail-closed self-tests (`EXECUTE`, unqualified call, unclassified reachable function); two-connection tests (a),
+  (b), (d) and (f)–(j) of §7.2, 50 runs each, no `40P01` ((c) and (k) need the role-permission writer and run in
+  P5.6; (e) needs platform grants and reads and runs in P5.7); the §8.2a contract tests; **invitation-acceptance attribution** on both paths —
   the `auth.invitation_accepted` row names the invitation's identity, `NULL` audience, the new membership, the
   invitation's merchant and the invitation, and a call to `accept_invitation` with a different `p_identity_id` is
-  refused and writes nothing; **sensitive reads (R16, R18)** — each of the four designated functions writes exactly one
-  event per successful call, in the same transaction as the rows it returns, the repository writes none, and an injected
-  failure of that insert returns no rows; a scratch second function that writes a sensitive-read pair (e.g.
-  `platform.merchant_list_read`) fails the writer guard; **merchant isolation of definer reads (R19)** — calling
-  `audit.read_merchant_events` **directly** with a valid session of merchant A returns none of merchant B's events,
-  including with a forged cursor positioned on one of B's events and an actor filter naming one of B's members; the same
-  attempts through `GET /v1/merchant/audit-events` with forged ids and cursors; both run with the real function owner
-  and as `alphakolect_app`, so they exercise the RLS exemption that makes the explicit predicate necessary.
+  refused and writes nothing. The sensitive-read tests (R16, R18, R19) run where the read functions are built — P5.7
+  (#35, #36) and P5.8 (#33, #34).
+- **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
+  (§11), so the P5.5 tests that need a staff member holding a permission (delegation ceiling, reciprocal operations,
+  revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
+  P5.1 constraint tests do. Fixtures never use an app-reachable path, and P5.6 repeats the ceiling tests with grants set
+  through `set_role_permissions`.
+- **Guard scope grows with the packages.** The lock-order guard checks every planned-footprint entry whose function
+  exists; each entry names the package that introduces it (P5.6: `set_role_permissions`; P5.7: platform staff, grants
+  and the two platform reads; P5.8: the two audit reads). An entry whose package is complete and whose function is
+  missing fails the guard, so no entry can be silently dropped.
+- **SQL authority guard — what it forbids and what it allows, enumerated.** It forbids **actor authority** decided by
+  a literal: a test of the calling session's membership kind or platform role (today `v.kind = 'owner'` in
+  `list_members`, `update_membership`, `issue_invitation`, `revoke_invitation` and `pm.role = 'super_admin'` joined
+  to the session in `set_merchant_status`, `transfer_ownership` — [Fact] `20261011000200:31,62`,
+  `20261012000100:195,262`, `20261009000100:104`, `20261011000300:40`); outside the resolver, authority comes only
+  from the resolver's permission set. It allows, by an explicit list in the guard, the **data rules** that name a kind
+  or role of a *target* or of stored rows, which are not authority: owner protection (`v_target.kind = 'owner'`,
+  `20261011000200:76`); the one-owner invariant (`20261011000100`); transfer's demotion and promotion
+  (`20261011000300:54,58,98`); sign-up creating the owner (`20261003000200:36`); audience eligibility by kind
+  (`mm.kind IN ('owner','staff')` / `'agent'`); and `identity.bootstrap_super_admin` (creates the super admin,
+  `20261003000500:51,62`). **Until P5.7** it also allows the platform sign-in eligibility literal
+  `pm.role = 'super_admin'` in `identity.eligible_memberships` (`20261009000200:57`), which P5.7 replaces; from P5.7
+  that entry is removed and the guard fails if the literal remains. Any literal not on the list fails the guard.
 - **Done when:** no hard-coded `owner`/`super_admin` authority remains outside the resolver (SQL guard), and API and
   database agree in the matrix.
 
@@ -991,7 +1009,8 @@ independent of the permission catalog); it is listed with them so it is complete
   responses include their permission set; archived roles keep their set (inert, D6).
 - **Tests:** owner sets permissions; staff with any permission set cannot (reserved); unknown/platform/reserved
   permission refused by the database; assigning or inviting into a role above the ceiling refused; concurrent edit vs
-  assignment per §7.2; cross-tenant role ids ⇒ 404; every change audited atomically with old/new permission lists
+  assignment per §7.2 — two-connection tests **(c)** and **(k)**, 50 runs each, no `40P01`; the P5.5 delegation-ceiling
+  tests repeated with grants set through `set_role_permissions` instead of fixtures; cross-tenant role ids ⇒ 404; every change audited atomically with old/new permission lists
   (allowlisted).
 - **Done when:** role management cannot escalate.
 
@@ -1009,8 +1028,11 @@ independent of the permission catalog); it is listed with them so it is complete
   request; lifecycle, transfer, staff management refused for staff even if a grant is attempted (reserved); super
   admin unchanged; MFA enrolment/verification unchanged for staff; reads audited, refused if the audit insert fails;
   **two-connection races in both orders** (revoke grant vs protected operation; deactivate staff vs protected
-  operation) with the outcomes stated in §7.5; a grant to one platform membership never authorizes another membership
-  of the same identity.
+  operation) with the outcomes stated in §7.5, including two-connection test **(e)** of §7.2 (50 runs, no `40P01`); a
+  grant to one platform membership never authorizes another membership of the same identity; **sensitive reads #35 and
+  #36 (R16, R18)** — each designated function writes exactly one event per successful call, in the same transaction as
+  the rows it returns, the repository writes none, and an injected failure of that insert returns no rows; a scratch
+  second function that writes `platform.merchant_list_read` fails the writer guard.
 - **Done when:** platform staff have exactly their grants.
 
 ### P5.8 — Audit module
@@ -1019,7 +1041,13 @@ independent of the permission catalog); it is listed with them so it is complete
   #34); indexes; D9 documentation (§8.6). The audit foundation is P5.3a.
 - **Tests:** the coverage guard of §8.1 now complete in both directions (every catalog pair, including #33/#34, has
   its writer and tests); secrets never stored (leak sweep extended to the audit-read journeys); append-only unchanged;
-  audit reads tenant-isolated, bounded, themselves audited; **pagination (R21)** — first page,
+  audit reads tenant-isolated, bounded, themselves audited — **sensitive reads #33 and #34 (R16, R18)** with the same
+  single-writer, same-transaction and injected-failure tests as #35/#36; **merchant isolation of definer reads (R19)** —
+  calling `audit.read_merchant_events` **directly** with a valid session of merchant A returns none of merchant B's
+  events, including with a forged cursor positioned on one of B's events and an actor filter naming one of B's
+  members; the same attempts through `GET /v1/merchant/audit-events` with forged ids and cursors; both run with the
+  real function owner and as `alphakolect_app`, so they exercise the RLS exemption that makes the explicit predicate
+  necessary; **pagination (R21)** — first page,
   continuation pages, a group of same-timestamp events split across a page boundary (no row lost or repeated), actor
   filtering, merchant filtering (platform), an empty window, a window over 31 days refused, and a cursor reused with a
   different window or filter refused with `400 INVALID_CURSOR`; the §8.5 query-plan validation recorded on

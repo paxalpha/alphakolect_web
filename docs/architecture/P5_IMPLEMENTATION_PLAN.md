@@ -357,6 +357,17 @@ constructs, and anything outside that set **fails the guard** rather than being 
   | **T4 sensitive read** | one call of a designated sensitive-read function | that function's planned footprint |
   | **T5 best-effort audit** | exactly one `recordBestEffort` insert, nothing else | none (a single insert into `audit.audit_events`, which L2 makes non-waiting) |
 
+  **Classification uses the complete call graph (R22).** A transaction's class is decided on its **complete,
+  statically resolved call graph and database effects** — every function reachable from its statements (recursively,
+  through the definer functions it calls, their nested calls and the triggers their writes fire) and every write,
+  lock and insert those perform — never on the visible TypeScript body alone. A **T1** transaction is accepted only if
+  every reachable write is covered by its operation's approved planned footprint; a **T2** transaction only if every
+  definer call belongs to the approved identity flow, every write reachable from those calls is in that flow's
+  footprint, and its only direct table write is the matching approved `mutateAudited` insert; **T3** only if nothing
+  reachable writes or locks; **T4** only if the reachable effects are exactly the designated read function's footprint
+  and its one read event. A reachable function whose behaviour the guard cannot resolve (outside the analysable set
+  above) fails the guard; it is never assumed safe.
+
   **Direct-access exceptions, exhaustively:** a TypeScript transaction may write a table directly only to insert into
   `audit.audit_events`, and only through `mutateAudited` (T2, approved pattern-B pair) or `recordBestEffort` (T5,
   approved best-effort pair). Any other direct write — to a tenancy, identity or ledger table, or to the audit table by
@@ -390,7 +401,10 @@ calls a non-allowlisted function, a `CHECK` that does, a cascading foreign key, 
 class self-tests (R17):** a valid pattern-B transaction (identity call + `mutateAudited` with an approved pair)
 **passes**; a transaction with a direct `UPDATE` of `tenancy.branches` fails; `mutateAudited` with a pattern-A pair
 fails; a T3 transaction with a hidden `UPDATE` or `FOR …` clause fails; a T5 transaction with a second statement fails;
-a TypeScript insert of a sensitive-read pair fails.
+a TypeScript insert of a sensitive-read pair fails; **a T1 and a T2 transaction whose TypeScript body is valid but
+whose called definer function contains a nested call to a scratch function performing an unapproved write** (e.g. an
+`UPDATE` of `tenancy.roles` outside the footprint) **fail** (R22). This differs from mutation (b) above, which injects a
+lock-order *inversion* through a nested call; this one injects an unapproved *write*.
 
 A permission revoked concurrently is either committed before the write's re-check (write refused) or waits until the
 write commits (the write was authorized when it happened).

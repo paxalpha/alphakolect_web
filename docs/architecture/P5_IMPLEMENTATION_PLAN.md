@@ -579,7 +579,7 @@ best-effort pairs. A sensitive-read pair written from TypeScript, or from any SQ
 read function (§8.1, #33–#36), is rejected. The coverage
 guard below requires exactly one writer per atomic pair.
 
-**Writer-guard mutation tests (P5.8):** (1) a best-effort `recordBestEffort` call for `auth.signup`/failure and for
+**Writer-guard mutation tests (P5.3a):** (1) a best-effort `recordBestEffort` call for `auth.signup`/failure and for
 `merchant.member_assigned`/denied — identifiers whose success is atomic — is **accepted**; (2) an atomic success
 routed through the wrong writer (`auth.signup`/success via `recordBestEffort`; `merchant.member_assigned`/success
 written from TypeScript; `auth.password_change`/success written in SQL) is **rejected**; (3) an attempt to record an
@@ -658,7 +658,7 @@ same transaction as the rows it returns (§8.2a rule 7).
 The catalog holds exactly these pairs; each best-effort row above expands to one catalog entry per (identifier,
 outcome).
 
-**Coverage guard ([Plan], P5.8).** The guard compares the catalog with the inventory above **in both directions**:
+**Coverage guard ([Plan], built in P5.3a; each later package adds its pairs).** The guard compares the catalog with the inventory above **in both directions**:
 a catalog pair missing from the inventory, or an inventory pair missing from the catalog, fails it; so does a pair
 whose class differs between the two. Every writer found in the code (each SQL `INSERT INTO audit.audit_events` literal
 and each `mutateAudited` / `recordBestEffort` call site) must map to an inventory pair of its class.
@@ -720,7 +720,8 @@ For pattern-B operations (identity flows, §8.4) the same rules apply at reposit
 contains the definer call and `mutateAudited`; a returned refusal ends that transaction without a write, and the
 denial is recorded afterwards by rule 5.
 
-**Tests (P5.5, P5.8):** for each privileged function — success commits change + audit row; refusal returns its outcome
+**Tests (entry-point behaviour in P5.3a; each function's tests in the package that introduces it — P5.5, P5.6, P5.7,
+P5.8):** for each privileged function — success commits change + audit row; refusal returns its outcome
 with no row changed and no audit row in that transaction; injected failure of the success audit insert rolls back the
 change; injected failure of the denial's best-effort insert leaves the HTTP status unchanged; sensitive read with
 failing audit insert returns no data; **an injected unexpected database error (a connection failure, or an exception
@@ -857,8 +858,17 @@ as CI.
 
 ## 10. Work packages
 
-Dependencies: P5.0 → P5.1 → (P5.2 ∥ P5.3) → P5.4 → P5.5 → P5.6 → (P5.7 ∥ P5.8) → P5.9 → P5.10. P5.7 and P5.8 run in
-parallel only after the resolver, registry and audit interfaces are frozen.
+Dependencies: P5.0 → P5.1 → (P5.2 ∥ P5.3 ∥ P5.3a) → P5.4 → P5.5 → P5.6 → (P5.7 ∥ P5.8) → P5.9 → P5.10. P5.7 and
+P5.8 run in parallel only after the resolver, registry and audit interfaces are frozen.
+
+**Why the audit foundation (P5.3a) comes before P5.4 (placement, rev 10).** Everything that writes or checks audit
+events after it depends on it: the policy middleware (P5.4) records its refusals with `recordBestEffort` (§8.2a rule
+6) and replaces the `ownerOrDenied` helpers whose `await audit.record` is the A7 defect; the privileged functions of
+P5.5–P5.7 write pattern-A pairs that must already be in the catalog; and the lock-order guard of P5.5 admits only
+`mutateAudited` and `recordBestEffort` as TypeScript audit writers (§7.2 transaction classes), so the P3 identity
+flows must already be pattern B when it is switched on. P5.3a has no dependency on P5.1–P5.3 (the event catalog is
+independent of the permission catalog); it is listed with them so it is complete before P5.4. P5.8 keeps only the audit
+**reads**.
 
 ### P5.0 — Decisions freeze and ADR-16
 
@@ -908,11 +918,36 @@ parallel only after the resolver, registry and audit interfaces are frozen.
   oasdiff non-breaking.
 - **Done when:** declarations are complete and machine-checked.
 
+### P5.3a — Audit foundation (moved ahead of P5.4 in rev 10)
+
+- **Work:** the event catalog with per-pair class, writer pattern and summary allowlist, and its strict validation
+  (§8.1); `recordBestEffort` and the conversion of every A7 refusal path (§8.3); `mutateAudited` and the pattern-B
+  conversion of every identity flow (§8.4) — except `complete_account_setup`'s re-specification, which needs the
+  §7.2 footprint and `admit_invitation_locked` and is done in P5.5; the coverage and writer guards (§8.1).
+- **Transitional writers, enumerated.** At this point the tenancy and platform pairs that §8.1 assigns to pattern A
+  (#14 on the invitation-link path, #16–#20, #22–#29) are still written by P4's code — `recordWithin(tx)` in the same
+  transaction as the definer call or direct write ([Fact] already atomic, §2; e.g. `merchant-settings.ts:79,114,140`,
+  `memberships.ts:112`, `invitations.ts:94,142`, `merchant-lifecycle.ts:104,163`) — because their pattern-A functions arrive in P5.5. The coverage guard
+  accepts exactly these pairs from exactly those call sites through a **closed transitional list** in the guard; P5.5
+  empties the list and deletes it, and from then on the guard fails if it exists. No other pair may use it. New pairs
+  (#21, #30–#36, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
+  that writer and its tests.
+- **Tests:** every row of the §8.1 entry-point table for each entry point (unknown identifier, known event of another
+  class — atomic and sensitive-read events through `recordBestEffort` — invalid outcome, disallowed and over-length
+  summary field, storage failure), asserting the stored rows, the metric and the HTTP status of the request in hand;
+  per atomic identity pair the co-commit and injected-rollback test of the coverage guard; the A7 paths keep their
+  status when the best-effort insert fails; the writer-guard mutation tests (§8.1); the coverage guard in both
+  directions over the pairs that exist at this point; secrets never stored (leak sweep); P4 member/invitation atomicity
+  still holds.
+- **Done when:** every audit writer in the code is one of the three entry points (or on the transitional list), and
+  every identity security change commits with its event.
+
 ### P5.4 — Policy middleware; replace `requireOwner`
 
 - **Code:** new `apps/api/src/platform/authorization.ts` (decision type, `authorize`); router mounts it from the
   registry; the 13 `requireOwner` call sites and both `ownerOrDenied` helpers are removed in favour of the declared
-  permission; `GET /v1/merchant/membership` returns effective permissions.
+  permission; `GET /v1/merchant/membership` returns effective permissions. Refusals by the middleware are recorded
+  as `authz.denied` through `recordBestEffort` (P5.3a; §8.2a rule 6); the catalog gains that pair here.
 - **Equivalence oracle:** with owners holding all merchant permissions and no staff grants, the P4 isolation matrix
   must produce identical results before and after.
 - **Tests:** P4 matrix unchanged; source guard: no `kind === 'owner'` / `requireOwner` outside the authorization
@@ -980,15 +1015,11 @@ parallel only after the resolver, registry and audit interfaces are frozen.
 
 ### P5.8 — Audit module
 
-- **Work:** event catalog + allowlists (§8.1); `recordBestEffort` and the A7 inventory (§8.3); atomic identity events
-  (§8.4); query-parameter validation; merchant and platform audit reads (§8.5); indexes; D9 documentation (§8.6).
-- **Tests:** every row of the §8.1 table for each entry point — unknown identifier, known event of another class
-  (atomic and sensitive-read events through `recordBestEffort`), invalid outcome, disallowed and over-length summary
-  field, storage failure — asserting the stored rows, the metric, and the HTTP status of the request in hand; secrets
-  never stored (leak sweep extended to every new journey); **the coverage guard of §8.1** (one writer per atomic pair;
-  per pair a co-commit test asserting actor, merchant, target and request id, and a rollback test via the injected
-  insert failure); the double-recording guards (pattern A/B literals); P4 member/invitation atomicity still holds;
-  audit reads tenant-isolated, bounded, themselves audited; append-only unchanged; **pagination (R21)** — first page,
+- **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
+  #34); indexes; D9 documentation (§8.6). The audit foundation is P5.3a.
+- **Tests:** the coverage guard of §8.1 now complete in both directions (every catalog pair, including #33/#34, has
+  its writer and tests); secrets never stored (leak sweep extended to the audit-read journeys); append-only unchanged;
+  audit reads tenant-isolated, bounded, themselves audited; **pagination (R21)** — first page,
   continuation pages, a group of same-timestamp events split across a page boundary (no row lost or repeated), actor
   filtering, merchant filtering (platform), an empty window, a window over 31 days refused, and a cursor reused with a
   different window or filter refused with `400 INVALID_CURSOR`; the §8.5 query-plan validation recorded on
@@ -1020,16 +1051,20 @@ parallel only after the resolver, registry and audit interfaces are frozen.
 
 1. **P5.1–P5.2 (expand):** additive tables and functions; the running app ignores them. Owners/super admins keep
    fixed sets; no grant rows exist ⇒ **no access change**.
-2. **P5.3–P5.4 (switch, API):** declarations + middleware; equivalence proven by the unchanged P4 matrix. An
+2. **P5.3a (audit foundation):** identity security changes and their events now commit together. The one visible
+   change is in the fail-closed direction: if an identity event cannot be stored, the change is rolled back and the
+   request fails (500) instead of succeeding without its record; refusals keep their status codes whatever happens to
+   their best-effort event (A7 fixed). No access changes.
+3. **P5.3–P5.4 (switch, API):** declarations + middleware; equivalence proven by the unchanged P4 matrix. An
    undeclared route stops the app from starting — the failure mode is unavailability, never openness.
-3. **P5.5 (switch, DB — the enforcement boundary):** functions replaced with identical signatures; owner and
+4. **P5.5 (switch, DB — the enforcement boundary):** functions replaced with identical signatures; owner and
    super-admin authority is preserved by their fixed sets. One migration creates the branch/role/profile writers and
    revokes the direct write grants together (§7.2). An instance of the previous version can only be denied, never
    bypass; the mixed-version test proves it. No staff or platform-staff permission exists before this point (grant
    writers arrive in P5.6/P5.7).
-4. **P5.6–P5.8:** new capabilities (role grants, platform staff, audit reads) start empty — they grant nothing until
+5. **P5.6–P5.8:** new capabilities (role grants, platform staff, audit reads) start empty — they grant nothing until
    an owner or super admin acts.
-5. **Rollback:** forward-only. Because no step widens access, a defective step is fixed forward; the worst outcome is
+6. **Rollback:** forward-only. Because no step widens access, a defective step is fixed forward; the worst outcome is
    over-denial. Each migration is tested from zero and on top of the previous state.
 
 ## 12. Approval sequence

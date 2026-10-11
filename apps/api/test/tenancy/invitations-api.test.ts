@@ -185,6 +185,39 @@ describe('an existing account (T11)', () => {
   });
 });
 
+describe('a password reset is not an acceptance (T11)', () => {
+  it('an invited account that resets its password has not joined — it still accepts explicitly', async () => {
+    const b = await business('Inviting Ltd');
+    const person = await existingAccount();
+    expect((await invite(b.owner.token, { email: person.email, kind: 'agent' })).status).toBe(201);
+
+    await request(app)
+      .post('/v1/auth/password/forgot')
+      .set('X-Forwarded-For', clientIp())
+      .send({ email: person.email });
+    const reset = await request(app)
+      .post('/v1/auth/password/reset')
+      .set('X-Forwarded-For', clientIp())
+      .send({
+        token: await linkToken(person.email, 'password_reset', 'reset-password'),
+        password: NEW_PASSWORD,
+      });
+    expect(reset.status).toBe(204);
+
+    // One membership only (the account's own business): no selection step, and not a member of the inviter.
+    const signin = await login(person.email, NEW_PASSWORD);
+    expect(signin.status).toBe(200);
+    expect(signin.body.session.merchantId).not.toBe(b.merchantId);
+
+    const accepted = await acceptRequest({
+      token: await acceptLink(person.email),
+      email: person.email,
+      password: NEW_PASSWORD,
+    });
+    expect(accepted.status).toBe(204);
+  });
+});
+
 describe('the owner’s side', () => {
   it('the answer is the same whether or not the email has an account (D12)', async () => {
     const b = await business();

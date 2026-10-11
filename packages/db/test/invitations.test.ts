@@ -338,6 +338,36 @@ describe('accept_invitation (existing account, T11)', () => {
   });
 });
 
+describe('a password reset is not an acceptance (T11)', () => {
+  it('resetting the password of an invited account creates no membership; explicit acceptance still works', async () => {
+    const person = await account();
+    const r = await issue(A.ownerSession, person.email, 'agent');
+    expect(r.delivery).toBe('accept');
+
+    const reset = hash();
+    await app.query(`SELECT identity.issue_one_time_token($1, 'password_reset', $2, 1800, NULL)`, [
+      person.identityId,
+      reset,
+    ]);
+    expect((await app.query(`SELECT identity.reset_password($1, $2) AS id`, [reset, ARGON])).rows[0].id).toBe(
+      person.identityId,
+    );
+    expect(await membershipOf(A.merchantId, person.identityId)).toBeNull();
+    expect(await invitation(r.invitation_id!)).toMatchObject({ accepted_at: null, revoked_at: null });
+
+    // An account with a password can never use account setup (P3), so acceptance is the only way in.
+    const setup = hash();
+    await expectSqlState(
+      app.query(`SELECT identity.issue_one_time_token($1, 'account_setup', $2, 3600, NULL)`, [
+        person.identityId,
+        setup,
+      ]),
+      SQLSTATE.checkViolation,
+    );
+    expect((await accept(r.token, person.identityId)).outcome).toBe('ok');
+  });
+});
+
 describe('complete_account_setup admits the new identity’s invitations (T10)', () => {
   const setup = (tokenHash: string) =>
     app

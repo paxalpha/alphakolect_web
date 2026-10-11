@@ -272,29 +272,29 @@ describe('passwords (§3.2, D5, D15)', () => {
 });
 
 describe('narrow reads', () => {
-  it('login_candidate returns what login needs for the audience, case-insensitively', async () => {
+  it('login_identity returns credentials only, case-insensitively — no membership (P4.2)', async () => {
     const s = await signup();
-    const { rows } = await app.query(`SELECT * FROM identity.login_candidate($1, 'merchant')`, [
+    const { rows, fields } = await app.query(`SELECT * FROM identity.login_identity($1)`, [
       s.email.toUpperCase(),
     ]);
-    expect(rows[0]).toMatchObject({
+    expect(fields.map((f) => f.name)).toEqual([
+      'identity_id',
+      'identity_status',
+      'email_verified',
+      'password_hash',
+      'mfa_enrolled',
+    ]);
+    expect(rows[0]).toEqual({
       identity_id: s.identity_id,
       identity_status: 'active',
       email_verified: false,
       password_hash: ARGON('initial'),
-      membership_kind: 'owner',
-      membership_status: 'active',
       mfa_enrolled: false,
     });
   });
 
-  it('returns no membership for an audience the identity does not belong to, and no row for unknown emails', async () => {
-    const s = await signup();
-    const platform = await app.query(`SELECT * FROM identity.login_candidate($1, 'platform')`, [s.email]);
-    expect(platform.rows[0]).toMatchObject({ identity_id: s.identity_id, membership_id: null });
-    const unknown = await app.query(
-      `SELECT * FROM identity.login_candidate('nobody@example.test', 'merchant')`,
-    );
+  it('login_identity returns no row for an unknown email', async () => {
+    const unknown = await app.query(`SELECT * FROM identity.login_identity('nobody@example.test')`);
     expect(unknown.rowCount).toBe(0);
   });
 

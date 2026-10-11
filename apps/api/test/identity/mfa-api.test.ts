@@ -1,11 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import {
-  AUTH_COOKIES,
-  CSRF_HEADER,
-  LoginResponse,
-  TotpEnrolled,
-  TotpEnrollment,
-} from '@alphakolect/contracts';
+import { AUTH_COOKIES, CSRF_HEADER, MfaVerified, TotpEnrolled, TotpEnrollment } from '@alphakolect/contracts';
 import request from 'supertest';
 import { afterAll, describe, expect, inject, it, vi } from 'vitest';
 import { bootstrapSuperAdmin } from '../../src/modules/identity/bootstrap.js';
@@ -167,7 +161,7 @@ describe('login second step (exit criterion 7)', () => {
     const code = totpCode(admin.secret, totpStep() + 1); // the enrolment code used the current step
     const res = await verify(await challenge(admin.address), { code });
     expect(res.status).toBe(200);
-    expect(LoginResponse.parse(res.body)).toMatchObject({
+    expect(MfaVerified.parse(res.body)).toMatchObject({
       status: 'authenticated',
       session: { scope: 'full' },
     });

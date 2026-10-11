@@ -27,6 +27,7 @@ const MODULE_SCHEMAS = [
 const TABLES = [
   'audit.audit_events',
   'identity.identities',
+  'identity.membership_selection_challenges',
   'identity.mfa_challenges',
   'identity.one_time_tokens',
   'identity.platform_memberships',
@@ -39,8 +40,11 @@ const TABLES = [
   'ledger.journal_entries',
   'ledger.journal_lines',
   'ledger.ledgers',
+  'tenancy.branches',
+  'tenancy.invitations',
   'tenancy.merchant_memberships',
   'tenancy.merchants',
+  'tenancy.roles',
   'util.rate_limit_counters',
 ];
 

@@ -7,6 +7,10 @@ import {
   type PasswordEmailPending,
   type SetPasswordRequest,
   type LoginResponse,
+  type MembershipChoices,
+  type MembershipSelected,
+  type SelectMembershipRequest,
+  type MfaVerified,
   type ResendVerificationRequest,
   type Session,
   type SignupRequest,
@@ -27,12 +31,17 @@ import {
   clearMfaChallengeCookie,
   clearSessionCookies,
   MFA_CHALLENGE_COOKIE,
+  SELECTION_CHALLENGE_COOKIE,
+  clearSelectionChallengeCookie,
+  setSelectionChallengeCookie,
   setMfaChallengeCookie,
   setSessionCookies,
   type CookieSettings,
 } from './cookies.js';
 import type { IssuedTokens, RequestContext, SessionService } from './sessions.js';
-import { newOpaqueToken } from './tokens.js';
+import type { RateLimiter } from './rate-limits.js';
+import type { IdentityRepository } from './repository.js';
+import { hashReceivedToken, newOpaqueToken } from './tokens.js';
 
 // /v1/auth handlers (contracts: packages/contracts/src/endpoints/auth.ts). Bodies are already validated against
 // the contract; authentication, where declared, is already done. P3 audiences are web audiences, so every
@@ -74,6 +83,11 @@ const sessionOf = (auth: AuthContext): Session => ({
 export function authHandlers({ sessions, cookies, webOrigins }: AuthHandlerDeps) {
   const login: RequestHandler = async (req, res) => {
     const result = await sessions.login(req.body as LoginRequest, contextOf(req));
+    if (result.kind === 'membership_selection') {
+      // ADR-15 T4: no session yet — the challenge cookie lets the client fetch the choices and select one.
+      setSelectionChallengeCookie(res, cookies, result.challengeToken);
+      throw new AppError(409, 'MEMBERSHIP_SELECTION_REQUIRED', 'Choose which business to sign in to');
+    }
     if (result.kind === 'mfa_challenge') {
       setMfaChallengeCookie(res, cookies, result.challengeToken);
       const body: LoginResponse = { status: 'mfa_required' };
@@ -205,7 +219,7 @@ export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: Cookie
       const issued = await mfa.verifyChallenge(challenge, req.body as VerifyMfaRequest, contextOf(req));
       clearMfaChallengeCookie(res, cookies);
       setCookiesFor(res, cookies, issued.tokens, newOpaqueToken().raw);
-      const body: LoginResponse = { status: 'authenticated', session: issued.session };
+      const body: MfaVerified = { status: 'authenticated', session: issued.session };
       res.json(body);
     } catch (err) {
       // A wrong code keeps the challenge (up to 5 attempts); a dead challenge means signing in again.
@@ -216,4 +230,62 @@ export function mfaHandlers({ mfa, cookies }: { mfa: MfaService; cookies: Cookie
   };
 
   return { beginTotpEnrollment, confirmTotpEnrollment, verifyMfa };
+}
+
+/**
+ * The membership-selection step after a 409 login answer (ADR-15 T4). Driven by the HttpOnly selection challenge;
+ * nothing here is reachable without it. Choices are never cached and never sent with CORS headers.
+ */
+export function selectionHandlers({
+  identity,
+  sessions,
+  limiter,
+  cookies,
+}: {
+  identity: IdentityRepository;
+  sessions: SessionService;
+  limiter: RateLimiter;
+  cookies: CookieSettings;
+}) {
+  const challengeHash = async (req: Request) => {
+    const hash = hashReceivedToken(parseCookies(req.headers.cookie).get(SELECTION_CHALLENGE_COOKIE));
+    await limiter.enforce('membership_selection', req.ip ?? 'unknown', hash);
+    return hash;
+  };
+
+  const listLoginMemberships: RequestHandler = async (req, res) => {
+    const hash = await challengeHash(req);
+    const choices = hash ? await identity.selectionChoices(hash) : [];
+    // Fewer than two left (none, or all but one became ineligible) or no valid challenge: sign in again.
+    if (choices.length < 2) {
+      clearSelectionChallengeCookie(res, cookies);
+      throw new AppError(401, 'INVALID_OR_EXPIRED_TOKEN', 'This sign-in has expired. Please sign in again.');
+    }
+    const body: MembershipChoices = {
+      memberships: choices.map((c) => ({
+        selectionId: c.membership_id,
+        merchantName: c.merchant_name ?? '',
+        kind: c.kind as 'owner' | 'staff',
+      })),
+    };
+    res.set('Cache-Control', 'no-store').json(body);
+  };
+
+  // JSON only (express.json parses nothing else, so the body fails validation): a cross-site HTML form cannot
+  // post a selection — the same stance as login and MFA verify.
+  const selectLoginMembership: RequestHandler = async (req, res) => {
+    const hash = await challengeHash(req);
+    // The challenge is single use: the cookie goes whatever happens next.
+    clearSelectionChallengeCookie(res, cookies);
+    const issued = await sessions.selectMembership(
+      hash,
+      (req.body as SelectMembershipRequest).selectionId,
+      contextOf(req),
+    );
+    setCookiesFor(res, cookies, issued.tokens, newOpaqueToken().raw);
+    const body: MembershipSelected = { status: 'authenticated', session: issued.session };
+    res.json(body);
+  };
+
+  return { listLoginMemberships, selectLoginMembership };
 }

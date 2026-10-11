@@ -15,7 +15,7 @@ const email = () => `repo-${randomBytes(5).toString('hex')}@example.test`;
 const MERCHANT = { idleSeconds: 86400, absoluteSeconds: 1209600 };
 
 describe('IdentityRepository (as alphakolect_app)', () => {
-  it('runs signup → verification → login candidate', async () => {
+  it('runs signup → verification → login (credentials, then the one eligible membership)', async () => {
     const address = email();
     const signup = await repo.signupMerchantOwner(
       address,
@@ -28,14 +28,19 @@ describe('IdentityRepository (as alphakolect_app)', () => {
     await repo.issueOneTimeToken(signup.identity_id!, 'email_verification', token.hash, 3600, '127.0.0.1');
     expect(await repo.verifyEmail(token.hash)).toBe(signup.identity_id);
 
-    const candidate = await repo.loginCandidate(address.toUpperCase(), 'merchant');
-    expect(candidate).toMatchObject({
+    const credentials = await repo.loginIdentity(address.toUpperCase());
+    expect(credentials).toMatchObject({
       identity_id: signup.identity_id,
       email_verified: true,
-      membership_kind: 'owner',
       mfa_enrolled: false,
     });
-    expect(candidate?.password_hash).toMatch(/^\$argon2id\$/);
+    expect(credentials?.password_hash).toMatch(/^\$argon2id\$/);
+    const resolved = await repo.resolveLoginMembership(
+      signup.identity_id!,
+      'merchant',
+      newOpaqueToken().hash,
+    );
+    expect(resolved).toEqual({ eligible_count: 1, membership_id: expect.any(String) });
   });
 
   it('creates, validates, rotates and detects reuse of a session', async () => {
@@ -45,13 +50,21 @@ describe('IdentityRepository (as alphakolect_app)', () => {
       await hashPassword('a long enough passphrase'),
       'Repo Biz',
     );
-    const candidate = await repo.loginCandidate(address, 'merchant');
+    // Verified first: only an active merchant's members get sessions (P4.1).
+    const verification = newOpaqueToken();
+    await repo.issueOneTimeToken(signup.identity_id!, 'email_verification', verification.hash, 3600, null);
+    await repo.verifyEmail(verification.hash);
+    const resolved = await repo.resolveLoginMembership(
+      signup.identity_id!,
+      'merchant',
+      newOpaqueToken().hash,
+    );
     const first = newOpaqueToken();
 
     const session = await repo.createSession({
       identityId: signup.identity_id!,
       audience: 'merchant',
-      membershipId: candidate!.membership_id!,
+      membershipId: resolved.membership_id!,
       scope: 'full',
       refreshHash: first.hash,
       lifetime: MERCHANT,
@@ -66,17 +79,18 @@ describe('IdentityRepository (as alphakolect_app)', () => {
     });
 
     const second = newOpaqueToken();
-    expect((await repo.rotateRefreshToken(first.hash, second.hash, MERCHANT.idleSeconds)).outcome).toBe(
-      'rotated',
-    );
     expect(
-      (await repo.rotateRefreshToken(first.hash, newOpaqueToken().hash, MERCHANT.idleSeconds)).outcome,
+      (await repo.rotateRefreshToken(first.hash, second.hash, ['merchant'], MERCHANT.idleSeconds)).outcome,
+    ).toBe('rotated');
+    expect(
+      (await repo.rotateRefreshToken(first.hash, newOpaqueToken().hash, ['merchant'], MERCHANT.idleSeconds))
+        .outcome,
     ).toBe('reuse_detected');
     expect(await repo.validateSession(session.session_id)).toBeNull();
   });
 
   it('returns nothing for unknown accounts', async () => {
-    expect(await repo.loginCandidate('nobody@example.test', 'merchant')).toBeNull();
+    expect(await repo.loginIdentity('nobody@example.test')).toBeNull();
     expect(await repo.accountForEmail('nobody@example.test')).toBeNull();
   });
 

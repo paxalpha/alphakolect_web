@@ -20,10 +20,13 @@ const LIFETIMES: Readonly<Record<SessionAudience, SessionLifetime>> = {
 /** D8: the session of a platform identity that must enrol TOTP first. */
 const ENROLMENT_LIFETIME: SessionLifetime = { idleSeconds: 900, absoluteSeconds: 900 };
 
-/** D3: who may sign in per web audience in P3. Platform staff and merchant staff arrive with P4/P5. */
-const P3_MEMBERSHIP_KIND = { platform: 'super_admin', merchant: 'owner' } as const;
+/** The audiences of the cookie (web) refresh endpoint; agents refresh on their own endpoint (ADR-15 T12). */
+const WEB_AUDIENCES: readonly SessionAudience[] = ['platform', 'merchant'];
 
 export type RequestContext = { ip: string; userAgent: string | null; requestId: string };
+
+/** Credentials for any audience: the web login (platform, merchant) or the agent login (ADR-15 T12). */
+export type SignInRequest = Omit<LoginRequest, 'audience'> & { audience: SessionAudience };
 
 /** Secrets for the client. Never logged, never in a response body. */
 export type IssuedTokens = { accessToken: string; refreshToken: string; refreshExpiresAt: Date };
@@ -32,7 +35,9 @@ export type IssuedSession = { session: Session; tokens: IssuedTokens };
 
 export type LoginResult =
   | { kind: 'session'; status: 'authenticated' | 'mfa_enrollment_required'; issued: IssuedSession }
-  | { kind: 'mfa_challenge'; status: 'mfa_required'; challengeToken: string };
+  | { kind: 'mfa_challenge'; status: 'mfa_required'; challengeToken: string }
+  /** Several eligible memberships (ADR-15 T4): no session, a selection challenge for the client to continue with. */
+  | { kind: 'membership_selection'; challengeToken: string };
 
 const invalidCredentials = () =>
   new AppError(401, 'INVALID_CREDENTIALS', 'The email or password is incorrect');
@@ -57,11 +62,12 @@ export class SessionService {
     },
   ) {}
 
-  async login(input: LoginRequest, ctx: RequestContext): Promise<LoginResult> {
+  async login(input: SignInRequest, ctx: RequestContext): Promise<LoginResult> {
     const { identity, audit, limiter } = this.deps;
     await limiter.enforce('login', ctx.ip, input.email);
 
-    const candidate = await identity.loginCandidate(input.email, input.audience);
+    // Credentials only (P4.2): which membership to use is decided after the password check, by the database.
+    const candidate = await identity.loginIdentity(input.email);
     // D12: an unknown account costs the same password check as a known one and fails identically.
     const passwordOk = candidate?.password_hash
       ? await verifyPassword(input.password, candidate.password_hash)
@@ -93,14 +99,34 @@ export class SessionService {
       await fail('email_unverified');
       throw new AppError(403, 'EMAIL_VERIFICATION_REQUIRED', 'Verify your email address to sign in');
     }
-    if (
-      !candidate.membership_id ||
-      candidate.membership_status !== 'active' ||
-      candidate.membership_kind !== P3_MEMBERSHIP_KIND[input.audience]
-    ) {
+    // ADR-15 T4: never guess. Eligibility (active membership of a kind valid for the audience, in an active
+    // merchant; platform: the super admin) is decided by the database. Several eligible memberships create a
+    // selection challenge and no session.
+    const selection = newOpaqueToken();
+    const resolved = await identity.resolveLoginMembership(
+      candidate.identity_id,
+      input.audience,
+      selection.hash,
+    );
+    if (resolved.eligible_count === 0) {
       await fail('no_active_membership');
       throw invalidCredentials();
     }
+    if (resolved.membership_id === null) {
+      // Several eligible memberships: the database stored the selection challenge; no session is created here.
+      await audit.record({
+        action: 'auth.login',
+        outcome: 'success',
+        actorIdentityId: candidate.identity_id,
+        actorAudience: input.audience,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        requestId: ctx.requestId,
+        summary: { stage: 'membership_selection_required', choices: resolved.eligible_count },
+      });
+      return { kind: 'membership_selection', challengeToken: selection.raw };
+    }
+    const membershipId = resolved.membership_id;
 
     // D15: upgrade hashes made with older parameters. Best effort: a lost race (another login rehashed first) is fine.
     if (needsRehash(candidate.password_hash!)) {
@@ -118,7 +144,7 @@ export class SessionService {
         merchantId,
         actorIdentityId: candidate.identity_id,
         actorAudience: input.audience,
-        actorMembershipId: candidate.membership_id,
+        actorMembershipId: membershipId,
         ip: ctx.ip,
         userAgent: ctx.userAgent,
         requestId: ctx.requestId,
@@ -129,7 +155,7 @@ export class SessionService {
     // D8: platform identities always need a second factor.
     if (input.audience === 'platform' && candidate.mfa_enrolled) {
       const challenge = newOpaqueToken();
-      await identity.createMfaChallenge(candidate.identity_id, candidate.membership_id, challenge.hash);
+      await identity.createMfaChallenge(candidate.identity_id, membershipId, challenge.hash);
       await succeed('mfa_required', null);
       return { kind: 'mfa_challenge', status: 'mfa_required', challengeToken: challenge.raw };
     }
@@ -138,13 +164,57 @@ export class SessionService {
     const issued = await this.startSession({
       identityId: candidate.identity_id,
       audience: input.audience,
-      membershipId: candidate.membership_id,
+      membershipId,
       scope: enrolmentOnly ? 'mfa_enrollment' : 'full',
       ctx,
     });
     const status = enrolmentOnly ? 'mfa_enrollment_required' : 'authenticated';
     await succeed(status, issued.session.merchantId);
     return { kind: 'session', status, issued };
+  }
+
+  /**
+   * The selection step (ADR-15 T4, T16): the database locks and consumes the challenge whatever the outcome, then
+   * re-checks that the choice is still eligible; only then is a session created, bound to that one membership.
+   * Merchant (web) or agent (P4.7, its own endpoint) — platform sign-in never needs a choice. A challenge issued
+   * for one audience is never redeemed at the other's endpoint.
+   */
+  async selectMembership(
+    challengeHash: string | null,
+    selectionId: string,
+    ctx: RequestContext,
+    audience: 'merchant' | 'agent' = 'merchant',
+  ): Promise<IssuedSession> {
+    const { identity, audit } = this.deps;
+    const taken = challengeHash ? await identity.takeSelection(challengeHash, selectionId) : null;
+    const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
+    if (!taken || taken.audience !== audience) {
+      await audit.record({
+        action: 'auth.login_select',
+        outcome: 'failure',
+        ...(taken ? { actorIdentityId: taken.identity_id } : {}),
+        ...request,
+        summary: { reason: challengeHash ? 'not_available' : 'no_challenge' },
+      });
+      throw invalidRefresh();
+    }
+    const issued = await this.startSession({
+      identityId: taken.identity_id,
+      audience,
+      membershipId: taken.membership_id,
+      scope: 'full',
+      ctx,
+    });
+    await audit.record({
+      action: 'auth.login_select',
+      outcome: 'success',
+      merchantId: issued.session.merchantId,
+      actorIdentityId: taken.identity_id,
+      actorAudience: audience,
+      actorMembershipId: taken.membership_id,
+      ...request,
+    });
+    return issued;
   }
 
   /** Create a session and its first tokens. Also used after a successful MFA step (P3.8). */
@@ -189,7 +259,11 @@ export class SessionService {
    * Every outcome is audited (P3.5 review): success lightly; failure; and reuse as a distinct, high-severity
    * security event. Tokens never reach the audit log.
    */
-  async refresh(rawRefreshToken: string | undefined, ctx: RequestContext): Promise<IssuedSession> {
+  async refresh(
+    rawRefreshToken: string | undefined,
+    ctx: RequestContext,
+    audiences: readonly SessionAudience[] = WEB_AUDIENCES,
+  ): Promise<IssuedSession> {
     const { identity, accessTokens, audit, limiter } = this.deps;
     await limiter.enforce('refresh', ctx.ip);
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
@@ -202,7 +276,8 @@ export class SessionService {
     if (!oldHash) throw await failed(rawRefreshToken ? 'malformed_token' : 'no_token');
 
     const next = newOpaqueToken();
-    const rotated = await identity.rotateRefreshToken(oldHash, next.hash);
+    // Each endpoint rotates only its own audiences' tokens: cookies the web ones, the agent endpoint agents' (T12).
+    const rotated = await identity.rotateRefreshToken(oldHash, next.hash, audiences);
     if (rotated.outcome === 'reuse_detected') {
       await audit.record({
         action: 'auth.refresh_token_reuse',

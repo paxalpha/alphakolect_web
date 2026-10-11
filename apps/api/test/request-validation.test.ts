@@ -1,4 +1,4 @@
-import { defineEndpoint, ErrorResponse } from '@alphakolect/contracts';
+import { defineEndpoint, ErrorResponse, Id } from '@alphakolect/contracts';
 import express from 'express';
 import { pino } from 'pino';
 import { pinoHttp } from 'pino-http';
@@ -65,5 +65,42 @@ describe('request body validation', () => {
     expect(() =>
       needsValidation(defineEndpoint({ ...endpoint, request: { query: z.object({ q: z.string() }) } })),
     ).toThrow(/request\.query validation is not implemented/);
+  });
+});
+
+describe('path parameter validation', () => {
+  const withParams = defineEndpoint({
+    id: 'paramsProbe',
+    method: 'get',
+    path: '/v1/test/things/{thingId}',
+    audience: 'public',
+    summary: 'probe',
+    request: { params: z.object({ thingId: Id }) },
+    responses: { 200: { description: 'ok' } },
+  });
+  const paramsApp = express();
+  paramsApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+  paramsApp.get('/v1/test/things/:thingId', validateRequest(withParams), (req, res) => {
+    res.json({ thingId: req.params.thingId });
+  });
+  paramsApp.use(errorHandler);
+
+  it('passes a well-formed id through', async () => {
+    const id = '01900000-0000-7000-8000-00000000000a';
+    const res = await request(paramsApp).get(`/v1/test/things/${id}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ thingId: id });
+  });
+
+  it('refuses a malformed id with 400 naming the parameter, without echoing it', async () => {
+    const res = await request(paramsApp).get('/v1/test/things/not-an-id-drop-table');
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details.issues).toEqual([{ path: 'params.thingId', message: expect.any(String) }]);
+    expect(JSON.stringify(res.body)).not.toContain('drop-table');
+  });
+
+  it('is required for contracts with path parameters', () => {
+    expect(needsValidation(withParams)).toBe(true);
   });
 });

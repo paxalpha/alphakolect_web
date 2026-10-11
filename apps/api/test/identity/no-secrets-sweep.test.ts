@@ -4,7 +4,7 @@ import { AUTH_COOKIES, CSRF_HEADER } from '@alphakolect/contracts';
 import request from 'supertest';
 import { afterAll, describe, expect, inject, it, vi } from 'vitest';
 import { bootstrapSuperAdmin } from '../../src/modules/identity/bootstrap.js';
-import { MFA_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
+import { MFA_CHALLENGE_COOKIE, SELECTION_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
 import { totpCode, totpStep } from '../../src/modules/identity/totp.js';
 import { createDb } from '../../src/platform/db.js';
 import { createLogger } from '../../src/platform/logger.js';
@@ -13,8 +13,9 @@ import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app
 // P3 exit criteria 3 and 11, end to end: every identity journey runs through the real app (real logger with
 // its redaction, at trace level) and database while every secret it creates is collected. Then:
 //   - no captured log line contains any of them;
-//   - no response body or non-cookie header contains any of them — except the two enrolment responses whose
-//     job is to show a secret once (the TOTP secret; the recovery codes), and only that secret;
+//   - no response body or non-cookie header contains any of them — except the responses whose job is to hand a
+//     secret over once, and only that secret: the two enrolment answers (the TOTP secret; the recovery codes) and
+//     the agent token responses (bearer tokens travel in bodies by design, ADR-14 D7; P4.7);
 //   - every state-changing auth request wrote an audit row, and no audit row contains any of them.
 
 const lines: string[] = [];
@@ -53,9 +54,11 @@ async function send(
     jar = {},
     audited = method === 'post',
     mayShow,
-  }: { body?: object; jar?: Jar; audited?: boolean; mayShow?: string[] } = {},
+    bearer,
+  }: { body?: object; jar?: Jar; audited?: boolean; mayShow?: string[]; bearer?: string } = {},
 ): Promise<request.Response> {
   let req = request(app)[method](path).set('X-Forwarded-For', clientIp()).set('Origin', TEST_WEB_ORIGIN);
+  if (bearer) req = req.set('Authorization', `Bearer ${bearer}`);
   if (Object.keys(jar).length) req = req.set('Cookie', cookieHeader(jar));
   if (jar[AUTH_COOKIES.csrf]) req = req.set(CSRF_HEADER, jar[AUTH_COOKIES.csrf]!);
   const res = await (body ? req.send(body) : req.send());
@@ -190,8 +193,94 @@ describe('no secret leaves through a response, a log line or the audit log (exit
       jar: { [MFA_CHALLENGE_COOKIE]: third[MFA_CHALLENGE_COOKIE] },
     });
 
+    // P4.2 — the owner also works at a second business: login (409 + challenge) → choices → select
+    const secondOwner = `sweep-second-${randomBytes(5).toString('hex')}@example.test`;
+    await send('signup (second business)', 'post', '/v1/auth/signup', {
+      body: { email: secondOwner, password: p1, businessName: 'Sweep Two Ltd' },
+    });
+    await send('verify email (second business)', 'post', '/v1/auth/email/verify', {
+      body: { token: await linkToken(secondOwner, 'email_verification') },
+    });
+    const [ownerRow] = await migrator.query<{ id: string }>(
+      `SELECT id FROM identity.identities WHERE email = $1`,
+      [owner],
+    );
+    const ownerIdentity = ownerRow!.id;
+    await migrator.query(
+      `WITH m AS (SELECT mm.merchant_id FROM tenancy.merchant_memberships mm
+                   JOIN identity.identities i ON i.id = mm.identity_id WHERE i.email = $2),
+            r AS (INSERT INTO tenancy.roles (merchant_id, name)
+                  SELECT m.merchant_id, 'Staff ' || gen_random_uuid() FROM m RETURNING id, merchant_id)
+       INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+       SELECT r.merchant_id, $1, 'staff', r.id FROM r`,
+      [ownerIdentity, secondOwner],
+    );
+    const selecting: Jar = {};
+    await send('login (membership selection required)', 'post', '/v1/auth/login', {
+      body: { email: owner, password: p3, audience: 'merchant' },
+      jar: selecting,
+    });
+    const listed = await send('list login memberships', 'get', '/v1/auth/login/memberships', {
+      jar: { [SELECTION_CHALLENGE_COOKIE]: selecting[SELECTION_CHALLENGE_COOKIE] },
+    });
+    await send('select login membership', 'post', '/v1/auth/login/select', {
+      body: { selectionId: listed.body.memberships[0].selectionId },
+      jar: { [SELECTION_CHALLENGE_COOKIE]: selecting[SELECTION_CHALLENGE_COOKIE] },
+    });
+
+    // P4.6 — invitations: a new person (setup link) and an existing account (invitation link + password)
+    const ownerJar: Jar = {};
+    await send('login (second business owner)', 'post', '/v1/auth/login', {
+      body: { email: secondOwner, password: p1, audience: 'merchant' },
+      jar: ownerJar,
+    });
+    const newcomer = `sweep-new-${randomBytes(5).toString('hex')}@example.test`;
+    await send('invite a new person', 'post', '/v1/merchant/invitations', {
+      body: { email: newcomer, kind: 'agent' },
+      jar: ownerJar,
+    });
+    await send('account setup (invitation)', 'post', '/v1/auth/password/setup', {
+      body: { token: await linkToken(newcomer, 'invitation_setup'), password: p2 },
+    });
+    const existing = `sweep-existing-${randomBytes(5).toString('hex')}@example.test`;
+    await send('signup (existing account)', 'post', '/v1/auth/signup', {
+      body: { email: existing, password: p1, businessName: 'Sweep Three Ltd' },
+    });
+    await send('verify email (existing account)', 'post', '/v1/auth/email/verify', {
+      body: { token: await linkToken(existing, 'email_verification') },
+    });
+    await send('invite an existing account', 'post', '/v1/merchant/invitations', {
+      body: { email: existing, kind: 'agent' },
+      jar: ownerJar,
+    });
+    const invitationToken = await linkToken(existing, 'invitation_accept');
+    await send('accept invitation, wrong password', 'post', '/v1/auth/invitations/accept', {
+      body: { token: invitationToken, email: existing, password: 'wrong long passphrase' },
+    });
+    await send('accept invitation', 'post', '/v1/auth/invitations/accept', {
+      body: { token: invitationToken, email: existing, password: p1 },
+    });
+
+    // P4.7 — the invited agent signs in on the mobile endpoints: login → self → refresh → logout
+    const agentLogin = await send('agent login', 'post', '/v1/auth/agent/login', {
+      body: { email: newcomer, password: p2 },
+    });
+    keep(agentLogin.body.accessToken, agentLogin.body.refreshToken);
+    exchanges.at(-1)!.mayShow = [agentLogin.body.accessToken, agentLogin.body.refreshToken];
+    await send('agent membership', 'get', '/v1/agent/membership', { bearer: agentLogin.body.accessToken });
+    const agentRefresh = await send('agent refresh', 'post', '/v1/auth/agent/refresh', {
+      body: { refreshToken: agentLogin.body.refreshToken },
+    });
+    keep(agentRefresh.body.accessToken, agentRefresh.body.refreshToken);
+    exchanges.at(-1)!.mayShow = [agentRefresh.body.accessToken, agentRefresh.body.refreshToken];
+    await send('agent refresh, reused token', 'post', '/v1/auth/agent/refresh', {
+      body: { refreshToken: agentLogin.body.refreshToken },
+    });
+
     // the journeys themselves worked (so the sweep below saw real secrets)
-    const failedUnexpectedly = exchanges.filter((e) => e.res.status >= 400 && !/wrong|invalid/.test(e.label));
+    const failedUnexpectedly = exchanges.filter(
+      (e) => e.res.status >= 400 && !/wrong|invalid|selection required|reused/.test(e.label),
+    );
     expect(
       failedUnexpectedly.map((e) => `${e.label}: ${e.res.status} ${JSON.stringify(e.res.body)}`),
     ).toEqual([]);

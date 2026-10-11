@@ -104,8 +104,22 @@ beforeAll(async () => {
     await hashPassword('a long enough passphrase'),
     'Auth Biz',
   );
-  const candidate = await auth.identity.loginCandidate(email, 'merchant');
-  merchant = await session(signup.identity_id!, 'merchant', candidate!.membership_id!, 'full', {
+  // Verified, as a real owner is before signing in: only an active merchant's members get sessions (P4.1).
+  const verification = newOpaqueToken();
+  await auth.identity.issueOneTimeToken(
+    signup.identity_id!,
+    'email_verification',
+    verification.hash,
+    3600,
+    null,
+  );
+  await auth.identity.verifyEmail(verification.hash);
+  const resolved = await auth.identity.resolveLoginMembership(
+    signup.identity_id!,
+    'merchant',
+    newOpaqueToken().hash,
+  );
+  merchant = await session(signup.identity_id!, 'merchant', resolved.membership_id!, 'full', {
     idleSeconds: 86400,
     absoluteSeconds: 1209600,
   });
@@ -154,15 +168,60 @@ describe('who gets in', () => {
       audience: 'merchant',
       membershipId: merchant.claims.mid,
       scope: 'full',
+      kind: 'owner',
+      roleId: null,
+      branchId: null,
       transport: 'cookie',
     });
     expect(res.body.merchantId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('a staff member: their current role and branch, from the database (T5)', async () => {
+    const {
+      rows: [{ merchant_id: merchantId }],
+    } = await owner.query(`SELECT merchant_id FROM tenancy.merchant_memberships WHERE id = $1`, [
+      merchant.claims.mid,
+    ]);
+    const {
+      rows: [role],
+    } = await owner.query(
+      `INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Teller') RETURNING id`,
+      [merchantId],
+    );
+    const {
+      rows: [branch],
+    } = await owner.query(
+      `INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, 'Surulere') RETURNING id`,
+      [merchantId],
+    );
+    const {
+      rows: [identity],
+    } = await owner.query(
+      `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+      [`staff-${randomBytes(4).toString('hex')}@example.test`],
+    );
+    const {
+      rows: [m],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id, branch_id)
+       VALUES ($1, $2, 'staff', $3, $4) RETURNING id`,
+      [merchantId, identity.id, role.id, branch.id],
+    );
+    const staff = await session(identity.id, 'merchant', m.id, 'full', {
+      idleSeconds: 86400,
+      absoluteSeconds: 1209600,
+    });
+    const res = await get(E.merchantRead).set('Cookie', cookie(staff.token));
+    expect(res.body).toMatchObject({ kind: 'staff', roleId: role.id, branchId: branch.id });
+
+    await owner.query(`UPDATE tenancy.merchant_memberships SET branch_id = NULL WHERE id = $1`, [m.id]);
+    expect((await get(E.merchantRead).set('Cookie', cookie(staff.token))).body.branchId).toBeNull();
+  });
+
   it('an agent bearer session on an agent endpoint', async () => {
     const res = await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`);
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ audience: 'agent', transport: 'bearer' });
+    expect(res.body).toMatchObject({ audience: 'agent', kind: 'agent', roleId: null, transport: 'bearer' });
   });
 
   it("any audience on an 'authenticated' endpoint", async () => {

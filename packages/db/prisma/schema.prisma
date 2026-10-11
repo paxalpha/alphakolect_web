@@ -30,11 +30,15 @@ datasource db {
 /// The tenant. Every tenant-owned row in every module references a merchant.
 /// P1 holds only what row-level security and composite keys need; the tenancy module grows in P4.
 model Merchant {
-  id        String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
-  name      String
-  status    String   @default("pending_verification")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  name               String
+  /// pending_verification | active | deactivated (P4.1, ADR-15 T6; CHECK in SQL)
+  status             String    @default("pending_verification")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  /// Set exactly when status = deactivated (platform super admin, with a reason).
+  deactivatedAt      DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  deactivationReason String?   @map("deactivation_reason")
 
   ledgers           Ledger[]
   accounts          Account[]
@@ -43,6 +47,9 @@ model Merchant {
   balanceProjection BalanceProjection[]
   auditEvents       AuditEvent[]
   memberships       MerchantMembership[]
+  branches          Branch[]
+  roles             Role[]
+  invitations       Invitation[]
 
   @@map("merchants")
   @@schema("tenancy")
@@ -141,6 +148,7 @@ model JournalLine {
   entry    JournalEntry @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   account  Account      @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
 
+  @@unique([merchantId, id])
   @@index([entryId])
   @@index([accountId])
   @@map("journal_lines")
@@ -208,15 +216,17 @@ model Identity {
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  platformMembership  PlatformMembership?
-  merchantMemberships MerchantMembership[]
-  sessions            Session[]
-  oneTimeTokens       OneTimeToken[]
-  mfaChallenges       MfaChallenge[]
-  totpCredential      TotpCredential?
-  recoveryCodes       RecoveryCode[]
-  journalEntries      JournalEntry[]       @relation("JournalEntryCreator")
-  auditEvents         AuditEvent[]         @relation("AuditActor")
+  platformMembership            PlatformMembership?
+  merchantMemberships           MerchantMembership[]
+  sessions                      Session[]
+  oneTimeTokens                 OneTimeToken[]
+  mfaChallenges                 MfaChallenge[]
+  membershipSelectionChallenges MembershipSelectionChallenge[]
+  invitations                   Invitation[]
+  totpCredential                TotpCredential?
+  recoveryCodes                 RecoveryCode[]
+  journalEntries                JournalEntry[]                 @relation("JournalEntryCreator")
+  auditEvents                   AuditEvent[]                   @relation("AuditActor")
 
   @@map("identities")
   @@schema("identity")
@@ -300,6 +310,22 @@ model OneTimeToken {
 }
 
 /// Pending second factor of a platform login (D8): 5 minutes, 5 attempts.
+/// P4.2 login membership selection (ADR-15 T4): 5 minutes, single use, hash only (CHECKs in SQL).
+model MembershipSelectionChallenge {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  identityId String    @map("identity_id") @db.Uuid
+  audience   String
+  tokenHash  String    @unique @map("token_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt DateTime? @map("consumed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@map("membership_selection_challenges")
+  @@schema("identity")
+}
+
 model MfaChallenge {
   id                   String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
   identityId           String    @map("identity_id") @db.Uuid
@@ -349,6 +375,44 @@ model RecoveryCode {
 }
 
 /// Merchant audience membership — the minimal P3 slice (ADR-14 D2: owners only in P3; staff/agents P4).
+/// P4.3 (ADR-15 T7): tenant-owned; RLS, archive instead of delete, active name unique per merchant (SQL).
+model Branch {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  name       String
+  status     String    @default("active")
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  memberships MerchantMembership[]
+  invitations Invitation[]
+
+  @@unique([merchantId, id])
+  @@map("branches")
+  @@schema("tenancy")
+}
+
+/// P4.3 (ADR-15 T8): merchant-defined role names only; permissions are P5.
+model Role {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  name       String
+  status     String    @default("active")
+  archivedAt DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  memberships MerchantMembership[]
+  invitations Invitation[]
+
+  @@unique([merchantId, id])
+  @@map("roles")
+  @@schema("tenancy")
+}
+
 model MerchantMembership {
   id            String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
   merchantId    String    @map("merchant_id") @db.Uuid
@@ -357,10 +421,18 @@ model MerchantMembership {
   status        String    @default("active")
   deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  /// Staff only (CHECK in SQL): the merchant-defined role (permissions attach in P5).
+  roleId        String?   @map("role_id") @db.Uuid
+  /// Staff only: restricted to this branch; NULL = all branches (the default, OPEN-2).
+  branchId      String?   @map("branch_id") @db.Uuid
 
-  merchant Merchant  @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  identity Identity  @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  sessions Session[]
+  merchant            Merchant     @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  identity            Identity     @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role                Role?        @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch              Branch?      @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  sessions            Session[]
+  invitationsSent     Invitation[] @relation("InvitationInviter")
+  invitationsAccepted Invitation[] @relation("InvitationAcceptedMembership")
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
@@ -381,4 +453,37 @@ model RateLimitCounter {
   @@index([expiresAt])
   @@map("rate_limit_counters")
   @@schema("util")
+}
+
+/// P4.6 (ADR-15 T10, T11): an invitation until accepted — no membership exists before. Single use, expiring,
+/// revocable; the token is stored hashed and the app cannot read it. Written only by SECURITY DEFINER functions.
+/// Partial unique index (one open invitation per business and email) and CHECKs live in SQL.
+model Invitation {
+  id                    String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId            String    @map("merchant_id") @db.Uuid
+  email                 String
+  /// staff | agent
+  kind                  String
+  roleId                String?   @map("role_id") @db.Uuid
+  branchId              String?   @map("branch_id") @db.Uuid
+  identityId            String    @map("identity_id") @db.Uuid
+  invitedByMembershipId String    @map("invited_by_membership_id") @db.Uuid
+  tokenHash             String    @unique @map("token_hash") @db.Char(64)
+  expiresAt             DateTime  @map("expires_at") @db.Timestamptz(6)
+  acceptedAt            DateTime? @map("accepted_at") @db.Timestamptz(6)
+  acceptedMembershipId  String?   @map("accepted_membership_id") @db.Uuid
+  revokedAt             DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant           Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  role               Role?               @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  branch             Branch?             @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  identity           Identity            @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  invitedBy          MerchantMembership  @relation("InvitationInviter", fields: [merchantId, invitedByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "invitations_merchant_id_invited_by_fkey")
+  acceptedMembership MerchantMembership? @relation("InvitationAcceptedMembership", fields: [merchantId, acceptedMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "invitations_merchant_id_accepted_membership_fkey")
+
+  @@unique([merchantId, id])
+  @@index([identityId])
+  @@map("invitations")
+  @@schema("tenancy")
 }

@@ -80,6 +80,12 @@ export const login = defineEndpoint({
     400: error('VALIDATION_ERROR'),
     401: error('INVALID_CREDENTIALS — identical for unknown accounts and wrong passwords'),
     403: error('EMAIL_VERIFICATION_REQUIRED — only after correct credentials'),
+    409: {
+      ...error(
+        'MEMBERSHIP_SELECTION_REQUIRED — only after correct credentials, when several memberships are eligible: no session yet; a short-lived selection challenge is set as an HttpOnly cookie. Continue with GET /v1/auth/login/memberships and POST /v1/auth/login/select.',
+      ),
+      headers: SetCookie,
+    },
     429: rateLimited,
   },
 });
@@ -108,6 +114,76 @@ export const logout = defineEndpoint({
   sessionScope: 'mfa_enrollment',
   responses: {
     204: { description: 'Signed out; session cookies cleared', headers: SetCookie },
+  },
+});
+
+// ── membership selection (ADR-15 T4) ──────────────────────────────────────────────────────────
+
+export const MembershipChoice = z
+  .object({
+    /** Opaque to the client: send it back to POST /v1/auth/login/select. Never authorization by itself. */
+    selectionId: Id,
+    merchantName: z.string(),
+    kind: z.enum(['owner', 'staff']),
+  })
+  .meta({ id: 'MembershipChoice' });
+
+export const MembershipChoices = z
+  .object({ memberships: z.array(MembershipChoice).min(2) })
+  .meta({ id: 'MembershipChoices', description: 'The businesses this account may sign in to' });
+
+export type MembershipChoices = z.infer<typeof MembershipChoices>;
+
+const NoStoreChoices = z.object({
+  'Cache-Control': z.literal('no-store').meta({ description: 'The choices are never cached' }),
+});
+
+export const listLoginMemberships = defineEndpoint({
+  id: 'listLoginMemberships',
+  method: 'get',
+  path: '/v1/auth/login/memberships',
+  audience: 'public',
+  summary: 'The businesses to choose from (needs the selection challenge cookie set by a 409 login answer)',
+  responses: {
+    200: {
+      description: 'The choices; the challenge is not used up',
+      schema: MembershipChoices,
+      headers: NoStoreChoices,
+    },
+    401: error('INVALID_OR_EXPIRED_TOKEN — no valid selection challenge: sign in again'),
+    429: rateLimited,
+  },
+});
+
+export const SelectMembershipRequest = z.object({ selectionId: Id }).meta({ id: 'SelectMembershipRequest' });
+
+export type SelectMembershipRequest = z.infer<typeof SelectMembershipRequest>;
+
+/** Its own schema (not LoginResponse), like MfaVerified: signed in to the chosen business. */
+export const MembershipSelected = z
+  .object({ status: z.literal('authenticated'), session: Session })
+  .meta({ id: 'MembershipSelected' });
+
+export type MembershipSelected = z.infer<typeof MembershipSelected>;
+
+export const selectLoginMembership = defineEndpoint({
+  id: 'selectLoginMembership',
+  method: 'post',
+  path: '/v1/auth/login/select',
+  audience: 'public',
+  summary: 'Sign in to the chosen business (uses the selection challenge cookie; JSON only)',
+  request: { body: SelectMembershipRequest },
+  responses: {
+    200: {
+      description: 'Signed in; the selection challenge is used up',
+      schema: MembershipSelected,
+      headers: SetCookie,
+    },
+    400: error('VALIDATION_ERROR'),
+    401: error(
+      'INVALID_OR_EXPIRED_TOKEN — no valid challenge, or the choice is not (or no longer) available: the challenge is used up either way; sign in again',
+    ),
+    429: rateLimited,
   },
 });
 
@@ -279,6 +355,36 @@ export const completeAccountSetup = defineEndpoint({
   },
 });
 
+// ── invitations: an existing account accepts with its password (ADR-15 T11) ─────────────────────────
+
+export const AcceptInvitationRequest = z
+  .object({
+    /** From the invitation link. */
+    token: z.string().min(1).max(256),
+    email: Email,
+    password: z.string().min(1).max(1024),
+  })
+  .meta({ id: 'AcceptInvitationRequest' });
+
+export type AcceptInvitationRequest = z.infer<typeof AcceptInvitationRequest>;
+
+export const acceptInvitation = defineEndpoint({
+  id: 'acceptInvitation',
+  method: 'post',
+  path: '/v1/auth/invitations/accept',
+  audience: 'public',
+  summary:
+    'Join a business with an invitation link and the password of the invited account (then sign in as usual)',
+  request: { body: AcceptInvitationRequest },
+  responses: {
+    204: { description: 'Joined: the membership exists from now on' },
+    400: error(
+      'INVALID_INVITATION — the same for every reason (link, email, password, expiry, the business); or VALIDATION_ERROR',
+    ),
+    429: rateLimited,
+  },
+});
+
 export const changePassword = defineEndpoint({
   id: 'changePassword',
   method: 'post',
@@ -386,6 +492,16 @@ export const confirmTotpEnrollment = defineEndpoint({
   },
 });
 
+/**
+ * The only answer of the MFA second step: signed in. Its own schema (not LoginResponse), so a change to the login
+ * outcomes can never silently change the MFA contract (ADR-15; measured with oasdiff 2026-10-09).
+ */
+export const MfaVerified = z
+  .object({ status: z.literal('authenticated'), session: Session })
+  .meta({ id: 'MfaVerified' });
+
+export type MfaVerified = z.infer<typeof MfaVerified>;
+
 export const verifyMfa = defineEndpoint({
   id: 'verifyMfa',
   method: 'post',
@@ -394,7 +510,7 @@ export const verifyMfa = defineEndpoint({
   summary: 'Second login step for platform accounts (uses the MFA challenge cookie set by login)',
   request: { body: VerifyMfaRequest },
   responses: {
-    200: { description: 'Signed in', schema: LoginResponse, headers: SetCookie },
+    200: { description: 'Signed in', schema: MfaVerified, headers: SetCookie },
     400: error('VALIDATION_ERROR'),
     401: error(
       'INVALID_MFA_CODE (try again; 5 attempts per challenge) or INVALID_OR_EXPIRED_TOKEN (sign in again)',

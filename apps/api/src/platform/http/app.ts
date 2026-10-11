@@ -4,6 +4,7 @@ import type { Logger } from 'pino';
 import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
 import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
+import { agentHandlers } from '../../modules/identity/agent-routes.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
@@ -12,8 +13,18 @@ import {
   authHandlers,
   mfaHandlers,
   passwordHandlers,
+  selectionHandlers,
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
+import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
+import { MerchantSettingsService } from '../../modules/tenancy/merchant-settings.js';
+import { InvitationService } from '../../modules/tenancy/invitations.js';
+import { MembershipService } from '../../modules/tenancy/memberships.js';
+import {
+  invitationAcceptHandlers,
+  merchantHandlers,
+  platformMerchantHandlers,
+} from '../../modules/tenancy/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
@@ -94,12 +105,30 @@ export function createApp({
     audit,
     limiter,
   });
+  const invitations = new InvitationService({
+    db,
+    identity: auth.identity,
+    audit,
+    limiter,
+    mailer,
+    webAppUrl,
+  });
+  const settings = new MerchantSettingsService({ db, audit });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
     ...accountHandlers({ accounts }),
     ...passwordHandlers({ passwords, cookies }),
     ...mfaHandlers({ mfa, cookies }),
+    ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
+    ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
+    ...merchantHandlers({
+      settings,
+      members: new MembershipService({ db, audit }),
+      invitations,
+    }),
+    ...invitationAcceptHandlers({ invitations }),
+    ...agentHandlers({ identity: auth.identity, sessions, limiter, settings }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

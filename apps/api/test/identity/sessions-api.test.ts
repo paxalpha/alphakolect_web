@@ -11,7 +11,7 @@ import { argon2id } from 'hash-wasm';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
-import { MFA_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
+import { MFA_CHALLENGE_COOKIE, SELECTION_CHALLENGE_COOKIE } from '../../src/modules/identity/cookies.js';
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { LIMITS } from '../../src/modules/identity/rate-limits.js';
 import { hashRecoveryCode, newRecoveryCodes } from '../../src/modules/identity/recovery-codes.js';
@@ -231,7 +231,7 @@ describe('POST /v1/auth/login — merchant owner', () => {
     expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
   });
 
-  it('refuses merchant staff in P3 (D3: owners only until P4), like a wrong password', async () => {
+  it('signs in merchant staff (P4.2, ADR-15 T2; refused in P3 under D3)', async () => {
     const m = await merchantOwner();
     const email = uniqueEmail('staff');
     const {
@@ -240,13 +240,88 @@ describe('POST /v1/auth/login — merchant owner', () => {
       `INSERT INTO identity.identities (email, password_hash, email_verified_at) VALUES ($1, $2, now()) RETURNING id`,
       [email, await hashPassword(PASSWORD)],
     );
-    await owner.query(
-      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES ($1, $2, 'staff')`,
+    const {
+      rows: [membership],
+    } = await owner.query(
+      `WITH r AS (INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Staff ' || gen_random_uuid()) RETURNING id)
+       INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+       SELECT $1, $2, 'staff', r.id FROM r RETURNING id`,
       [m.merchantId, staff.id],
     );
     const res = await login({ email, password: PASSWORD, audience: 'merchant' });
-    expect(res.status).toBe(401);
-    expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(res.status).toBe(200);
+    expect(LoginResponse.parse(res.body)).toMatchObject({
+      status: 'authenticated',
+      session: { identityId: staff.id, membershipId: membership.id, merchantId: m.merchantId },
+    });
+  });
+
+  it('never guesses between two eligible memberships: 409 + a selection challenge, and no session (ADR-15 T4)', async () => {
+    const m = await merchantOwner();
+    const other = await merchantOwner();
+    await owner.query(
+      `WITH r AS (INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Staff ' || gen_random_uuid()) RETURNING id)
+       INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+       SELECT $1, $2, 'staff', r.id FROM r`,
+      [other.merchantId, m.identityId],
+    );
+    const res = await login({ email: m.email, password: PASSWORD, audience: 'merchant' });
+    expect(res.status).toBe(409);
+    expect(ErrorResponse.parse(res.body).error.code).toBe('MEMBERSHIP_SELECTION_REQUIRED');
+
+    // Only the selection challenge is set — HttpOnly, 5 minutes, sent only to /v1/auth/login and below.
+    const cookies = setCookies(res);
+    expect([...cookies.keys()]).toEqual([SELECTION_CHALLENGE_COOKIE]);
+    const challenge = cookies.get(SELECTION_CHALLENGE_COOKIE)!;
+    expect(challenge.raw).toMatch(/; HttpOnly/);
+    expect(challenge.raw).toMatch(/; Secure/);
+    expect(challenge.raw).toMatch(/; SameSite=Lax/);
+    expect(challenge.raw).toMatch(/; Path=\/v1\/auth\/login(;|$)/);
+    expectMaxAge(challenge.raw, 300);
+    expectNoSecretsInBody(res);
+    expect(JSON.stringify(res.body)).not.toMatch(/Session Biz|merchantName|memberships/); // no choices yet
+
+    const { rows } = await owner.query(
+      `SELECT count(*)::int AS n FROM identity.sessions WHERE identity_id = $1`,
+      [m.identityId],
+    );
+    expect(rows[0].n).toBe(0);
+    expect(await auditRows(res.headers['x-request-id'])).toEqual([
+      expect.objectContaining({
+        action: 'auth.login',
+        outcome: 'success',
+        summary: { stage: 'membership_selection_required', choices: 2 },
+      }),
+    ]);
+  });
+
+  it('credentials first: with several memberships, a wrong password or an unverified email answers exactly as in P3', async () => {
+    const m = await merchantOwner();
+    const other = await merchantOwner();
+    await owner.query(
+      `WITH r AS (INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, 'Staff ' || gen_random_uuid()) RETURNING id)
+       INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id)
+       SELECT $1, $2, 'staff', r.id FROM r`,
+      [other.merchantId, m.identityId],
+    );
+    const wrong = await login({ email: m.email, password: 'not the password at all', audience: 'merchant' });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(wrong.headers['set-cookie']).toBeUndefined();
+
+    await owner.query(`UPDATE identity.identities SET email_verified_at = NULL WHERE id = $1`, [
+      m.identityId,
+    ]);
+    const unverified = await login({ email: m.email, password: PASSWORD, audience: 'merchant' });
+    expect(unverified.status).toBe(403);
+    expect(unverified.body.error.code).toBe('EMAIL_VERIFICATION_REQUIRED');
+    expect(unverified.headers['set-cookie']).toBeUndefined();
+
+    const { rows } = await owner.query(
+      `SELECT count(*)::int AS n FROM identity.membership_selection_challenges WHERE identity_id = $1`,
+      [m.identityId],
+    );
+    expect(rows[0].n).toBe(0); // no challenge was ever issued without a correct password and a verified email
   });
 
   it('upgrades a password hash made with older parameters (D15)', async () => {

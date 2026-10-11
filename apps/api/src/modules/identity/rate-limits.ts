@@ -14,7 +14,10 @@ export type LimitName =
   | 'password_reset'
   | 'password_change'
   | 'refresh'
-  | 'mfa';
+  | 'mfa'
+  | 'membership_selection'
+  | 'invitation_issue'
+  | 'invitation_accept';
 
 type Rule = { windowSeconds: number; perIp: number; perIdentifier: number };
 
@@ -29,6 +32,12 @@ export const LIMITS: Readonly<Record<LimitName, Rule>> = {
   password_change: { windowSeconds: 900, perIp: 20, perIdentifier: 10 },
   refresh: { windowSeconds: 900, perIp: 120, perIdentifier: 120 },
   mfa: { windowSeconds: 900, perIp: 30, perIdentifier: 10 },
+  // Reading the choices and selecting (ADR-15 T4); the identifier is the challenge.
+  membership_selection: { windowSeconds: 900, perIp: 60, perIdentifier: 10 },
+  // ADR-15 T10: issuing sends email (and may create an identity); the identifier is the business.
+  invitation_issue: { windowSeconds: 3600, perIp: 60, perIdentifier: 50 },
+  // ADR-15 T11: a password check; the identifier is the email.
+  invitation_accept: { windowSeconds: 900, perIp: 30, perIdentifier: 10 },
 };
 
 const key = (name: LimitName, kind: 'ip' | 'id', value: string) =>

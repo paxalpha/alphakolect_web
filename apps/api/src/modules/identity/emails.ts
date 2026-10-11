@@ -60,3 +60,51 @@ export function accountSetupEmail(to: string, webAppUrl: string, rawToken: strin
     ].join('\n'),
   };
 }
+
+export const INVITATION_TTL_SECONDS = 24 * 60 * 60; // ADR-15 T10 (P3's account-setup cap)
+
+/** A new person (no password yet): the P3 setup page; finishing it joins the business (ADR-15 T10). */
+export function invitationSetupEmail(
+  to: string,
+  webAppUrl: string,
+  rawSetupToken: string,
+  businessName: string,
+): EmailMessage {
+  return {
+    template: 'invitation_setup',
+    to,
+    subject: `You have been invited to ${businessName} on AlphaKolect`,
+    text: [
+      `${businessName} has invited you to join them on AlphaKolect.`,
+      '',
+      'Choose your password to create your account and join:',
+      `${webAppUrl}/set-password#token=${rawSetupToken}`,
+      '',
+      'This link works once and expires in 24 hours.',
+      'If you did not expect this, ignore this email.',
+    ].join('\n'),
+  };
+}
+
+/** An existing account: the invitation link, accepted with that account's password (ADR-15 T11). */
+export function invitationAcceptEmail(
+  to: string,
+  webAppUrl: string,
+  rawInvitationToken: string,
+  businessName: string,
+): EmailMessage {
+  return {
+    template: 'invitation_accept',
+    to,
+    subject: `You have been invited to ${businessName} on AlphaKolect`,
+    text: [
+      `${businessName} has invited you to join them on AlphaKolect.`,
+      '',
+      'Accept with your AlphaKolect email and password:',
+      `${webAppUrl}/accept-invitation#token=${rawInvitationToken}`,
+      '',
+      'This link works once and expires in 24 hours.',
+      'If you did not expect this, ignore this email.',
+    ].join('\n'),
+  };
+}

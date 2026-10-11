@@ -14,9 +14,14 @@ export type AuthContext = Readonly<{
   sessionId: string;
   audience: SessionAudience;
   membershipId: string;
-  /** Tenant of a merchant/agent session (for TenantContext in P4); null for platform. */
+  /** Tenant of a merchant/agent session (the source of TenantContext); null for platform. */
   merchantId: string | null;
   scope: 'full' | 'mfa_enrollment';
+  /** owner | staff | agent for a merchant membership; the platform role for a platform session. Current (T5). */
+  kind: string;
+  /** A staff member's role and branch restriction (null branch = all branches); null for everyone else. */
+  roleId: string | null;
+  branchId: string | null;
   transport: 'cookie' | 'bearer';
 }>;
 
@@ -142,6 +147,9 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
         membershipId: session.membership_id,
         merchantId: session.merchant_id,
         scope: session.scope,
+        kind: session.kind,
+        roleId: session.role_id,
+        branchId: session.branch_id,
         transport: credential.transport,
       });
       next();

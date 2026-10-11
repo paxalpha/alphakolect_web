@@ -667,11 +667,16 @@ Error logs carry the event identifier, request id and reason only — never summ
 
 ### 8.2 Failure classes
 
-| Class | Events | Written | Audit failure ⇒ |
+This table defines what each class **means**. It is not an event list: **§8.1's inventory is the exhaustive authority**
+for which (identifier, outcome) pair belongs to which class (atomic #1–#32, sensitive read #33–#36, and every
+best-effort pair), and the coverage guard compares the catalog with that inventory alone. The examples below are
+illustrative.
+
+| Class | Typical events (illustrative — see §8.1) | Written | Audit failure ⇒ |
 |---|---|---|---|
-| **Atomic** | role/permission changes, platform grants, member and invitation changes, ownership transfer, merchant lifecycle, branch/profile changes, identity security changes (password change/reset/setup, MFA confirmation, recovery-code use, logout, reuse revocation, email verification, signup) | same transaction as the change | change rolls back; request fails 500 |
-| **Best effort** | login/agent-login attempts, refresh failures, MFA-verify failures, selection failures, authorization denials (401/403 at the policy step and in services) | own transaction | original response preserved; error logged with event id and request id; counter for alerting |
-| **Sensitive read** | platform cross-tenant reads, audit-log reads (merchant and platform) | before data is returned, same transaction as the read | read refused (500); no data returned |
+| **Atomic** | changes to roles, permissions, grants, memberships, invitations, merchant lifecycle and ownership, branches and the profile; identity security changes (sign-up, verification, sign-in success, refresh and reuse revocation, logout, password change/reset/setup, MFA enrolment and verification) | same transaction as the change | change rolls back; request fails 500 |
+| **Best effort** | every failure and denial outcome of the above; the link-issuing successes of forgot-password and resend-verification (O6); refusals by the policy middleware (`authz.denied`) | own transaction | original response preserved; error logged with event id and request id; counter for alerting |
+| **Sensitive read** | the four designated reads (§8.1 #33–#36) | before data is returned, same transaction as the read | read refused (500); no data returned |
 
 ### 8.2a Execution contract for privileged operations (definer functions)
 

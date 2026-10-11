@@ -8,7 +8,7 @@ executable only after the owner and the independent reviewer approve it (§12).
 |---|---|
 | Repository | `paxalpha/alphakolect_web` |
 | Branch | `feat/p5-authorization-audit` (no upstream) |
-| Baseline | `5d8904b` (P4 merged); working tree clean apart from the untracked P5 review documents |
+| Baseline | `5d8904b` (P4 merged). The three review documents and this plan are committed on this branch as planning records (`890e59a`, `9650ad4`, `8d8fdac`; the plan from `ce3321f`); no P5 code, migration or test exists |
 | Inputs | `P5_AUDIT_REPORT.md` (incl. §22 review outcome and owner decisions), `P5_REVIEW_HANDOFF.md`, `P5_EVIDENCE_PACK.md`, the plan draft supplied by the reviewer, and direct source inspection |
 | Prepared | 2026-10-11 |
 
@@ -20,13 +20,16 @@ Labels: **[Fact]** verified in the source at `5d8904b` during planning · **[Pla
 ## 1. Scope and hard constraints
 
 **In scope:** a database permission catalog; merchant role permissions; per-platform-membership staff grants;
-authorization declared for every endpoint; one authorization source shared by the API and the `SECURITY DEFINER`
-functions; write-time re-checks; delegation limits; platform staff sign-in; an audit event catalog with explicit
-failure semantics (including A7); audit read APIs; tests proving P4 is preserved.
+authorization declared for every endpoint, with its branch scope (§7.6); one authorization source shared by the API
+and the `SECURITY DEFINER` functions; write-time re-checks; delegation limits; platform staff sign-in and lifecycle
+(§7.4); an audit event catalog with explicit failure semantics (including A7); audit read APIs; cross-tenant platform
+reads; query-parameter validation; tests proving P4 is preserved. §1.1 traces every inherited obligation.
 
 **Out of scope (by decision):** assigned-customer authorization for agents and anything else that needs customers,
 assignments, collections or remittances (D1 → P7/P8); permissions for features that do not exist yet (D2); billing
-suspension (P10); an IP/user-agent retention period (D9 stays open — §8.6).
+suspension (P10); end-to-end branch isolation, which needs a branch-owned resource (D7, §7.6). **Not chosen by this
+plan:** the IP/user-agent retention period — that is the owner's (D9); the owner-approved written policy itself is a
+P5 closure requirement (§8.6, §13 item 9).
 
 ### 1.1 Obligations P5 inherits — where each is placed
 
@@ -183,7 +186,7 @@ Classes (exactly one per endpoint, declared in the contract):
 | `GET /v1/merchant/permissions` — the merchant catalog (for role editing UIs) | `merchant.roles.read` | P5.6 |
 | `PUT /v1/merchant/roles/{roleId}/permissions` — replace a role's permission set | `merchant.roles.manage` (owner) | P5.6 |
 | Effective permissions added to `GET /v1/merchant/membership` (new response field) | self | P5.4 |
-| Effective permissions added to `GET /v1/auth/session` (new response field; platform sessions — the platform console's navigation is built from server-provided permissions, RESTRUCTURING_MAP §2.4; empty for agents and enrolment-only sessions) | self | P5.7 |
+| Effective permissions added to `GET /v1/auth/session` (new response field; platform sessions — the dashboard sidebar is built from server-provided permissions (RESTRUCTURING_MAP §2.3), and the platform console, whose staff hold per-person grants (§2.4, BR-3), needs the same; empty for agents and enrolment-only sessions) | self | P5.7 |
 | `GET /v1/merchant/audit-events` (cursor-paginated) | `merchant.audit.read` | P5.8 |
 | `GET /v1/platform/merchants` (list merchants; cursor-paginated) | `platform.merchants.read` | P5.7 |
 | `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships; cursor-paginated) | `platform.merchants.read` | P5.7 |
@@ -1199,8 +1202,8 @@ independent of the permission catalog); it is listed with them so it is complete
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
   deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); full gate twice;
-  gitleaks over full history; the three review documents either committed as planning records or deleted — **owner's
-  choice**.
+  gitleaks over full history; the three review documents are already committed on this branch as planning records —
+  whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
 - **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.
 
 ## 11. Rollout and rollback (no fail-open)
@@ -1271,8 +1274,8 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
   assigned a role (`ADMIN_INTEGRATION_GUIDE.md`, `ADMIN_PAGES_INTEGRATION_SUMMARY.md`). P5 deliberately grants
   **per person** instead (D4, BR-3: "only what you grant each one").
 - Auditing was an `activities` table shown as "audit logs", including **per-staff log views**
-  (`/superAdmin/logs/:staffId`). P5's platform audit read should therefore support filtering by actor — the planned
-  `(actor_identity_id, occurred_at)` index serves it (input to O4).
+  (`/superAdmin/logs/:staffId`). P5's platform audit read should therefore support filtering by actor — part of the §8.5
+  pagination contract, with its index chosen from measured query plans (input to O4).
 - Merchant-side `staff`, `roles`, `branches` and `collaborators` existed as tables (`MIGRATION_STATUS.md`).
   `docs/architecture/CURRENT_SYSTEM_INVENTORY.md` §1.1, §1.3 and §1.15 and `ARCHITECTURE_RECONNAISSANCE.md` §5.2, §8–§9
   add: merchant roles stored JSON `permissions` that were **enforced only in the UI** (sidebar filtering from

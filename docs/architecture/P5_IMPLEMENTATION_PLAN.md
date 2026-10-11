@@ -281,12 +281,27 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
 | `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
 | `set_platform_grants`, staff create/deactivate | 1: {actor / S, target / NKU} (one sorted call) | 9: grant rows; 10: sessions (deactivate) |
-| platform reads (`platform.merchants.read`, `platform.audit.read`) | 1: actor / S | read event insert, then rows (sensitive read) |
-| merchant audit read | 2: merchant / S → 3: actor / S → 7: actor's role / S | read event insert, then rows |
+| `audit.read_platform_events` (#34) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
+| `tenancy.platform_list_merchants` (#35) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
+| `tenancy.platform_list_merchant_members` (#36) | 1: actor / S | read event insert, then the rows (one `SELECT` over memberships and identities, no row locks) |
+| `audit.read_merchant_events` (#33) | 3: actor / S → 7: actor's role / S (none for the owner) | read event insert, then the rows (one `SELECT`, no row locks) |
 | identity flows: `reset_password`, `verify_email` | 5 → 6 (→ 10 reset) | — |
 | `change_password` | 6 → 10 | — |
 | `rotate_refresh_token` | 5 → 10 | — |
 | selection, MFA verify / enrolment | 5 → 6 (credential rows) | session insert (fresh key) |
+
+**Why these read footprints and no more (R20).** A sensitive read locks only the rows that carry the actor's
+authority, so that a concurrent revocation is either seen or waits (§7.5): the actor's platform membership for the
+three platform reads (platform authority comes entirely from it and its grants), and the actor's merchant membership and
+role for the merchant audit read (merchant authority comes from those; the merchant's active status is re-checked by
+the in-function session validation, and a concurrent merchant deactivation takes effect from the next request, as T5
+specifies). No merchant, membership or audit row is locked: nothing about them needs to be serialized with a read, and
+adding locks would only make readers block writers. **Read semantics:** transactions run at `READ COMMITTED`; the
+authority locks are held until commit, so authority cannot change during the read; the returned rows come from **one
+`SELECT` statement** and are therefore consistent as of that statement's start. No stronger guarantee is promised —
+in particular, successive pages are separate requests and do not form one snapshot (§8.5 cursor rules). Each of the four
+operations has its own planned-footprint entry above; the guard fails if a lock or nested call is added to one of them
+without updating its entry.
 
 The resolver (§7.1) and the early policy check take no locks. Category 3 takes `FOR NO KEY UPDATE` on the **actor's**
 row in writes so any change to the actor (deactivation, role change) serializes with the actor's write, and the

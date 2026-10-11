@@ -879,8 +879,11 @@ independent of the permission catalog); it is listed with them so it is complete
   D9 status. Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
   customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
-  owner; **O3 and O4 decided** before the audit-read contracts are frozen (if either is still open, those two contracts
-  are left out of the freeze and P5.8 cannot start them).
+  owner; **O3 decided** before the merchant audit-read contract is frozen. The **platform audit-read contract is not
+  frozen in P5.0**: O4 depends on a query-plan validation (§8.5) that needs representative data, so its freeze follows
+  the sequence in P5.8. If O3 is still open at P5.0, the merchant audit-read contract is left out of the freeze too
+  and is frozen, as an ADR-16 addendum, once the owner decides; P5.8 cannot implement an audit-read endpoint whose
+  contract is not frozen.
 - **Done when:** owner and reviewer approve ADR-16 and this plan.
 
 ### P5.1 — Catalog and protected grant storage
@@ -1050,6 +1053,12 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
   #34); indexes; D9 documentation (§8.6). The audit foundation is P5.3a.
+- **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
+  `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
+  recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page
+  size, window, filters); (3) the platform audit-read contract is **frozen as an ADR-16 addendum**, and the reviewer
+  confirms it; (4) only then the migration (indexes, designated function) and the endpoint are written. The merchant
+  audit read follows steps (3)–(4) once O3 is decided; its plans are recorded in the same spike.
 - **Tests:** the coverage guard of §8.1 now complete in both directions (every catalog pair, including #33/#34, has
   its writer and tests); secrets never stored (leak sweep extended to the audit-read journeys); append-only unchanged;
   audit reads tenant-isolated, bounded, themselves audited — **sensitive reads #33 and #34 (R16, R18)** with the same
@@ -1133,7 +1142,7 @@ merged.
 | O1 | Move branch/role/profile writes into definer functions and revoke direct grants (§7.2) | adopt (owner supports), with the single-migration enforcement boundary of §7.2 |
 | O2 | Exact contracts of the new endpoints (§5) | frozen in P5.0 |
 | O3 | Which denial categories and fields owners (and `merchant.audit.read` staff) may see | proposal (reviewer recommends approving, with precision): only this merchant's events; summaries limited to each event's allowlisted fields; denials visible only where they concern this merchant's operations; never cross-tenant activity, credentials, tokens or request bodies; the owner's and staff's visible denial categories defined separately if they differ — **owner decision required before P5.0 freezes the merchant audit-read contract**; no default is implemented |
-| O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21). Then **owner decision required before P5.0 freezes the platform audit-read contract**; no default is implemented |
+| O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8. Then **owner decision required before the platform audit-read contract is frozen** (ADR-16 addendum, P5.8 step 3 — not at P5.0); no default is implemented |
 | O5 | D9 retention policy | owner decision; a written policy is a P5 exit criterion (no exception route) |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 

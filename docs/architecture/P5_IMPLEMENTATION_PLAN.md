@@ -154,7 +154,7 @@ Classes (exactly one per endpoint, declared in the contract):
 | `GET /v1/merchant/audit-events` (cursor-paginated) | `merchant.audit.read` | P5.8 |
 | `GET /v1/platform/merchants` (list merchants; cursor-paginated) | `platform.merchants.read` | P5.7 |
 | `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships; cursor-paginated) | `platform.merchants.read` | P5.7 |
-| Platform staff: create/deactivate, set grants (`/v1/platform/staff…`) | `platform.staff.manage` (super admin) | P5.7 |
+| Platform staff: create, deactivate (reactivate if O8(b)), list, set grants (`/v1/platform/staff…`; §7.4) | `platform.staff.manage` (super admin) | P5.7 |
 | `GET /v1/platform/audit-events` (cursor-paginated) | `platform.audit.read` | P5.8 |
 
 ## 6. Permission catalog (frozen in P5.0)
@@ -291,7 +291,9 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
 | `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
-| `set_platform_grants`, staff create/deactivate | 1: {actor / S, target / NKU} (one sorted call) | 9: grant rows; 10: sessions (deactivate) |
+| `set_platform_grants` (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | 9: rewrite the target's grant rows |
+| `create_platform_staff` (P5.7) | unlocked lookup of the email (an existing identity ⇒ refused, O8(a)) → 1: actor / S | contested inserts last (L3): identity (`email`), platform membership (`identity_id`), setup token |
+| staff deactivate / reactivate (P5.7; reactivate if O8(b)) | 1: {actor / S, target / NKU} (one sorted call) | write; 9: grant rows removed (deactivate); 10: sessions (deactivate) |
 | `audit.read_platform_events` (#34) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
 | `tenancy.platform_list_merchants` (#35) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
 | `tenancy.platform_list_merchant_members` (#36) | 1: actor / S | read event insert, then the rows (one `SELECT` over memberships and identities, no row locks) |
@@ -479,6 +481,31 @@ reserved), so a staff member can never change the ceiling they are measured agai
 Grants attach to `identity.platform_memberships.id`, not to the identity. Sign-in eligibility admits active platform
 memberships of every role; MFA remains mandatory for all platform identities (the existing login and enrolment flow
 applies unchanged). A platform staff member without grants can sign in and use `self` endpoints only.
+
+**Lifecycle of a platform staff member (all super admin only, `platform.staff.manage`, D4).** [Fact] An identity has at
+most one platform membership (`UNIQUE (identity_id)`, `20261003000100_identity_schema:144`); `role` is one of
+`super_admin`, `support`, `verification`, `finance` (CHECK, `:230`); today only the bootstrap creates a platform
+membership (`20261003000500:62`).
+
+- **Create** (`identity.create_platform_staff(session, email, role)`): the super admin gives an email and a role
+  label (`support`, `verification` or `finance`; never `super_admin`). One definer function creates a
+  **passwordless identity**, its platform membership **with no grants**, and a P3 **account-setup token** — the same
+  onboarding mechanism as a new person's invitation (T10); the API sends the setup link (best effort until the P12
+  outbox, as for invitations). The person sets a password through the existing setup flow, then signs in and must
+  enrol MFA through the existing platform enrolment flow before any `full` session exists. The role label grants
+  nothing (D4); access comes only from grants set afterwards. Event #30, actor from the session.
+- **An email that already has an identity — [Open, O8(a) — proposal]:** refused (`409`, a recorded denial) in P5. A
+  platform account stays a separate person-account from any merchant account, so no existing password, MFA state or
+  merchant membership is carried into the platform audience, and the one-membership-per-identity rule is never hit by
+  a second creation. The super admin uses another address. (Anti-enumeration does not apply: only the super admin can
+  call it.)
+- **Deactivate:** membership `deactivated`, its sessions revoked (category 10), **its grants removed** in the same
+  transaction (the event's allowlisted summary lists the identifiers removed); event #31.
+- **Reactivate — [Open, O8(b) — proposal]:** because the membership is unique per identity, a deactivated staff member
+  can never be re-created; without reactivation, re-employing someone needs a new email address. Proposal: P5 adds
+  `reactivate` (super admin): status back to `active` with **no grants** (they were removed at deactivation), so access
+  is re-granted explicitly; a new atomic pair `platform.staff_reactivated` (success; denied/failure best effort),
+  numbered and added to §8.1 when approved. If not approved, the limitation is recorded in the P5 record.
 
 ### 7.5 Platform lock order and grant-revocation races
 
@@ -914,7 +941,8 @@ independent of the permission catalog); it is listed with them so it is complete
   D9 status. Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
   customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
-  owner; **O7 decided** (branch ceiling, §7.6) before the member and invitation behaviour is frozen; **O3 decided**
+  owner; **O7 decided** (branch ceiling, §7.6) before the member and invitation behaviour is frozen; **O8 decided**
+  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; **O3 decided**
   before the merchant audit-read contract is frozen. The **platform audit-read contract is not
   frozen in P5.0**: O4 depends on a query-plan validation (§8.5) that needs representative data, so its freeze follows
   the sequence in P5.8. If O3 is still open at P5.0, the merchant audit-read contract is left out of the freeze too
@@ -1073,7 +1101,13 @@ independent of the permission catalog); it is listed with them so it is complete
   rules of the §8.5 pagination contract (position only, bound by digest to the request's filters, `400 INVALID_CURSOR`
   on mismatch, strict tuple continuation); every page is its own sensitive read with its own event. Supporting indexes
   are chosen from recorded query plans on seeded data, as in §8.5.
-- **Tests:** staff without grants: sign-in + MFA works, nothing else; one grant ⇒ exactly that; revoked grant ⇒ next
+- **Staff lifecycle** per §7.4: create (passwordless identity, membership without grants, setup token), deactivate
+  (sessions revoked, grants removed), and reactivate if O8(b) is approved; an existing email refused per O8(a).
+- **Tests:** creation → setup link → password → forced MFA enrolment → `full` session with no grants; the role label
+  grants nothing; creating with `super_admin` refused; an email with an existing identity refused, with nothing
+  created and a denial recorded (O8(a)); concurrent creation with the same email: exactly one succeeds, no `40P01`;
+  deactivation revokes sessions and removes grants; reactivation (if O8(b)) starts with no grants; staff without grants:
+  sign-in + MFA works, nothing else; one grant ⇒ exactly that; revoked grant ⇒ next
   request; lifecycle, transfer, staff management refused for staff even if a grant is attempted (reserved); super
   admin unchanged; MFA enrolment/verification unchanged for staff; reads audited, refused if the audit insert fails;
   **two-connection races in both orders** (revoke grant vs protected operation; deactivate staff vs protected
@@ -1186,6 +1220,7 @@ merged.
 | O5 | D9 retention policy | owner decision; a written policy is a P5 exit criterion (no exception route) |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 | O7 | Branch ceiling for delegation (§7.6) | proposal: a branch-restricted actor acts only on members of their own branch and assigns or invites only with their own branch (never `NULL` = all branches); owner and unrestricted actors unaffected; built in P5.5 if approved, otherwise recorded as a limitation P7/P8 must close before its first branch-scoped resource. **Owner decision required before P5.0 freezes the member and invitation behaviour** |
+| O8 | Platform staff onboarding (§7.4) | proposal: (a) creation only for an email without an identity — an existing identity is refused, keeping platform accounts separate from merchant accounts; (b) a `reactivate` operation that restores the membership with no grants (grants are removed at deactivation), with a new atomic event added to §8.1 on approval — otherwise the "cannot re-add a deactivated person" limitation is recorded. **Owner decision required before P5.0 freezes the platform staff contracts** |
 
 ## 15. Legacy context (background only — not a requirement)
 

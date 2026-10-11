@@ -9,7 +9,7 @@ executable only after the owner and the independent reviewer approve it (§12).
 |---|---|
 | Repository | `paxalpha/alphakolect_web` |
 | Branch | `feat/p5-authorization-audit` (no upstream) |
-| Baseline | `5d8904b` (P4 merged). The three review documents and this plan are committed on this branch as planning records (`890e59a`, `9650ad4`, `8d8fdac`; the plan from `ce3321f`); no P5 code, migration or test exists |
+| Baseline | `5d8904b` (P4 merged). The three review documents and this plan are committed on this branch as planning records (permitted by §12) (`890e59a`, `9650ad4`, `8d8fdac`; the plan from `ce3321f`); no P5 code, migration or test exists |
 | Inputs | `P5_AUDIT_REPORT.md` (incl. §22 review outcome and owner decisions), `P5_REVIEW_HANDOFF.md`, `P5_EVIDENCE_PACK.md`, the plan draft supplied by the reviewer, and direct source inspection |
 | Prepared | 2026-10-11 |
 
@@ -1230,8 +1230,11 @@ independent of the permission catalog); it is listed with them so it is complete
 ## 12. Approval sequence
 
 Draft (this document) → owner review → independent reviewer challenge → disagreements resolved and recorded here →
-**owner's explicit implementation approval** → P5.0 begins. Until then nothing is implemented, committed, pushed or
-merged.
+**owner's explicit implementation approval** → P5.0 begins. Until then **no P5 implementation begins**: no
+application code, migration or test is written or committed for P5. **Planning and review records** — this plan, the
+audit report, the review handoff, the evidence pack, owner questionnaires and the decision records of §14 — may be
+committed to this branch as they are written (R23); they change no behaviour. Nothing is pushed or merged without the
+owner, in either case.
 
 ## 13. P5 exit criteria (proposed for RESTRUCTURING_MAP)
 

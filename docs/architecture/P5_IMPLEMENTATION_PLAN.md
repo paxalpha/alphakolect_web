@@ -967,8 +967,8 @@ events after it depends on it: the policy middleware (P5.4) records its refusals
 P5.5–P5.7 write pattern-A pairs that must already be in the catalog; and the lock-order guard of P5.5 admits only
 `mutateAudited` and `recordBestEffort` as TypeScript audit writers (§7.2 transaction classes), so the P3 identity
 flows must already be pattern B when it is switched on. P5.3a has no dependency on P5.1–P5.3 (the event catalog is
-independent of the permission catalog); it is listed with them so it is complete before P5.4. P5.8 keeps only the audit
-**reads**.
+independent of the permission catalog); it is listed with them so it is complete before P5.4. P5.8 keeps the audit
+**reads** (and, if O9 is approved, the members and invitations list pagination).
 
 ### P5.0 — Decisions freeze and ADR-16
 
@@ -1157,7 +1157,7 @@ independent of the permission catalog); it is listed with them so it is complete
   cursor reused with different filters refused.
 - **Done when:** platform staff have exactly their grants.
 
-### P5.8 — Audit module
+### P5.8 — Audit reads (and O9 list pagination)
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
   #34); indexes; D9 documentation (§8.6); if O9 is approved, cursor pagination of the members and invitations lists

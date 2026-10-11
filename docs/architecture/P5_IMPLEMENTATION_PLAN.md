@@ -501,6 +501,41 @@ operation was authorized when it ran. Sensitive reads follow the same rule — d
 that re-checked X under the lock. Tested with two connections in both orders (P5.7), not only "revoked ⇒ next
 request".
 
+### 7.6 Branch restriction (D7; P4 closure review (B) and (C))
+
+[Fact] A staff membership may be restricted to one branch (`branch_id`; `NULL` = all branches, T7); invitations carry
+the same field. No branch-scoped **resource** exists (`schema.prisma`, 21 models: no customer, collection or other
+branch-owned data). The P4 isolation matrix pins staff and agents to their own membership endpoints so that "any
+endpoint opening to staff or agents fails the matrix until its branch scope is decided and tested (P5)"
+(RESTRUCTURING_MAP, P4 closure review (B)). P5 opens profile, branch, role, member, invitation and audit endpoints to
+staff, so it must make that decision explicitly:
+
+- **Every `permission` endpoint declares a branch scope** in the registry, next to its permission (P5.3):
+  `merchant_wide` or `branch`. Every P5 endpoint is `merchant_wide`: the merchant's profile, its list of branches,
+  its roles, its members, its invitations and its audit log are business-level administration, not data of one
+  branch. A branch restriction does **not** narrow them, and P5 claims no branch isolation (D7). `branch` is reserved
+  for the first branch-owned resources (P7/P8); the router refuses to start on a `branch` endpoint without a resolver
+  for the resource's branch.
+- **The policy decision takes an optional resource branch** (P5.4): for a `branch` endpoint, a restricted staff member
+  is allowed only for resources of their branch; lists filter in the scoped repository query, never after fetching;
+  another branch's resource answers **404** (T15). A restriction to an **archived** branch reaches **no** branch-scoped
+  resource (fail closed, D7 / P4 closure (C)); `NULL` reaches all. Unit-tested now with synthetic resources, since no
+  real one exists.
+- **Delegation and branches — [Open, O7 — proposal].** §7.3 bounds what a staff member can hand out by permissions
+  only. Without a branch rule, a staff member restricted to branch X who holds `merchant.members.manage` or
+  `merchant.invitations.manage` could assign or invite someone with **all** branches (`NULL`) or another branch —
+  harmless while nothing is branch-scoped, a widening of access as soon as P7/P8 adds branch-owned data. Proposal: a
+  **branch ceiling**, enforced in the same definer functions under the §7.2 locks (branches are already category 8 of
+  the footprint): a branch-restricted actor may act only on members restricted to their own branch, and may assign or
+  invite only with their own branch — never `NULL`, never another; an unrestricted actor and the owner are not
+  limited. If approved, it is built in P5.5 with the permission ceiling; if not, P5 records the widening as a known
+  limitation that P7/P8 must close before its first branch-scoped resource.
+- **Tests:** registry: every P5 endpoint declared `merchant_wide`, a `branch` declaration without a resolver refuses
+  startup; policy unit tests for restricted, unrestricted and archived-branch actors with synthetic resources (P5.4);
+  the matrix (P5.9) adds a branch-restricted staff member and a staff member restricted to an archived branch, who must
+  get exactly the results of an unrestricted staff member with the same permissions on every `merchant_wide`
+  endpoint; with O7 approved, the branch-ceiling refusals (P5.5).
+
 ## 8. Audit design
 
 ### 8.1 Event catalog
@@ -879,7 +914,8 @@ independent of the permission catalog); it is listed with them so it is complete
   D9 status. Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
   customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
-  owner; **O3 decided** before the merchant audit-read contract is frozen. The **platform audit-read contract is not
+  owner; **O7 decided** (branch ceiling, §7.6) before the member and invitation behaviour is frozen; **O3 decided**
+  before the merchant audit-read contract is frozen. The **platform audit-read contract is not
   frozen in P5.0**: O4 depends on a query-plan validation (§8.5) that needs representative data, so its freeze follows
   the sequence in P5.8. If O3 is still open at P5.0, the merchant audit-read contract is left out of the freeze too
   and is frozen, as an ADR-16 addendum, once the owner decides; P5.8 cannot implement an audit-read endpoint whose
@@ -918,7 +954,7 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Code:** `packages/contracts/src/registry.ts` (`authorization` field: class + permission/capability), all endpoint
   files, OpenAPI extension `x-authorization` (additive), `apps/api/src/platform/http/routes.ts` (refuse startup on
-  missing/invalid declaration); **query-parameter validation** in `apps/api/src/platform/http/validate.ts` (contracts
+  missing/invalid declaration) — each `permission` endpoint also declares its branch scope (§7.6); **query-parameter validation** in `apps/api/src/platform/http/validate.ts` (contracts
   may now declare `query`; values are validated from the contract like bodies and path parameters, unknown parameters
   refused), the prerequisite for the paginated reads of P5.7 and P5.8.
 - **Tests:** every operation declares exactly one valid class; unknown permission refused; route-parity asserts the
@@ -955,7 +991,8 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Code:** new `apps/api/src/platform/authorization.ts` (decision type, `authorize`); router mounts it from the
   registry; the 13 `requireOwner` call sites and both `ownerOrDenied` helpers are removed in favour of the declared
-  permission; `GET /v1/merchant/membership` returns effective permissions. Refusals by the middleware are recorded
+  permission; the decision takes an optional resource branch (§7.6, unit-tested with synthetic resources);
+  `GET /v1/merchant/membership` returns effective permissions. Refusals by the middleware are recorded
   as `authz.denied` through `recordBestEffort` (P5.3a; §8.2a rule 6); the catalog gains that pair here.
 - **Equivalence oracle:** with owners holding all merchant permissions and no staff grants, the P4 isolation matrix
   must produce identical results before and after.
@@ -967,7 +1004,7 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Migrations:** `CREATE OR REPLACE` of `list_members`, `update_membership`, `issue_invitation`,
   `revoke_invitation` (permission + delegation ceiling §7.3 + §7.2 locks), `set_merchant_status`, `transfer_ownership`
-  (reserved platform permissions); **one enforcement migration** that creates the definer writers for branches, roles
+  (reserved platform permissions) — with the branch ceiling of §7.6 if the owner approves O7; **one enforcement migration** that creates the definer writers for branches, roles
   and merchant profile **and revokes the app's direct write grants on them in the same transaction** (§7.2); the app
   switches to the writers in the same commit. Privileged functions write their audit rows themselves (§8.5).
 - **Tests:** direct calls with/without authority; staff above ceiling (assign, invite, act on a stronger member)
@@ -1078,7 +1115,8 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Work:** extend `isolation-matrix.test.ts`: expected results come from registry declarations (the
   `^FORBIDDEN` description regex is removed); actors = anonymous, invalid session, owner, staff with / without the
-  permission, staff above ceiling, archived-role staff, agent, super admin, platform staff with none / one / revoked
+  permission, staff above ceiling, archived-role staff, branch-restricted staff, staff restricted to an archived branch
+  (§7.6), agent, super admin, platform staff with none / one / revoked
   grant; plus foreign tenant and own-tenant-forbidden resources. Direct database-function tests run in
   `packages/db/test` alongside. Negative cases assert **no row changed**.
 - **Integrity:** no existing test weakened or skipped; every run recorded with command, commit and result.
@@ -1134,6 +1172,8 @@ merged.
 8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
 9. An owner-approved written D9 policy (§8.6) exists.
 10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).
+11. Every `permission` endpoint declares its branch scope; branch-restricted and archived-branch staff are covered by
+    the matrix; the branch decision for delegation (O7) is implemented or recorded as a limitation for P7/P8 (§7.6).
 
 ## 14. Open items for the reviewer and owner
 
@@ -1145,6 +1185,7 @@ merged.
 | O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8. Then **owner decision required before the platform audit-read contract is frozen** (ADR-16 addendum, P5.8 step 3 — not at P5.0); no default is implemented |
 | O5 | D9 retention policy | owner decision; a written policy is a P5 exit criterion (no exception route) |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
+| O7 | Branch ceiling for delegation (§7.6) | proposal: a branch-restricted actor acts only on members of their own branch and assigns or invites only with their own branch (never `NULL` = all branches); owner and unrestricted actors unaffected; built in P5.5 if approved, otherwise recorded as a limitation P7/P8 must close before its first branch-scoped resource. **Owner decision required before P5.0 freezes the member and invitation behaviour** |
 
 ## 15. Legacy context (background only — not a requirement)
 

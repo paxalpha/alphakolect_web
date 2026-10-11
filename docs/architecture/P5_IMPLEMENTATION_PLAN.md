@@ -152,8 +152,8 @@ Classes (exactly one per endpoint, declared in the contract):
 | Effective permissions added to `GET /v1/merchant/membership` (new response field) | self | P5.4 |
 | Effective permissions added to `GET /v1/auth/session` (new response field; platform sessions — the platform console's navigation is built from server-provided permissions, RESTRUCTURING_MAP §2.4; empty for agents and enrolment-only sessions) | self | P5.7 |
 | `GET /v1/merchant/audit-events` (cursor-paginated) | `merchant.audit.read` | P5.8 |
-| `GET /v1/platform/merchants` (list merchants) | `platform.merchants.read` | P5.7 |
-| `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships) | `platform.merchants.read` | P5.7 |
+| `GET /v1/platform/merchants` (list merchants; cursor-paginated) | `platform.merchants.read` | P5.7 |
+| `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships; cursor-paginated) | `platform.merchants.read` | P5.7 |
 | Platform staff: create/deactivate, set grants (`/v1/platform/staff…`) | `platform.staff.manage` (super admin) | P5.7 |
 | `GET /v1/platform/audit-events` (cursor-paginated) | `platform.audit.read` | P5.8 |
 
@@ -822,7 +822,9 @@ signature changes for this (each is a single statement that does not commit by i
   BUFFERS)` for each query shape — first page, continuation page, actor-filtered, merchant-filtered, empty window —
   must show an index scan reading roughly one page of rows, not a sort over the window. The chosen indexes, the plans
   and the dataset parameters are recorded with P5.8's evidence; an empty test database is never used to judge a plan.
-- Query-parameter validation is implemented first (prerequisite for pagination; currently refused by `validate.ts`).
+- Query-parameter validation is a prerequisite for every paginated read (currently refused by `validate.ts`). It is
+  built in **P5.3**, with the rest of the contract machinery, because P5.7 (platform lists) and P5.8 (audit reads) both
+  need it and run in parallel.
 
 ### 8.6 D9 — IP and user agent
 
@@ -913,10 +915,13 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Code:** `packages/contracts/src/registry.ts` (`authorization` field: class + permission/capability), all endpoint
   files, OpenAPI extension `x-authorization` (additive), `apps/api/src/platform/http/routes.ts` (refuse startup on
-  missing/invalid declaration).
+  missing/invalid declaration); **query-parameter validation** in `apps/api/src/platform/http/validate.ts` (contracts
+  may now declare `query`; values are validated from the contract like bodies and path parameters, unknown parameters
+  refused), the prerequisite for the paginated reads of P5.7 and P5.8.
 - **Tests:** every operation declares exactly one valid class; unknown permission refused; route-parity asserts the
   authorization middleware is mounted for every `permission` endpoint and only there; no route public by omission;
-  oasdiff non-breaking.
+  query parameters: valid values reach the handler typed, invalid or unknown ones are refused with 400 before any
+  handler or database call, and a contract without `query` still receives none; oasdiff non-breaking.
 - **Done when:** declarations are complete and machine-checked.
 
 ### P5.3a — Audit foundation (moved ahead of P5.4 in rev 10)
@@ -1023,7 +1028,11 @@ independent of the permission catalog); it is listed with them so it is complete
 - **Contracts/code:** platform staff management endpoints; `GET /v1/platform/merchants` through
   `tenancy.platform_list_merchants` and `GET /v1/platform/merchants/{id}/members` through
   `tenancy.platform_list_merchant_members` (closes P4 limitation 1); each designated function writes its one read event
-  (#35, #36) in the transaction that returns the rows.
+  (#35, #36) in the transaction that returns the rows. **Both lists are paginated from the start** (a cross-tenant list
+  of every merchant cannot be unbounded): at most 100 rows per page, ordered `created_at DESC, id DESC`, with the cursor
+  rules of the §8.5 pagination contract (position only, bound by digest to the request's filters, `400 INVALID_CURSOR`
+  on mismatch, strict tuple continuation); every page is its own sensitive read with its own event. Supporting indexes
+  are chosen from recorded query plans on seeded data, as in §8.5.
 - **Tests:** staff without grants: sign-in + MFA works, nothing else; one grant ⇒ exactly that; revoked grant ⇒ next
   request; lifecycle, transfer, staff management refused for staff even if a grant is attempted (reserved); super
   admin unchanged; MFA enrolment/verification unchanged for staff; reads audited, refused if the audit insert fails;
@@ -1032,7 +1041,9 @@ independent of the permission catalog); it is listed with them so it is complete
   grant to one platform membership never authorizes another membership of the same identity; **sensitive reads #35 and
   #36 (R16, R18)** — each designated function writes exactly one event per successful call, in the same transaction as
   the rows it returns, the repository writes none, and an injected failure of that insert returns no rows; a scratch
-  second function that writes `platform.merchant_list_read` fails the writer guard.
+  second function that writes `platform.merchant_list_read` fails the writer guard; **pagination** — first and
+  continuation pages, a page boundary inside a group of equal `created_at` values (no row lost or repeated), and a
+  cursor reused with different filters refused.
 - **Done when:** platform staff have exactly their grants.
 
 ### P5.8 — Audit module

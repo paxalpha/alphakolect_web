@@ -1005,7 +1005,7 @@ independent of the permission catalog); it is listed with them so it is complete
 
 - **Work:** write ADR-16 into `TARGET_ARCHITECTURE.md` (append; ADR-15 unchanged): the catalog (§6), classes and
   route map (§5), resolution and write-time re-check (§7), delegation ceiling, platform grants, audit classes (§8),
-  D9 status. Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
+  D9 status, and the **decision log** (§14, R26). Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
   customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
   owner; **O7 decided** (branch ceiling, §7.6) before the member and invitation behaviour is frozen; **O8 decided**
@@ -1015,7 +1015,10 @@ independent of the permission catalog); it is listed with them so it is complete
   frozen in P5.0** (R24): their shared bounds are O4, which depends on a query-plan validation (§8.5) that needs
   representative data, so both are frozen together in P5.8 step 3. P5.8 cannot implement an audit-read endpoint whose
   contract is not frozen, and step 3 cannot happen while O3 or O4 is open.
-- **Done when:** owner and reviewer approve ADR-16 and this plan.
+- **Done when:** the ADR-16 decision log (§14, R26) has a complete entry for O3, O7, O8 and O9 and for the
+  confirmation of the agreed positions (O4 is recorded at P5.8 step 2, D9 before P5.10); every row of §14 that these
+  affect cites its entry; and the owner and the reviewer approve the **final** ADR-16 and this plan, each approval
+  itself recorded with name and date. Editing the documents does not complete P5.0.
 
 ### P5.1 — Catalog and protected grant storage
 
@@ -1285,6 +1288,14 @@ owner, in either case.
     the matrix; the branch decision for delegation (O7) is implemented or recorded as a limitation for P7/P8 (§7.6).
 
 ## 14. Open items for the reviewer and owner
+
+**Decision records (R26).** A decision exists only when it is recorded, not when this document is edited. Each owner
+decision gets an entry in the **ADR-16 decision log** with: the item (e.g. O7); the option selected, quoting the
+owner's answer; the decision-maker; the date; the source (for the owner's answers,
+`docs/business/P5_OWNER_QUESTIONS.md`, answered in the owner's words as in the earlier business questionnaires); the
+plan sections and contracts it affects; and the commit that applies it to this plan. Only then does the item's row
+below change to **DECIDED**, citing that entry. The positions agreed "unless the owner objects" (D2, D3, D6–D8,
+D10–D12, §3) are recorded the same way — as the owner's explicit confirmation, or as "no objection" with its date.
 
 | # | Item | Proposed position |
 |---|---|---|

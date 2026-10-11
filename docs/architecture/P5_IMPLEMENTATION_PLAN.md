@@ -59,6 +59,9 @@ suspension (P10); an IP/user-agent retention period (D9 stays open — §8.6).
 
 ## 3. Governing decisions
 
+**Numbering.** In this plan, **D1–D12** are the P5 decisions below. The identity decisions of ADR-14 also use D-numbers
+(D1–D15); whenever one of those is meant, it is written **ADR-14 Dn** (e.g. ADR-14 D12, anti-enumeration).
+
 Owner decisions (recorded in `P5_AUDIT_REPORT.md` §22.4): **D1** assigned-customer authorization → P7/P8; **D4**
 per-platform-membership grants, no defaults, merchant lifecycle / ownership transfer / platform staff management
 super-admin only; **D5** only owners edit roles and their permissions, staff assign or invite only within their own
@@ -637,7 +640,7 @@ same transaction as the rows it returns (§8.2a rule 7).
 | Identifier | Outcomes |
 |---|---|
 | `auth.signup`, `auth.email_verify`, `auth.login`, `auth.login_select`, `auth.refresh`, `auth.password_change`, `auth.password_reset`, `auth.account_setup`, `auth.mfa_enrollment_confirmed`, `auth.mfa_verify`, `auth.invitation_accepted` | failure (each listed separately in the catalog) |
-| `auth.password_forgot`, `auth.verification_resend` | success **and** failure — requests that issue a link; they change no credential or authority, and the link's use is itself atomic (#2, #9, #10). **[Open, O6 — proposal]** keep these best effort |
+| `auth.password_forgot`, `auth.verification_resend` | success **and** failure — requests that issue a link; they change no credential or authority, and the link's use is itself atomic (#2, #9, #10). Best effort by the **owner's decision O6** (§14, 2026-10-11), with its conditions |
 | `merchant.profile_updated`, `merchant.branch_created`, `merchant.branch_updated`, `merchant.role_created`, `merchant.role_updated`, `merchant.role_permissions_set` *new* | denied, failure |
 | `merchant.member_assigned`, `merchant.member_deactivated`, `merchant.member_reactivated`, `merchant.invitation_issued`, `merchant.invitation_revoked` | denied, failure |
 | `platform.merchant_deactivated`, `platform.merchant_reactivated`, `platform.ownership_transferred`, `platform.staff_created` *new*, `platform.staff_deactivated` *new*, `platform.grants_set` *new* | denied, failure |
@@ -1044,7 +1047,7 @@ merged.
 | O3 | Which denial categories and fields owners (and `merchant.audit.read` staff) may see | proposal (reviewer recommends approving, with precision): only this merchant's events; summaries limited to each event's allowlisted fields; denials visible only where they concern this merchant's operations; never cross-tenant activity, credentials, tokens or request bodies; the owner's and staff's visible denial categories defined separately if they differ — **owner decision required before P5.0 freezes the merchant audit-read contract**; no default is implemented |
 | O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21). Then **owner decision required before P5.0 freezes the platform audit-read contract**; no default is implemented |
 | O5 | D9 retention policy | owner decision; a written policy is a P5 exit criterion (no exception route) |
-| O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, D12); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
+| O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 
 ## 15. Legacy context (background only — not a requirement)
 

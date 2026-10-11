@@ -176,6 +176,34 @@ decisions, all 2026-10-09). The P4 scope, exit criteria and work packages are in
 
 **P4.3 follow-up (2026-10-10, owner review; appended, T1–T17 unchanged):** T8 is enforced in the database — `CHECK (kind <> 'staff' OR role_id IS NOT NULL)` with the composite `(merchant_id, role_id)` foreign key: a staff membership always references a role of its own merchant; owners and agents never have one; a referenced role cannot be deleted. **Consequence for T17:** the demoted owner becomes staff, so the ownership transfer must assign that person a role of the merchant in the same transaction (otherwise the database refuses the demotion).
 
+**P4 closure notes (2026-10-11; appended — T1–T17 and the tables below are unchanged as decided).** How the
+implementation reads the decisions where they left room, so that P5 builds on what exists:
+
+- **Authority from the session, in the database (T9, T13, T15).** The membership, invitation and transfer functions
+  take the caller's **session id**, not a merchant id: each re-runs `identity.validate_session`, takes the merchant
+  from that session (never an argument), and decides the owner / super-admin authority itself — after locking the
+  merchant row, so a concurrent ownership transfer is either seen or not yet begun. Implemented signatures:
+  `tenancy.list_members(session, membership?)`, `tenancy.update_membership(session, membership, action, role, branch)`,
+  `tenancy.issue_invitation(session, email, kind, role, branch, token hash, setup hash, ttl)`,
+  `tenancy.revoke_invitation(session, invitation)`, `tenancy.accept_invitation(token hash, identity)`,
+  `tenancy.transfer_ownership(session, merchant, new owner, former owner role, deactivate former)`. The API keeps its
+  T9 `requireOwner` check as an early answer; the database is the boundary.
+- **T17, the new owner.** "An active member" is read as an **active staff member with an active, verified
+  identity**: agents have a fixed capability set (BR-3) and another audience, so making one the web owner is a new
+  person's onboarding, not a transfer. The former owner becomes staff with a role the admin chooses (the T8
+  consequence noted above) and no branch restriction.
+- **T10, setup ↔ invitation.** The link is the **identity**, not one particular setup token: P3's forgot-password
+  flow issues a fresh setup link to a passwordless identity (expiring the older one), and that link must still lead
+  to the invitation. Completing setup therefore admits each of the identity's pending invitations that is still
+  valid at that moment (each re-checked under lock); invalid ones are simply not admitted and setup completes.
+  Invitations live at most 24 hours, P3's account-setup cap.
+- **Deactivating a member** also revokes that membership's sessions; reactivation needs a new sign-in.
+- **T12, rotation.** The audience check comes **before** reuse detection: a token presented at the wrong endpoint
+  changes nothing (it is neither rotated nor reuse-revoked).
+- **T4 for agents.** The choices are returned in the body of `POST /v1/auth/agent/login` (after the password check)
+  with their own schema, `AgentMembershipChoice`; the contract guard pins it to that operation as `MembershipChoice`
+  is pinned to `GET /v1/auth/login/memberships`.
+
 **Membership selection (T4) — contract.** `POST /v1/auth/login` keeps its 200 response (`LoginResponse` unchanged).
 When the verified identity has more than one eligible membership it answers **`409 MEMBERSHIP_SELECTION_REQUIRED`**
 — only after the password check, like `403 EMAIL_VERIFICATION_REQUIRED` — and sets a **selection challenge**

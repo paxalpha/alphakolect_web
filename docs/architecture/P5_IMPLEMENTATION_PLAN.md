@@ -760,11 +760,37 @@ signature changes for this (each is a single statement that does not commit by i
   every new definer read, and the lock-order guard's parser adds a check: a query on a tenant table inside a definer
   function without a `merchant_id` predicate bound to the session-derived merchant fails the guard (platform reads,
   which are cross-tenant by design, are exempt by classification and are permission-gated and audited instead).
-- Platform audit reads: a definer function checking `platform.audit.read` (under the §7.5 lock), applying bounds and a
-  cursor on `(occurred_at, id)`, and writing its own read event in the same transaction. Tenant RLS is not relaxed.
-  **[Open, O4 — proposal]** at most 100 events per page and a required time window of at most 31 days, to be validated
-  against the index design before it is frozen.
-- Indexes added for read paths: `(actor_identity_id, occurred_at)`, `(request_id)`.
+- Platform audit reads: the designated definer function `audit.read_platform_events` (#34), checking
+  `platform.audit.read` under the §7.5 lock, applying the bounds and cursor rules below, and writing its own read
+  event in the same transaction. Tenant RLS is not relaxed. **[Open, O4 — proposal]** at most 100 events per page and
+  a required time window of at most 31 days, to be validated against the index and query design (below) before it is
+  frozen.
+- **Pagination contract for both audit reads (R21).**
+  - **Order:** newest first, `ORDER BY occurred_at DESC, id DESC` — a total order: [Fact] `occurred_at` defaults to
+    `CURRENT_TIMESTAMP` (`20260927000100_baseline:133`), PostgreSQL's **transaction start time**, so every event
+    written in one transaction shares a timestamp; ties are routine, not an edge case, and the UUIDv7 `id` breaks them.
+  - **Window and filters come from the request, every time.** The time window (`from`, `to`; at most 31 days; `from` <
+    `to`) and filters (actor; for the platform read optionally merchant and event identifier, if O4 includes them) are
+    validated on **every** request and always appear in the query's `WHERE` clause. The cursor never substitutes for
+    them.
+  - **The cursor carries only a position** — `(occurred_at, id)` of the last row returned — plus a digest of the
+    normalized window and filters it was issued for. A cursor presented with a different window or filters (digest
+    mismatch), or positioned outside the requested window, is rejected (`400 INVALID_CURSOR`). Continuation uses the
+    strict tuple predicate `(occurred_at, id) < (cursor.occurred_at, cursor.id)` together with the window and filter
+    predicates, so a forged or tampered cursor can only move within the window the request itself authorizes.
+  - **Merchant reads** additionally carry the session-merchant predicate in every query (R19); a cursor never names a
+    merchant.
+- **Indexes — chosen by measured plans, not assumed.** [Fact] Existing: `(merchant_id, occurred_at)` and
+  `(action, occurred_at)` (`20260927000100_baseline:181,184`); neither ends in `id`, and nothing supports a global
+  or actor-filtered scan in `(occurred_at, id)` order. **Candidates to evaluate** (not a commitment to create all of
+  them): `(occurred_at, id)` for unfiltered platform pages; `(actor_identity_id, occurred_at, id)` for actor filters;
+  `(merchant_id, occurred_at, id)` for merchant reads and merchant-filtered platform reads (which may supersede the
+  existing `(merchant_id, occurred_at)`); `(request_id)` only if a request-id filter is part of an approved contract.
+  **Validation (P5.8, before O4 is frozen):** a throwaway database seeded with a representative, skewed volume (order of
+  millions of events across thousands of merchants and actors, with many same-timestamp groups); `EXPLAIN (ANALYZE,
+  BUFFERS)` for each query shape — first page, continuation page, actor-filtered, merchant-filtered, empty window —
+  must show an index scan reading roughly one page of rows, not a sort over the window. The chosen indexes, the plans
+  and the dataset parameters are recorded with P5.8's evidence; an empty test database is never used to judge a plan.
 - Query-parameter validation is implemented first (prerequisite for pagination; currently refused by `validate.ts`).
 
 ### 8.6 D9 — IP and user agent
@@ -932,7 +958,11 @@ parallel only after the resolver, registry and audit interfaces are frozen.
   never stored (leak sweep extended to every new journey); **the coverage guard of §8.1** (one writer per atomic pair;
   per pair a co-commit test asserting actor, merchant, target and request id, and a rollback test via the injected
   insert failure); the double-recording guards (pattern A/B literals); P4 member/invitation atomicity still holds;
-  audit reads tenant-isolated, bounded, themselves audited; append-only unchanged.
+  audit reads tenant-isolated, bounded, themselves audited; append-only unchanged; **pagination (R21)** — first page,
+  continuation pages, a group of same-timestamp events split across a page boundary (no row lost or repeated), actor
+  filtering, merchant filtering (platform), an empty window, a window over 31 days refused, and a cursor reused with a
+  different window or filter refused with `400 INVALID_CURSOR`; the §8.5 query-plan validation recorded on
+  representative data.
 - **Done when:** every event class behaves as §8.2 states, proven by failure injection.
 
 ### P5.9 — Authorization matrix and regression gate
@@ -998,7 +1028,7 @@ merged.
 | O1 | Move branch/role/profile writes into definer functions and revoke direct grants (§7.2) | adopt (owner supports), with the single-migration enforcement boundary of §7.2 |
 | O2 | Exact contracts of the new endpoints (§5) | frozen in P5.0 |
 | O3 | Which denial categories and fields owners (and `merchant.audit.read` staff) may see | proposal (reviewer recommends approving, with precision): only this merchant's events; summaries limited to each event's allowlisted fields; denials visible only where they concern this merchant's operations; never cross-tenant activity, credentials, tokens or request bodies; the owner's and staff's visible denial categories defined separately if they differ — **owner decision required before P5.0 freezes the merchant audit-read contract**; no default is implemented |
-| O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15; served by the `(actor_identity_id, occurred_at)` index); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor cannot widen or leave the requested window — validated against the query plan, then **owner decision required before P5.0 freezes the platform audit-read contract**; no default is implemented |
+| O4 | Platform audit-read bounds | proposal (reviewer recommends approving, subject to validation): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21). Then **owner decision required before P5.0 freezes the platform audit-read contract**; no default is implemented |
 | O5 | D9 retention policy | owner decision; a written policy is a P5 exit criterion (no exception route) |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, D12); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 

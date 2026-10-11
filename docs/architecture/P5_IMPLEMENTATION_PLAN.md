@@ -1008,9 +1008,10 @@ parallel only after the resolver, registry and audit interfaces are frozen.
 ### P5.10 — Closure
 
 - **Work:** ADR-16 updated to as-built; `RESTRUCTURING_MAP.md` P5 record (packages, migrations, endpoints, mutation
-  counts, limitations, deviations); the owner-approved D9 written policy (§8.6) in place; the P5 threat model moved
-  from `P5_AUDIT_REPORT.md` §15 into `docs/security/` and updated to as-built (TARGET_ARCHITECTURE §27 lists it as
-  owed); full gate twice;
+  counts, limitations, deviations); the owner-approved D9 written policy (§8.6) in place; the **as-built P5
+  threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
+  design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
+  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); full gate twice;
   gitleaks over full history; the three review documents either committed as planning records or deleted — **owner's
   choice**.
 - **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.

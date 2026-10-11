@@ -415,6 +415,10 @@ staff start with none, **no step widens access**; the worst failure mode of a br
 
 ## 15. Threat model and prioritized findings
 
+**Status: design-stage input.** This table is the threat model at planning time, written before any P5 code
+exists. It is **not** the as-built threat model: that deliverable is written in `docs/security/` at P5.10 closure
+(TARGET_ARCHITECTURE §27 lists it as owed) and remains outstanding until then.
+
 | # | Threat | Asset | Path | Existing control | Residual gap | Mitigation | Regression test | Severity |
 |---|---|---|---|---|---|---|---|---|
 | T-1 | Staff grants self more permissions | role permissions | staff with `roles.manage` edits own role or adds a permission they lack | none (feature absent) | design | DB function: cannot grant a permission one lacks; cannot edit own role (D5) | escalation tests | High (design-stage) |

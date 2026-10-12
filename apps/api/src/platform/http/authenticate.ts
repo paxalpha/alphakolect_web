@@ -1,5 +1,11 @@
 import { timingSafeEqual } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, type EndpointContract, type Permission } from '@alphakolect/contracts';
+import {
+  AUTH_COOKIES,
+  CSRF_HEADER,
+  PERMISSIONS,
+  type EndpointContract,
+  type Permission,
+} from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import type { AccessTokens, SessionAudience } from '../../modules/identity/access-tokens.js';
 import type { IdentityRepository } from '../../modules/identity/repository.js';
@@ -46,6 +52,19 @@ export type AuthDeps = {
   /** Origins allowed to make cookie-authenticated state changes (CSRF defence). Empty = none. */
   webOrigins: ReadonlySet<string>;
 };
+
+const KNOWN_PERMISSIONS: ReadonlySet<string> = new Set(PERMISSIONS);
+
+/**
+ * The resolver's identifiers, checked at the boundary (P5.2 gate review). The catalog and the contracts list the same
+ * identifiers — compared on every test run — so normally nothing is dropped. An identifier this version does not know
+ * can only appear between a catalog migration and the release that ships its code; no code of this version can check
+ * it, so it is dropped: the result can only hold fewer permissions, never more. Throwing instead would turn every
+ * owner's request into a 500 in that window, since owners hold every merchant permission.
+ */
+export function knownPermissions(resolved: readonly string[]): readonly Permission[] {
+  return Object.freeze(resolved.filter((p): p is Permission => KNOWN_PERMISSIONS.has(p)));
+}
 
 /** D7: which transport each audience may use. */
 const COOKIE_AUDIENCES: ReadonlySet<SessionAudience> = new Set(['platform', 'merchant']);
@@ -156,8 +175,7 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
         kind: session.kind,
         roleId: session.role_id,
         branchId: session.branch_id,
-        // The catalog and the contracts list the same identifiers (checked on every test run), so the cast is exact.
-        permissions: Object.freeze([...session.permissions]) as readonly Permission[],
+        permissions: knownPermissions(session.permissions),
         transport: credential.transport,
       });
       next();

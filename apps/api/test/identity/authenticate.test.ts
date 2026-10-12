@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import type { AccessClaims } from '../../src/modules/identity/access-tokens.js';
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
-import { authenticate } from '../../src/platform/http/authenticate.js';
+import { authenticate, knownPermissions } from '../../src/platform/http/authenticate.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
 import { resolveRequestId } from '../../src/platform/http/request-id.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
@@ -291,6 +291,17 @@ describe('who gets in', () => {
   it("any audience on an 'authenticated' endpoint", async () => {
     expect((await get(E.anyRead).set('Cookie', cookie(merchant.token))).status).toBe(200);
     expect((await get(E.anyRead).set('Authorization', `Bearer ${agent.token}`)).status).toBe(200);
+  });
+});
+
+describe('permission identifiers at the boundary (P5.2 gate review)', () => {
+  it('keeps every catalog identifier and drops one this version does not know — never adds', () => {
+    const resolved = ['merchant.profile.read', 'merchant.future.read', 'platform.audit.read'];
+    const kept = knownPermissions(resolved);
+    expect(kept).toEqual(['merchant.profile.read', 'platform.audit.read']);
+    expect(Object.isFrozen(kept)).toBe(true);
+    expect(knownPermissions([...PERMISSIONS])).toEqual(PERMISSIONS);
+    expect(knownPermissions([])).toEqual([]);
   });
 });
 

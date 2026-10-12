@@ -268,7 +268,8 @@ rules that make that set finite and checkable:
 - **L4 — triggers and policies.** [Fact] The triggers on tables written by these flows lock nothing:
   `merchant_keeps_one_owner` (deferred, reads only), the append-only triggers on `audit.audit_events` (fire on
   `UPDATE`/`DELETE`; refuse them except the purge's age-checked `DELETE`, §8.6 — they read `current_user`, the row and its pair's
-  retention period in the event catalog, nothing else, and lock nothing), [Plan] the event-validation trigger (reads the event catalog, §8.1), and the ledger triggers (not touched by these flows); RLS policies call
+  retention — the catalog override or `audit.d9_retention()`, a `STABLE` function that only returns a constant and is on
+  the guard's lock-free allowlist (R42) — nothing else, and lock nothing), [Plan] the event-validation trigger (reads the event catalog, §8.1), and the ledger triggers (not touched by these flows); RLS policies call
   `util.current_merchant_id()`, which reads a setting. The guard re-checks every trigger function.
 - **L5 — whole footprint first, one row at a time.** A function acquires its complete footprint before its first write,
   category by category in the order below, ascending id within a category, one row per statement, through the
@@ -718,9 +719,12 @@ TypeScript union **for typing only**, compared with the table on every test run 
 (identifier, outcome) pair, a summary field outside the allowlist or over its length bound raises — so the behaviour
 table below holds **at run time for every writer**, SQL functions included, not only for TypeScript callers. Its
 function is `SECURITY DEFINER` with a pinned `search_path` and no app grant, so no writing role needs a grant on the
-catalog. Each catalog entry also carries its **retention period** (`retention interval`; `interval '2 years'` for every
-P5 pair, D9 — calendar years, defined once in §8.6, R41), read by the retention purge (§8.6), so a later phase whose events need a different period (e.g. financial
-records in P6+) sets it per entry by migration instead of redesigning the purge. Writer
+catalog. Each catalog entry has a **retention override** column (`retention_override interval`, nullable). For every
+P5 pair it is `NULL`, meaning "the D9 retention": the purge and the append-only trigger compute an entry's retention
+at run time as `COALESCE(retention_override, audit.d9_retention())` (§8.6, R41, R42), so `audit.d9_retention()` is
+the one runtime source for P5, not a value copied into rows. A later phase whose events need a different period
+(e.g. financial records in P6+) sets an override on its own entries by migration, instead of redesigning the purge;
+a catalog test fails if any P5 pair carries an override. Writer
 class and pattern stay enforced by the static writer guard and by `recordBestEffort`'s own class check. The **class** (atomic, best effort or sensitive
 read, §8.2) is declared per **(identifier, outcome)** pair — e.g. `auth.login`/`success` is atomic (a session is
 created) while `auth.login`/`failure` is best effort — together with a **summary allowlist** (field → type, bounded
@@ -1089,8 +1093,11 @@ append-only for every role (grant and trigger, `20260927000300:142-147`).
 
 **"Two years" has one technical meaning (R41):** calendar years — PostgreSQL `timestamptz − interval '2 years'`, the
 owner's words ("two years"), not 730 days. It is defined once, as the SQL function `audit.d9_retention()` returning
-`interval '2 years'`; the P5 catalog entries are seeded from it, and the field clearing uses it directly, so the
-audit deletion, the append-only trigger's age check and the session and token clearing all use the same value. Year
+`interval '2 years'` (declared `STABLE`, not `IMMUTABLE`, so a redefinition is never inlined or cached as a
+constant). It is read **at run time** everywhere: the audit deletion and the append-only trigger's age check use
+`COALESCE(retention_override, audit.d9_retention())` for the event's catalog entry — every P5 entry has no override —
+and the session and token clearing use it directly. Redefining the function (a migration, `CREATE OR REPLACE`)
+therefore moves all four cutoffs together, with nothing stored to update (R42). Year
 arithmetic on `timestamptz` depends on the session time zone, so every function that computes a cutoff (the two purge
 functions, the clearing function and the trigger function) pins `SET TimeZone = 'UTC'` beside its `search_path`.
 Comparisons are strict: a row is eligible when its time is **before** the cutoff, never at it. On a leap day the
@@ -1102,7 +1109,7 @@ The exception is:
 2. two functions, both owned by that role (`SECURITY DEFINER`, pinned `search_path` and `TimeZone`, R41),
    operator-only, define
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
-   `occurred_at < p_as_of − its pair's retention period`. Because `p_as_of` can never be in the future, an operator
+   `occurred_at < p_as_of − COALESCE(retention_override, audit.d9_retention())` for its pair (R42). Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
    - `audit.purge_candidates(p_as_of, p_after_id, p_limit)` — read-only, paged by `id`: returns up to `p_limit`
      eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its canonical text
@@ -1121,7 +1128,7 @@ The exception is:
      reachable only by the operator role, which as the table owner can already read the table, and each run's export
      is recorded in its #38 event;
 3. the append-only trigger is changed to allow a `DELETE` **only** when `current_user` is that role **and** the row is
-   older than its pair's retention period in the event catalog (`audit.d9_retention()` for every P5 pair, R41), so even
+   older than its pair's retention, `COALESCE(retention_override, audit.d9_retention())` (R41, R42), so even
    a defect in the purge
    function cannot delete a younger row; `UPDATE` stays forbidden for everyone;
 4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_as_of)`, run once per
@@ -1194,8 +1201,10 @@ The exception is:
 Tests: rows younger than their retention period always survive, whatever `p_as_of`; **boundary (R41)** — for the
 audit deletion, the trigger's age check, session clearing and token clearing alike: a time exactly at the cutoff is
 not eligible and one microsecond earlier is; `p_as_of` on 29 February 2028 gives the cutoff 28 February 2026; the same
-result under two different session time zones; changing `audit.d9_retention()` in a scratch copy moves all four
-together; a `p_as_of` in the future is
+result under two different session time zones; redefining `audit.d9_retention()` in the throwaway test database
+(`CREATE OR REPLACE`, as a migration would) moves all four cutoffs together on the next call, with no catalog row
+changed; a scratch event entry with an override uses its override, not the function; the catalog test fails if a P5
+pair has an override; a `p_as_of` in the future is
 refused (by all three functions); the app role cannot execute any of the three functions or delete directly;
 an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
 than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active

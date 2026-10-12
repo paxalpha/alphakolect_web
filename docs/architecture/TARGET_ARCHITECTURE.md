@@ -538,7 +538,7 @@ request → authenticate (session) → resolve Actor {identity, audience, member
 | **documents** | documents (metadata), storage adapter | upload (signed), view (signed URL), scan | — |
 | **audit** | audit_events | append, query | — |
 
-Rules: a module exposes a **service interface** and **domain events**; other modules never import its repositories or query its schema. Cross-module writes inside one money operation go through the **ledger service within the same DB transaction** (the only sanctioned cross-module transaction).
+Rules: a module exposes a **service interface** and **domain events**; other modules never import its repositories or query its schema. **Transaction contract:** a use case that changes several modules opens **one** database transaction and passes it to each module service it calls; each module writes only its own tables, through its own service or database functions; audit and outbox writes join that transaction; no network call is made while it is open. Which module may call which follows the *Depends on* column; making those rules enforceable, and removing the cycles in that column, is a separate step before P6 (`TARGET_ARCHITECTURE_REVIEW.md` TA-10). *(This replaces the earlier rule that only the ledger service could share a transaction across modules — audit already joins tenancy's transactions through `recordWithin`.)*
 
 ---
 

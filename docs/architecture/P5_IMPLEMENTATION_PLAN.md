@@ -261,7 +261,7 @@ rules that make that set finite and checkable:
   foreign key references are never deleted. [Fact] At `5d8904b` the only `DELETE`s are on `identity.recovery_codes`
   and `util.rate_limit_counters`, which no foreign key references; `FOR UPDATE` appears in eight live functions — `consume_one_time_token`, `rotate_refresh_token`,
   `take_selection` (P3) and `set_merchant_status`, `update_membership`, `transfer_ownership`, `admit_invitation`,
-  `revoke_invitation` (P4) — which P5 converts to `FOR NO KEY UPDATE`. [Plan] P5 adds three kinds of `DELETE`, all of
+  `revoke_invitation` (P4) — which P5 converts to `FOR NO KEY UPDATE`. [Plan] (Part 2 for the purge) P5 adds three kinds of `DELETE`, all of
   rows that no foreign key references: grant rows (role-permission rewrites, platform-staff deactivation) and, outside
   every request path, expired audit events (the retention purge, §8.6). The guard verifies "no foreign key references
   the table" for every `DELETE` it finds.
@@ -276,7 +276,7 @@ rules that make that set finite and checkable:
   of fresh random values (token and session hashes, UUIDv7 ids) are not contested.
 - **L4 — triggers and policies.** [Fact] The triggers on tables written by these flows lock nothing:
   `merchant_keeps_one_owner` (deferred, reads only), the append-only triggers on `audit.audit_events` (fire on
-  `UPDATE`/`DELETE`/`TRUNCATE`; from rev 20 they call the dedicated `audit.audit_events_guard()`, §8.6, which refuses
+  `UPDATE`/`DELETE`/`TRUNCATE`; from rev 20 they call the dedicated `audit.audit_events_guard()` (Part 2), §8.6, which refuses
   them except a purge run's age-checked `DELETE` — it reads the transaction's `audit.purge_run_id` setting, the
   reservation row (without a lock), the row and its pair's retention — the catalog override or `audit.d9_retention()`,
   a `STABLE` function that only returns a constant and is on the guard's lock-free allowlist (R42) — nothing else, and
@@ -370,10 +370,10 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
-| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
-| `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
-| `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
+| `audit.purge_candidates` (Part 2; operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
+| `audit.purge_expired_events` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
+| `audit.clear_expired_request_metadata` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 
 **Why these read footprints and no more (R20).** A sensitive read locks only the rows that carry the actor's
 authority, so that a concurrent revocation is either seen or waits (§7.5): the actor's platform membership for the
@@ -416,7 +416,7 @@ Tests (P5.7 for the platform lists, P5.8 for the audit reads and O9 lists), each
 insert and shows the committed version of the updated row; (b) an event committed between two page requests with a
 key **older** than the cursor appears on the later page, one with a key **newer** than the first page's first row
 appears on no later page, and no row is repeated; (c) a member's status changed between two pages — the row appears
-once, with the state at its page's read; (d) the §7.5 revocation race for each read; (e) **traversal against a
+once, with the state at its page's read; (d) the §7.5 revocation race for each read; (e) (Part 2) **traversal against a
 concurrent purge** (P5.8, R35) — events backdated past their retention period and recent events in one window, the
 purge committed between two pages: every row still present is returned exactly once, purged rows are absent, nothing
 is repeated, and a continuation whose cursor row was purged still returns the correct next page. No test may assume that
@@ -870,12 +870,12 @@ once per audience.
 | 31 | `platform.staff_deactivated` *new* | success | A | P5.7 staff function | P5.7 tests |
 | 32 | `platform.grants_set` *new* | success | A | `set_platform_grants` | P5.7 tests |
 | 37 | `platform.staff_reactivated` *new* (O8(b), rev 12; numbered after the sensitive reads so existing numbers stay stable) | success | A | P5.7 staff function | P5.7 tests |
-| 38 | `platform.audit_purged` *new* (D9, rev 12) | success | A | `audit.purge_expired_events` (operator only, §8.6) | P5.8 tests |
+| 38 | `platform.audit_purged` *new* (Part 2; D9, rev 12) | success | A | `audit.purge_expired_events` (operator only, §8.6) | P5.8 tests |
 | 39 | `platform.authorization_containment_set` *new* (R30, rev 13) | success | A | `util.set_authorization_containment` (operator only, §11.1) | P5.5 tests |
-| 40 | `platform.request_metadata_cleared` *new* (R40, rev 16) | success | A | `audit.clear_expired_request_metadata` (operator only, §8.6) | P5.8 tests |
-| 41 | `platform.purge_report_delivered` *new* (R45, rev 19) | success | A | `audit.record_report_delivery` (operator only, §8.6) | P5.8 tests |
-| 42 | `platform.purge_report_requested` *new* (R45, rev 19) | success | A | `audit.request_purge_report` (operator only, §8.6) | P5.8 tests |
-| 43 | `platform.purge_report_lost` *new* (R52, rev 21) | success | A | `audit.record_report_lost` (operator only, §8.6) | P5.8 tests |
+| 40 | `platform.request_metadata_cleared` *new* (Part 2; R40, rev 16) | success | A | `audit.clear_expired_request_metadata` (operator only, §8.6) | P5.8 tests |
+| 41 | `platform.purge_report_delivered` *new* (Part 2; R45, rev 19) | success | A | `audit.record_report_delivery` (operator only, §8.6) | P5.8 tests |
+| 42 | `platform.purge_report_requested` *new* (Part 2; R45, rev 19) | success | A | `audit.request_purge_report` (operator only, §8.6) | P5.8 tests |
+| 43 | `platform.purge_report_lost` *new* (Part 2; R52, rev 21) | success | A | `audit.record_report_lost` (operator only, §8.6) | P5.8 tests |
 
 **Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
 
@@ -1162,7 +1162,7 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   destroyed, and the operator command writes it only to the path the operator names, never into the repository or
   onto the server.
 
-**Retention design ([Plan], P5.8) — the one controlled exception to append-only.** [Fact] `audit.audit_events` is
+**Retention design (Part 2, §12) ([Plan], P5.8) — the one controlled exception to append-only.** [Fact] `audit.audit_events` is
 append-only for every role (grant and trigger, `20260927000300:142-147`).
 
 **"Two years" has one technical meaning (R41):** calendar years — PostgreSQL `timestamptz − interval '2 years'`, the
@@ -1492,7 +1492,7 @@ when each migration is written.
 
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
-(`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
+(`identity.bootstrap_super_admin`; the purge functions, Part 2: `audit.purge_candidates`, `audit.purge_expired_events`,
 `audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.renew_purge_run`,
 `audit.request_purge_report`, `audit.confirm_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`,
 `audit.release_purge_run`,
@@ -1501,7 +1501,7 @@ functions a request path calls. **No app grant** for: operator and maintenance f
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
-app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Purge ownership and privileges (rev 20; replaces the R39 purger table).** The purge functions are owned by
+app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Purge ownership and privileges (Part 2; rev 20; replaces the R39 purger table).** The purge functions are owned by
 `alphakolect_migrator` (§8.6 item 1) and run through the operator's migrator connection, so they need no grant
 beyond ownership — id defaults (`util.uuid_v7()`), the `identity` schema and the report tables included (R46).
 What is enumerated and tested is what **others** may not do: `alphakolect_app` and `alphakolect_readonly` have no
@@ -1814,7 +1814,7 @@ independent of the permission catalog); it is listed with them so it is complete
   its logic in `apps/api/src/modules/audit/purge.ts`,
   tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
   follows it too (`admin:containment`, built in P5.5).
-- **Order inside P5.8 (implementability).** (a) The **retention purge** first — it does not depend on O4: the
+- **Order inside P5.8 (implementability).** (a) **(Part 2 — waits for its approval, §12)** The **retention purge** first — it does not depend on O4: the
   migration (the dedicated audit guard function and its triggers, the reservation and report tables, the ten
   functions), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
@@ -1866,7 +1866,7 @@ independent of the permission catalog); it is listed with them so it is complete
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
   deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); **operator runbooks** in
-  `docs/operations/` for `audit:purge` (requesting a report, running, recovering a stopped run, where to keep a report
+  `docs/operations/` for `audit:purge` (Part 2; requesting a report, running, recovering a stopped run, where to keep a report
   until delivery, listing and recording deliveries, recovering a missing report from a backup, recording a loss) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
   invocation and expected output; full gate twice;
   gitleaks over full history; the three review documents are already committed on this branch as planning records —
@@ -1935,32 +1935,37 @@ event commits with the change and an injected failure of its insert leaves the f
 
 ## 12. Approval sequence
 
-Draft (this document) → owner review → independent reviewer challenge → disagreements resolved and recorded here →
-**owner's explicit implementation approval** → P5.0 begins. [Fact] On the confirmation form (2026-10-12) the owner
-wrote: "yes, build it, but wait for my final go-ahead after the reviewer approves the plan". That is **not** yet the
-approval: it is recorded as his intention, and implementation waits for his final go-ahead given after the reviewer's
-final approval. Until then **no P5 implementation begins**: no
-application code, migration or test is written or committed for P5. **Planning and review records** — this plan, the
-audit report, the review handoff, the evidence pack, owner questionnaires and the decision records of §14 — may be
-committed to this branch as they are written (R23); they change no behaviour. Nothing is pushed or merged without the
-owner, in either case.
+**The rule — the only statement of when implementation is authorized (rev 25).** P5 is approved in two parts.
 
-**Staged approval — a proposal for the reviewer and the owner (rev 22).** Since revision 16 every review finding has
-concerned §8.6 — mostly the **retention design** (the purge, its reservation, reports, manifest and their tests) — and
-the review-process wording of §14. The changes made outside §8.6 since then came from the author's own sweeps (error
-codes in P5.0, the platform-grants key in P5.1, the §9.4 signals used by P5.3a and P5.4, the containment command in
-P5.5, rate limits, runbooks, the test budget) and have each been through the reviewer's full-document reviews of
-revisions 19–21 without a finding. The reviewer may therefore approve the plan in **two parts**:
+- **Part 1** is everything in this plan **except** the retention design listed below. **P5.0 begins** when §14 records
+  both: the reviewer's approval of Part 1, and the owner's go-ahead for Part 1 — **given** on 2026-10-12 (G1, "yes,
+  start now with Part 1", `docs/business/P5_OWNER_GO_AHEAD.md`). Until the reviewer's Part 1 approval is recorded, no
+  P5 application code, migration or test is written or committed.
+- **Part 2** is the retention design. **Nothing of it is built** — no migration, function, table, trigger, command or
+  test of it — until §14 records the reviewer's approval of Part 2. P5.8 step (a) waits for it; P5.10 cannot close
+  without it; nothing in Part 1 depends on it.
 
-- **Part 1** — everything except the retention design: §1–§8.5, §8.6 up to (not including) "Retention design", §9–§16,
-  and every package except P5.8 step (a). This is all that P5.0–P5.7 and P5.8 steps (b)–(e) depend on.
-- **Part 2** — the retention design of §8.6 and P5.8 step (a), which builds it.
+**Part 2, every place it appears** (each also marked "(Part 2)" in place):
 
-With Part 1 approved and the owner's go-ahead, **P5.0 may begin**; P5.8 step (a) cannot begin until Part 2 is approved,
-and P5.10 cannot close without it. The order of the packages already puts the retention work last (P5.8), so a later
-Part 2 delays nothing before it. Whether Part 1's approval is enough for his go-ahead is the **owner's** decision (his
-confirmation form asks to wait for the reviewer's approval of "the plan"). Each approval is recorded in §14 with name,
-date and the part it covers. If the reviewer prefers a single approval, this paragraph has no effect.
+- §8.6 from "Retention design" to the end of §8.6: the audit table's own guard and its trigger swap, the reservation,
+  report requests and reports, the manifest, the purge functions, the operator command, its failure semantics and tests;
+- §7.2: L1's sentence on the purge's deletes, L4's description of `audit.audit_events_guard()`, the four operator-only
+  footprint rows of the purge functions (the bootstrap and containment rows are Part 1), and read-consistency test (e);
+- §8.1: events #38 and #40–#43;
+- §9.1: "Purge ownership and privileges", and the purge functions in the list of functions without an app grant;
+- §10: P5.8 step (a) with its work, command and tests, and the purge runbook of P5.10;
+- §13: the retention-purge clause of exit criterion 9.
+
+**Always:** planning and review records — this plan, the audit report, the review handoff, the evidence pack, owner
+questionnaires and the decision records of §14 — may be committed as they are written (R23); nothing is pushed or
+merged without the owner.
+
+**History.** The original sequence (draft → owner review → reviewer challenge → the owner's explicit implementation
+approval) still holds and is now met by the two parts above. The owner's earlier intention ("yes, build it, but wait
+for my final go-ahead after the reviewer approves the plan", confirmation form, 2026-10-12) is fulfilled for Part 1 by
+G1. The staged approval was proposed in revision 22; the reviewer approved Part 1 on revision 22 and withdrew that
+approval on revision 23; revision 24 corrected the defects named; revision 25 states the rule above and marks the
+Part 2 boundary in place (§14, §16).
 
 ## 13. P5 exit criteria (proposed for RESTRUCTURING_MAP)
 
@@ -1979,7 +1984,7 @@ date and the part it covers. If the reviewer prefers a single approval, this par
    still present when their page is read), proven by the concurrency tests including the concurrent purge (R25, R35).
 8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
 9. An owner-approved written D9 policy (§8.6) exists, matching the decisions recorded there (O10–O12 included); the
-   retention purge is built and tested, including recorded delivery — or recorded, unrecoverable loss — of every confirmed report (R45, R52); application logs
+   retention purge (Part 2) is built and tested, including recorded delivery — or recorded, unrecoverable loss — of every confirmed report (R45, R52); application logs
    carry no IP address or user agent (leak sweep); the P15 obligations are recorded in the P5 record.
 10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).
 11. Every `permission` endpoint declares its branch scope; branch-restricted and archived-branch staff are covered by
@@ -2039,10 +2044,11 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
-signed by Mayowa Edward Fadahunsi on 2026-10-12). **Still open:** O10–O12, the privacy questions of
-`docs/business/P5_OWNER_PRIVACY_QUESTIONS.md` (rev 19), needed only by the D9 written policy at P5.8 step (e). Apart from them, what remains before P5.0 is two approvals: the reviewer's final verdict on
-the complete document, then the owner's final go-ahead (§12). O4 is decided at P5.8 step 2 on measured evidence, by
-design. P5.0 then moves this log into ADR-16, adding the applying commit of each entry.
+signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for Part 1 is given** (G1, 2026-10-12).
+**Still open:** O10–O12, the privacy questions of `docs/business/P5_OWNER_PRIVACY_QUESTIONS.md`, needed only by the
+D9 written policy at P5.8 step (e). **What remains before P5.0 is one approval:** the reviewer's approval of Part 1
+(§12). O4 is decided at P5.8 step 2 on measured evidence, by design. P5.0 then moves this log into ADR-16 (Part 1
+entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
 
 | # | Item | Proposed position |
 |---|---|---|

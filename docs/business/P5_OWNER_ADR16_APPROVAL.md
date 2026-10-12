@@ -18,13 +18,13 @@ Nothing here is new: these are your earlier answers, restated.
 
 | # | What ADR-16 says | Correct | Not right |
 |---|---|---|---|
-| A1 | **Only the business owner** invites staff and agents, cancels invitations, changes a staff member's role or branch, switches people off or back on, and edits roles and their permissions. Staff cannot do any of these. The owner may give a staff member one branch or all branches. | ☐ | ☐ |
-| A2 | **Only the business owner** sees the business's activity record — including refused attempts — and can look at one person's actions. Staff can never be given access to it. | ☐ | ☐ |
-| A3 | **Your platform team:** you add a person with an email that has **no** AlphaKolect account; they start with **no** permissions, and you give each person exactly what they need. When someone leaves, their permissions are removed; if they come back, they start again with none. | ☐ | ☐ |
-| A4 | **Platform and business accounts stay apart, both ways:** a platform team account can never join a business, and a business account can never be made a platform account. | ☐ | ☐ |
-| A5 | **Internet addresses and device details** are kept to investigate break-ins and settle disputes. Only each business owner (for their own people) and you can see them — **never** your platform team. Business owners never see your team's address or device. They are also kept out of the system's technical logs. | ☐ | ☐ |
-| A6 | **The two-year rule** (built later, after its own approval): every activity entry, including existing ones, is deleted after two years; you may ask for a copy first, and the system keeps no copy. | ☐ | ☐ |
-| A7 | **Already agreed:** permissions are added feature by feature; "view" and "change" are separate; an archived role gives no access; a staff member tied to an archived branch reaches nothing kept per branch; security changes are saved only together with their record; the record of who did something comes from their own sign-in; permission is checked again just before any change is saved. | ☐ | ☐ |
+| A1 | **Only the business owner** invites staff and agents, cancels invitations, changes a staff member's role or branch, switches people off or back on, and edits roles and their permissions. Staff cannot do any of these. The owner may give a staff member one branch or all branches. | ☐ | ☐ | - Correct: the owner is the only one who can manage staff and their permissions. Staff cannot manage other staff or their own permissions.
+| A2 | **Only the business owner** sees the business's activity record — including refused attempts — and can look at one person's actions. Staff can never be given access to it. | ☐ | ☐ | - Correct: the owner is the only one who can view the activity record, and staff cannot access it.
+| A3 | **Your platform team:** you add a person with an email that has **no** AlphaKolect account; they start with **no** permissions, and you give each person exactly what they need. When someone leaves, their permissions are removed; if they come back, they start again with none. | ☐ | ☐ | - Correct: the platform team manages user accounts and permissions, ensuring that users have the appropriate access based on their roles.
+| A4 | **Platform and business accounts stay apart, both ways:** a platform team account can never join a business, and a business account can never be made a platform account. | ☐ | ☐ | - Correct: this separation ensures that the platform and business operations remain distinct and secure.
+| A5 | **Internet addresses and device details** are kept to investigate break-ins and settle disputes. Only each business owner (for their own people) and you can see them — **never** your platform team. Business owners never see your team's address or device. They are also kept out of the system's technical logs. | ☐ | ☐ | - Correct: this protects user privacy and maintains the integrity of the system's technical infrastructure.
+| A6 | **The two-year rule** (built later, after its own approval): every activity entry, including existing ones, is deleted after two years; you may ask for a copy first, and the system keeps no copy. | ☐ | ☐ | - Correct: this rule helps manage data retention and ensures compliance with data protection regulations.
+| A7 | **Already agreed:** permissions are added feature by feature; "view" and "change" are separate; an archived role gives no access; a staff member tied to an archived branch reaches nothing kept per branch; security changes are saved only together with their record; the record of who did something comes from their own sign-in; permission is checked again just before any change is saved. | ☐ | ☐ | - Correct: this ensures that permissions are managed consistently and securely across all features of the system.
 
 > If anything is not right, say what:
 
@@ -49,7 +49,7 @@ catch such a mistake, and the risk is written down so it is not forgotten.
   and sensitive screens already have the double check; adding it here is a later improvement.)*
 - ☐ **Add the database check now** for these screens too. *(More work in this stage, so building takes longer.)*
 
-> Answer:
+> Answer: Add the database check now for these screens too. We want to be sure that all screens are secure, and adding the database check now will provide an extra layer of protection against potential mistakes.
 
 ---
 
@@ -65,7 +65,7 @@ system goes live, an alert will warn whoever runs it as soon as this happens.
 - ☐ **Accept.** Security first: no sign-in without its record. *(Our suggestion; it follows your decision.)*
 - ☐ Let's discuss
 
-> Answer:
+> Answer: What do you recommend we do to ensure that the activity record is always available and that sign-ins are not disrupted? Are there any backup systems or redundancies in place to prevent this issue from occurring?
 
 ---
 
@@ -74,5 +74,5 @@ system goes live, an alert will warn whoever runs it as soon as this happens.
 > I approve ADR-16 for Part 1, with the answers above:
 >
 > ☐ Yes ☐ Not yet
->
-> Name: Date:
+> Yes i approve ADR-16 for Part 1, with the answers above.
+> Name: Mayowa Edward Fadahunsi Date: 12th of October, 2026

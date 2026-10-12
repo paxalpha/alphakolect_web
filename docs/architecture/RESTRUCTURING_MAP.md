@@ -358,7 +358,7 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 - **Work packages:** P5.0 decisions freeze and ADR-16; P5.1 catalog and protected grant storage; P5.2 resolver and write-time contract; P5.3 registry authorization metadata and query-parameter validation; P5.3a audit foundation; P5.4 policy middleware replacing the P4 owner checks; P5.5 database functions aligned and direct writes moved (the enforcement boundary); P5.6 role permission management; P5.7 platform staff and cross-tenant platform reads; P5.8 audit reads, list pagination, log redaction and the D9 policy (its retention step is Part 2); P5.9 authorization matrix and regression gate; P5.10 closure (as-built ADR-16, threat model, runbooks).
 - **Not in P5:** assigned-customer authorization (P7/P8, D1); permissions for features that do not exist yet; billing suspension (P10); end-to-end branch isolation (needs branch-owned resources, P7/P8).
 
-**Obligations P5 passes to P15 (2026-10-12; ADR-16 §3.5, owner decisions D9/F3/CF4):**
+**Obligations P5 passes to P15 (2026-10-12; ADR-16 §3.5, owner decisions D9/F3/CF4 and follow-up C1/C2):**
 1. **Backups** keep deleted activity entries no longer than the owner's backup retention (O10 — proposal 35 days; open).
 2. **Alerts** on the `audit_write_failure` signal and on sign-in failures caused by audit unavailability (500s on the
    sign-in, refresh and MFA endpoints together with that signal): security changes commit only with their activity
@@ -367,6 +367,10 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 4. **The reverse proxy** does not record client IP addresses or user agents in its own access logs (the owner's rule:
    the AlphaKolect team never sees them), and logs the server-generated `x-request-id` from the API's response so a
    proxy line can be matched to the application's.
+5. **Recovery** (owner, follow-up C1/C2, 2026-10-12): a standby database that takes over automatically, continuous
+   backups and alerts; if the main database fails, **at most 5 minutes of activity lost and service back within
+   1 hour**. This is the owner's condition for keeping the rule in item 2 (security changes stop without their
+   activity record).
 
 ### 7.3 Suggested first milestone ("walking skeleton")
 

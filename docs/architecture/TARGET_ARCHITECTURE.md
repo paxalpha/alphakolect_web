@@ -706,9 +706,9 @@ Private object storage (S3-compatible); upload via **pre-signed PUT** with size/
 
 - **Next.js App Router**, route groups: `(marketing)`, `(auth)`, `(platform)`, `(merchant)`. Keep and port existing screens/components; replace the data layer.
 - **`middleware.ts`** guards every non-marketing route from the session cookie (audience + suspension redirect).
-- **Data layer:** generated typed client + React Query hooks per module (replaces the 2,375-line `services/api.tsx` and raw `fetch` calls). No tenant IDs, no permissions logic from `localStorage`; permissions come from `/v1/merchant/me` and only drive UI visibility.
+- **Data layer:** generated typed client + React Query hooks per module (replaces the 2,375-line `services/api.tsx` and raw `fetch` calls). No tenant IDs, no permissions logic from `localStorage`; permissions come from the server — `GET /v1/merchant/membership` for the merchant dashboard and `GET /v1/auth/session` for the platform console (their `permissions` fields, ADR-16) — and only drive UI visibility.
 - **One component tree** (`apps/web/src/components`), one design system; forms with react-hook-form + shared zod schemas.
-- Money displayed from minor units with one formatter; dates in the merchant's timezone (OPEN-15).
+- Money displayed from minor units with one formatter; dates in West Africa Time (ADR-11; OPEN-15 decided).
 
 ## 19. Database architecture
 

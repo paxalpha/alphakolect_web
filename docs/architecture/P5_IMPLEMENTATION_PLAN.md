@@ -1270,7 +1270,11 @@ The exception is:
    has been **delivered**. Delivery is recorded by `record_report_delivery(p_report_id, p_file_sha256, p_note)`
    (operator-only), which the command `audit:purge-report-delivered --report <id> [--file <path>]` calls after
    recomputing the SHA-256 of the file it is handing over; a hash that differs from the confirmed one is refused, so
-   what is recorded as delivered is exactly the verified report. `audit:purge-reports` lists every confirmed,
+   what is recorded as delivered is exactly the verified report. **What that record proves (R48):** the hash proves the
+   file handed over is the confirmed report, unaltered — **not** that the owner received it, which the database cannot
+   know. A recorded delivery is therefore the **operator's attestation**, made only after the handover, and its note
+   states the delivery method and the receipt evidence agreed under O11 (the runbook gives the form); if the owner's
+   answer to O11 requires his own confirmation of receipt, the delivery is recorded only once that confirmation exists. `audit:purge-reports` lists every confirmed,
    undelivered report (id, run, request, count, SHA-256, recorded path) straight from the database, so a report whose
    run stopped after confirming — even after deleting some pages — is found and delivered from there; nothing
    depends on the operator having kept the command's output. Each request and each delivery writes an atomic event

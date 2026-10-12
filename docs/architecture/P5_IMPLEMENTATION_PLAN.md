@@ -204,6 +204,13 @@ Classes (exactly one per endpoint, declared in the contract):
 | Platform staff: create, deactivate, reactivate (O8(b)), list, set grants (`/v1/platform/staff…`; §7.4) | `platform.staff.manage` (super admin) | P5.7 |
 | `GET /v1/platform/audit-events` (cursor-paginated) | `platform.audit.read` | P5.8 |
 
+**Rate limits — none added, deliberately.** [Fact] The existing limits (`util.rate_limit_hit`) guard the
+unauthenticated and credential flows — sign-up, verification, resend, forgot-password, MFA, password change,
+membership selection (`apps/api/src/modules/identity/*.ts`) — and stay unchanged. Every new P5 operation requires a
+validated session and a catalog permission; the only one that sends email (platform staff creation) is reserved to
+the super admin; the audit reads are bounded by O4's page size and window. P5 therefore adds no rate limit, and the
+P5 record says so, so that a later phase that opens any of these to a wider audience revisits it.
+
 ## 6. Permission catalog (frozen in P5.0)
 
 | Identifier | Scope | Grantable | Holders | Notes |
@@ -1459,7 +1466,8 @@ independent of the permission catalog); it is listed with them so it is complete
 - **Migrations:** `…_permission_catalog` (catalog table, seed §6, app `SELECT` only); `…_role_permissions`
   (`(merchant_id, role_id, permission)` PK, composite FK to `tenancy.roles (merchant_id, id)`, FK to the catalog plus
   CHECK/trigger allowing only `scope = 'merchant' AND grantable AND status = 'active'`, RLS, **no app write grant**);
-  `…_platform_membership_grants` (FK to `identity.platform_memberships(id)`, only grantable platform permissions, no
+  `…_platform_membership_grants` (`(platform_membership_id, permission)` PK, FK to `identity.platform_memberships(id)`,
+  only grantable platform permissions, no
   app grant). **Storage only: no function that writes grants exists after P5.1.** The writers arrive with their
   authorization foundation — `tenancy.set_role_permissions` in P5.6, `identity.set_platform_grants` in P5.7.
 - **Seed:** catalog rows only. **No grant rows.**

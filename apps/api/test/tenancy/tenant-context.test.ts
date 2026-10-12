@@ -28,6 +28,7 @@ const auth = (overrides: Partial<AuthContext> = {}): AuthContext => ({
   kind: 'staff',
   roleId: '01900000-0000-7000-8000-0000000000a5',
   branchId: null,
+  permissions: Object.freeze(['merchant.branches.read', 'merchant.profile.read'] as const),
   transport: 'cookie',
   ...overrides,
 });
@@ -43,8 +44,11 @@ describe('tenantContextOf', () => {
       kind: 'staff',
       roleId: '01900000-0000-7000-8000-0000000000a5',
       branchId: null,
+      // P5.2: the request's resolved permissions, carried over unchanged (and still frozen).
+      permissions: ['merchant.branches.read', 'merchant.profile.read'],
     });
     expect(Object.isFrozen(tenantContextOf(auth()))).toBe(true);
+    expect(Object.isFrozen(tenantContextOf(auth()).permissions)).toBe(true);
     expect(tenantContextOf(auth({ audience: 'agent', kind: 'agent', roleId: null })).kind).toBe('agent');
   });
 

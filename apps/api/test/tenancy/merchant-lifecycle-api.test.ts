@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, MerchantLifecycle } from '@alphakolect/contracts';
+import { AUTH_COOKIES, CSRF_HEADER, MerchantLifecycle, PERMISSIONS } from '@alphakolect/contracts';
 import pg from 'pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -293,6 +293,7 @@ describe('atomicity', () => {
       kind: 'super_admin',
       roleId: null,
       branchId: null,
+      permissions: PERMISSIONS.filter((p) => p.startsWith('platform.')),
       transport: 'cookie',
     };
     await expect(

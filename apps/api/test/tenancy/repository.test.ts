@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { PERMISSIONS } from '@alphakolect/contracts';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { IdentityRepository } from '../../src/modules/identity/repository.js';
@@ -40,6 +41,7 @@ async function merchant(name: string): Promise<TenantContext> {
     kind: 'owner',
     roleId: null,
     branchId: null,
+    permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')),
   });
 }
 

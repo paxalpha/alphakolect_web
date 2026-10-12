@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, type EndpointContract } from '@alphakolect/contracts';
+import { AUTH_COOKIES, CSRF_HEADER, type EndpointContract, type Permission } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import type { AccessTokens, SessionAudience } from '../../modules/identity/access-tokens.js';
 import type { IdentityRepository } from '../../modules/identity/repository.js';
@@ -22,6 +22,11 @@ export type AuthContext = Readonly<{
   /** A staff member's role and branch restriction (null branch = all branches); null for everyone else. */
   roleId: string | null;
   branchId: string | null;
+  /**
+   * Effective permissions (P5.2, ADR-16): resolved by the database on this request (identity.session_authority),
+   * never cached, never from claims. The early policy check uses them; the database still decides every write.
+   */
+  permissions: readonly Permission[];
   transport: 'cookie' | 'bearer';
 }>;
 
@@ -121,8 +126,9 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
         throw new AppError(403, 'WRONG_AUDIENCE', 'This endpoint is not available to this session');
       }
 
-      // Claims are hints: the session, identity and membership are re-validated on every request (§3.2).
-      const session = await deps.identity.validateSession(claims.sid);
+      // Claims are hints: the session, identity and membership are re-validated on every request (§3.2), and the
+      // effective permissions resolved with them in the same round trip (P5.2, ADR-16 §3.5).
+      const session = await deps.identity.sessionAuthority(claims.sid);
       if (
         !session ||
         session.identity_id !== claims.sub ||
@@ -150,6 +156,8 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
         kind: session.kind,
         roleId: session.role_id,
         branchId: session.branch_id,
+        // The catalog and the contracts list the same identifiers (checked on every test run), so the cast is exact.
+        permissions: Object.freeze([...session.permissions]) as readonly Permission[],
         transport: credential.transport,
       });
       next();

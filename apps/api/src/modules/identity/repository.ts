@@ -29,6 +29,15 @@ export type ValidSession = {
   branch_id: string | null;
 };
 
+/** The per-request resolver's row (P5.2, identity.session_authority): the validated session plus its authority. */
+export type SessionAuthority = ValidSession & {
+  /** The staff member's role and branch state (active | archived); null when there is none. */
+  role_status: string | null;
+  branch_status: string | null;
+  /** Effective permissions, resolved by the database now (never cached, never from claims). Sorted. */
+  permissions: string[];
+};
+
 export type RotationResult = {
   outcome: 'rotated' | 'invalid' | 'reuse_detected';
   session_id: string | null;
@@ -205,6 +214,14 @@ export class IdentityRepository {
 
   async validateSession(sessionId: string): Promise<ValidSession | null> {
     const [row] = await this.db.query<ValidSession>(`SELECT * FROM identity.validate_session($1)`, [
+      sessionId,
+    ]);
+    return row ?? null;
+  }
+
+  /** P5.2 (ADR-16): the session re-validated and its effective permissions, in one round trip; null = invalid. */
+  async sessionAuthority(sessionId: string): Promise<SessionAuthority | null> {
+    const [row] = await this.db.query<SessionAuthority>(`SELECT * FROM identity.session_authority($1)`, [
       sessionId,
     ]);
     return row ?? null;

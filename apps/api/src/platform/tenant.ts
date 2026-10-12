@@ -1,3 +1,4 @@
+import type { Permission } from '@alphakolect/contracts';
 import type { Db, Queryable } from './db.js';
 import { AppError } from './errors.js';
 import type { AuthContext } from './http/authenticate.js';
@@ -24,6 +25,8 @@ export type TenantContext = Readonly<{
   roleId: string | null;
   /** Staff only: the one branch they are restricted to; null = all branches (ADR-15 T7). */
   branchId: string | null;
+  /** Effective permissions from this request's resolver (P5.2, ADR-16); the database still decides every write. */
+  permissions: readonly Permission[];
 }>;
 
 export type TenantTx = Queryable & { readonly tenant: TenantContext };
@@ -50,6 +53,7 @@ export function tenantContextOf(auth: AuthContext | undefined): TenantContext {
     kind: auth.kind as MembershipKind,
     roleId: auth.roleId,
     branchId: auth.branchId,
+    permissions: auth.permissions,
   });
 }
 

@@ -1,5 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, defineEndpoint, type EndpointContract } from '@alphakolect/contracts';
+import {
+  AUTH_COOKIES,
+  CSRF_HEADER,
+  defineEndpoint,
+  PERMISSIONS,
+  type EndpointContract,
+} from '@alphakolect/contracts';
 import express from 'express';
 import pg from 'pg';
 import { pino } from 'pino';
@@ -216,6 +222,64 @@ describe('who gets in', () => {
 
     await owner.query(`UPDATE tenancy.merchant_memberships SET branch_id = NULL WHERE id = $1`, [m.id]);
     expect((await get(E.merchantRead).set('Cookie', cookie(staff.token))).body.branchId).toBeNull();
+  });
+
+  it('its effective permissions, resolved by the database on this request — a revocation applies to the next (P5.2)', async () => {
+    const merchantPermissions = PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort();
+    const owned = await get(E.merchantRead).set('Cookie', cookie(merchant.token));
+    expect([...owned.body.permissions].sort()).toEqual(merchantPermissions);
+
+    const {
+      rows: [{ merchant_id: merchantId }],
+    } = await owner.query(`SELECT merchant_id FROM tenancy.merchant_memberships WHERE id = $1`, [
+      merchant.claims.mid,
+    ]);
+    const {
+      rows: [role],
+    } = await owner.query(`INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+      merchantId,
+      `Clerk ${randomBytes(3).toString('hex')}`,
+    ]);
+    // Grant rows are written as the table owner: no writer function exists before P5.6.
+    for (const p of ['merchant.profile.read', 'merchant.branches.read']) {
+      await owner.query(
+        `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) VALUES ($1, $2, $3)`,
+        [merchantId, role.id, p],
+      );
+    }
+    const {
+      rows: [identity],
+    } = await owner.query(
+      `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+      [`clerk-${randomBytes(4).toString('hex')}@example.test`],
+    );
+    const {
+      rows: [m],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id) VALUES ($1, $2, 'staff', $3) RETURNING id`,
+      [merchantId, identity.id, role.id],
+    );
+    const clerk = await session(identity.id, 'merchant', m.id, 'full', {
+      idleSeconds: 86400,
+      absoluteSeconds: 1209600,
+    });
+    const permissionsNow = async () =>
+      [...(await get(E.merchantRead).set('Cookie', cookie(clerk.token))).body.permissions].sort();
+
+    expect(await permissionsNow()).toEqual(['merchant.branches.read', 'merchant.profile.read']);
+    await owner.query(
+      `DELETE FROM tenancy.role_permissions WHERE role_id = $1 AND permission = 'merchant.profile.read'`,
+      [role.id],
+    );
+    expect(await permissionsNow()).toEqual(['merchant.branches.read']);
+    await owner.query(`UPDATE tenancy.roles SET status = 'archived', archived_at = now() WHERE id = $1`, [
+      role.id,
+    ]);
+    expect(await permissionsNow()).toEqual([]);
+
+    expect((await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`)).body.permissions).toEqual(
+      [],
+    );
   });
 
   it('an agent bearer session on an agent endpoint', async () => {

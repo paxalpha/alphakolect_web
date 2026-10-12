@@ -1,9 +1,11 @@
 # AlphaKolect — Target Architecture
 
-**Status:** Draft v1 for review · **Date:** 2026-09-26 · **Branch:** `recovery/alphaweb-takeover`
+**Status:** Living document — first drafted 2026-09-26 (v1, branch `recovery/alphaweb-takeover`), last reviewed
+2026-10-12 (`TARGET_ARCHITECTURE_REVIEW.md`). The ADRs in §0 are in force (ADR-16 awaits the independent reviewer's
+approval); where a section below differs from a later ADR, the ADR governs.
 **Authority:** `BUSINESS_RULES.md` (signed off by the owner, incl. the 10.6 clarification). Rules are cited as **BR-x.y**.
 **Evidence base:** `AUDIT_REPORT.md`, `ARCHITECTURE_RECONNAISSANCE.md`, `CURRENT_SYSTEM_INVENTORY.md`.
-**Scope:** This document describes the **target system**. It changes no code. The repo restructuring / migration map is the next artifact (§25–26).
+**Scope:** This document describes the **target system**. It changes no code. The restructuring map and build order are in `RESTRUCTURING_MAP.md`; P0–P4 are built and P5 is in progress.
 
 ## Architecture review gates (v1.1, 2026-09-26)
 
@@ -870,5 +872,8 @@ Structured JSON logs (pino) with redaction (`password, token, otp, authorization
 ---
 
 ## Next artifact
+
+> **Update 2026-10-12:** done — `RESTRUCTURING_MAP.md` exists and sets the build order (P0–P15); P0–P4 are built
+> from it. The text below is the original description of that artifact.
 
 **`RESTRUCTURING_MAP.md`** — for every file/area in the current repository: *port* (screen/logic to reference), *rewrite* (backend module), *quarantine* (`legacy/`), *delete after verification*, or *secret/incident* — plus the ordered build plan (walking skeleton → identity/tenancy → ledger/payments → savings → billing → loans/investments → platform features → cutover), each step with its BR tests and exit criteria.

@@ -718,8 +718,8 @@ TypeScript union **for typing only**, compared with the table on every test run 
 (identifier, outcome) pair, a summary field outside the allowlist or over its length bound raises — so the behaviour
 table below holds **at run time for every writer**, SQL functions included, not only for TypeScript callers. Its
 function is `SECURITY DEFINER` with a pinned `search_path` and no app grant, so no writing role needs a grant on the
-catalog. Each catalog entry also carries its **retention period** (`retention_days`; 730 — two years — for every P5
-pair, D9), read by the retention purge (§8.6), so a later phase whose events need a different period (e.g. financial
+catalog. Each catalog entry also carries its **retention period** (`retention interval`; `interval '2 years'` for every
+P5 pair, D9 — calendar years, defined once in §8.6, R41), read by the retention purge (§8.6), so a later phase whose events need a different period (e.g. financial
 records in P6+) sets it per entry by migration instead of redesigning the purge. Writer
 class and pattern stay enforced by the static writer guard and by `recordBestEffort`'s own class check. The **class** (atomic, best effort or sensitive
 read, §8.2) is declared per **(identifier, outcome)** pair — e.g. `auth.login`/`success` is atomic (a session is
@@ -1084,7 +1084,18 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   onto the server.
 
 **Retention design ([Plan], P5.8) — the one controlled exception to append-only.** [Fact] `audit.audit_events` is
-append-only for every role (grant and trigger, `20260927000300:142-147`). The exception is:
+append-only for every role (grant and trigger, `20260927000300:142-147`).
+
+**"Two years" has one technical meaning (R41):** calendar years — PostgreSQL `timestamptz − interval '2 years'`, the
+owner's words ("two years"), not 730 days. It is defined once, as the SQL function `audit.d9_retention()` returning
+`interval '2 years'`; the P5 catalog entries are seeded from it, and the field clearing uses it directly, so the
+audit deletion, the append-only trigger's age check and the session and token clearing all use the same value. Year
+arithmetic on `timestamptz` depends on the session time zone, so every function that computes a cutoff (the two purge
+functions, the clearing function and the trigger function) pins `SET TimeZone = 'UTC'` beside its `search_path`.
+Comparisons are strict: a row is eligible when its time is **before** the cutoff, never at it. On a leap day the
+calendar rule gives the natural answer — a cutoff computed on 29 February 2028 is 28 February 2026.
+
+The exception is:
 
 1. a dedicated `NOLOGIN` role, `alphakolect_audit_purger`, is the only role with `DELETE` on the table;
 2. two functions, both owned by that role (`SECURITY DEFINER`, pinned `search_path`), operator-only, define
@@ -1108,13 +1119,14 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
      reachable only by the operator role, which as the table owner can already read the table, and each run's export
      is recorded in its #38 event;
 3. the append-only trigger is changed to allow a `DELETE` **only** when `current_user` is that role **and** the row is
-   older than its pair's retention period in the event catalog (two years for every P5 pair), so even a defect in the purge
+   older than its pair's retention period in the event catalog (`audit.d9_retention()` for every P5 pair, R41), so even
+   a defect in the purge
    function cannot delete a younger row; `UPDATE` stays forbidden for everyone;
 4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_as_of)`, run once per
    purge run after the deletion pages, in its own transaction with its own event (#40), clears (CF4) — an `UPDATE` of
    non-key columns, outside every request path — exactly these, **tokens first, then sessions** (lock categories 5
    then 10), each row selected `FOR NO KEY UPDATE SKIP LOCKED` and then updated by id, so a row a request transaction
-   holds is skipped and cleared by the next run (R40), with `cutoff = p_as_of − 2 years` (R37):
+   holds is skipped and cleared by the next run (R40), with `cutoff = p_as_of − audit.d9_retention()` (R37, R41):
    - `identity.one_time_tokens`: `requested_ip` set to `NULL` where the link was sent before the cutoff
      (`created_at < cutoff`, the owner's "two years after a link was sent", CF4) **and** the token can no longer be used —
      consumed (`consumed_at IS NOT NULL`) or expired (`expires_at <= p_as_of`). A still-valid token never qualifies;
@@ -1177,7 +1189,11 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
    it deletes only rows, identified by id, that the report contains. Until a job runner exists (P12) the command is run by hand; the D9
    written policy states how often.
 
-Tests: rows younger than their retention period always survive, whatever `p_as_of`; a `p_as_of` in the future is
+Tests: rows younger than their retention period always survive, whatever `p_as_of`; **boundary (R41)** — for the
+audit deletion, the trigger's age check, session clearing and token clearing alike: a time exactly at the cutoff is
+not eligible and one microsecond earlier is; `p_as_of` on 29 February 2028 gives the cutoff 28 February 2026; the same
+result under two different session time zones; changing `audit.d9_retention()` in a scratch copy moves all four
+together; a `p_as_of` in the future is
 refused; the app role cannot execute either function or delete directly;
 an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
 than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active
@@ -1213,7 +1229,7 @@ when each migration is written.
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
-`audit.clear_expired_request_metadata`, `util.set_authorization_containment`); the
+`audit.clear_expired_request_metadata`, `audit.d9_retention`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an

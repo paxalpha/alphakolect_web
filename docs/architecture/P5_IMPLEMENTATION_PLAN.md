@@ -620,11 +620,13 @@ membership (`20261003000500:62`).
 - **Create** (`identity.create_platform_staff(session, email, role)`): the super admin gives an email and a role
   label (`support`, `verification` or `finance`; never `super_admin`). One definer function creates a
   **passwordless identity**, its platform membership **with no grants**, and a P3 **account-setup token** — the same
-  onboarding mechanism as a new person's invitation (T10); the API sends the setup link (best effort until the P12
+  onboarding mechanism as a new person's invitation (T10); the API sends the setup link with the existing generic
+  `accountSetupEmail` ([Fact] `apps/api/src/modules/identity/emails.ts:47`, already used by the bootstrap; it names no
+  business) (best effort until the P12
   outbox, as for invitations). The person sets a password through the existing setup flow, then signs in and must
   enrol MFA through the existing platform enrolment flow before any `full` session exists. The role label grants
   nothing (D4); access comes only from grants set afterwards. Event #30, actor from the session.
-- **An email that already has an identity — decided (O8(a), owner, 2026-10-11):** refused (`409`, a recorded denial) in P5. A
+- **An email that already has an identity — decided (O8(a), owner, 2026-10-11):** refused (`409 EMAIL_IN_USE`, a recorded denial) in P5. A
   platform account stays a separate person-account from any merchant account, so no existing password, MFA state or
   merchant membership is carried into the platform audience, and the one-membership-per-identity rule is never hit by
   a second creation. The super admin uses another address. (Anti-enumeration does not apply: only the super admin can
@@ -1428,7 +1430,14 @@ independent of the permission catalog); it is listed with them so it is complete
   route map (§5), resolution and write-time re-check (§7), owner-only delegation (D5′), platform grants and the staff
   lifecycle (§7.4), audit classes and the nested-writer table (§8, §7.2), the D9 decisions and the retention design
   (§8.6), the containment switch and incident procedure (§11.1), and the **decision log** (§14, R26). Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
-  customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5).
+  customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5), **including their
+  error responses**: [Fact] error codes are free-form strings matching `^[A-Z][A-Z0-9_]*$`
+  (`packages/contracts/src/primitives.ts:52`), documented per response, so each new code is fixed in its contract —
+  `INVALID_CURSOR` (400, every paginated read), `EMAIL_IN_USE` (409, platform staff creation, O8(a)), and the existing
+  `FORBIDDEN` (403), `NOT_FOUND` (404), `WRONG_AUDIENCE` and `UNAUTHENTICATED` where they apply. **CSRF:** [Fact]
+  `authenticate()` applies the double-submit check to every cookie-carrying state change
+  (`apps/api/src/platform/http/authenticate.ts:139-140`), so every new `PUT`/`POST` endpoint inherits it; the
+  route-parity test asserts it for each new operation.
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
   owner; **O7 resolved** (by D5′, §7.6); **O8 decided**
   (platform staff onboarding, §7.4) before the platform staff contracts are frozen; **O9 decided** (members and

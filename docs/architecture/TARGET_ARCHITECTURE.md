@@ -368,7 +368,7 @@ permission** — within a business, the permission is checked by the API alone.
 | Branches (`GET /v1/merchant/branches`, `…/{branchId}`) | **API only** | tenant separation |
 | Roles, role permission sets and the catalog (`GET /v1/merchant/roles`, `…/{roleId}`, `GET /v1/merchant/permissions`) | **API only** | tenant separation |
 | **Invitation list** (`GET /v1/merchant/invitations`) — **exposes invitees' email addresses** | **API only** | tenant separation |
-| Members (`GET /v1/merchant/members`, `…/{membershipId}`) — exposes member emails | API **and** database (`tenancy.list_members` checks the permission) | tenant separation |
+| Members (`GET /v1/merchant/members`, `…/{membershipId}`) — exposes member emails | API **and** database (`tenancy.list_members` checks the permission from P5.5; today it checks owner kind) | tenant separation |
 | Merchant and platform audit reads; platform merchant and member lists | API **and** database (designated sensitive-read functions) | tenant separation where tenant-scoped |
 
 **Assumptions:** the policy middleware is mounted from the endpoint registry and fails closed (A7); a route without a

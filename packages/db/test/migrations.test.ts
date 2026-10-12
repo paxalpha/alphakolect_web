@@ -30,6 +30,8 @@ const TABLES = [
   'identity.membership_selection_challenges',
   'identity.mfa_challenges',
   'identity.one_time_tokens',
+  'identity.permission_catalog',
+  'identity.platform_membership_grants',
   'identity.platform_memberships',
   'identity.recovery_codes',
   'identity.refresh_tokens',
@@ -44,6 +46,7 @@ const TABLES = [
   'tenancy.invitations',
   'tenancy.merchant_memberships',
   'tenancy.merchants',
+  'tenancy.role_permissions',
   'tenancy.roles',
   'util.rate_limit_counters',
 ];

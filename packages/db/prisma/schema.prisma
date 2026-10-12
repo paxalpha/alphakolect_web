@@ -241,11 +241,46 @@ model PlatformMembership {
   deactivatedAt DateTime? @map("deactivated_at") @db.Timestamptz(6)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  identity      Identity       @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  identity      Identity                  @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   sessions      Session[]
   mfaChallenges MfaChallenge[]
+  grants        PlatformMembershipGrant[]
 
   @@map("platform_memberships")
+  @@schema("identity")
+}
+
+/// P5.1 (ADR-16): the permission catalog — the only authority for identifiers, scope and grantability. CHECKs, the
+/// protection trigger (identifier, scope and grantable never change; retire, never delete) and the seed live in SQL.
+/// No app or readonly privilege: read through database functions only (B1).
+model Permission {
+  identifier String   @id
+  /// merchant | platform
+  scope      String
+  grantable  Boolean
+  /// active | retired
+  status     String   @default("active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+  platformGrants  PlatformMembershipGrant[]
+
+  @@map("permission_catalog")
+  @@schema("identity")
+}
+
+/// P5.1 (ADR-16, D4/A3): a platform staff member's own grants. Only active, grantable platform permissions (trigger in
+/// SQL). No app or readonly privilege; written by identity.set_platform_grants from P5.7.
+model PlatformMembershipGrant {
+  platformMembershipId String   @map("platform_membership_id") @db.Uuid
+  permission           String
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  platformMembership PlatformMembership @relation(fields: [platformMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  catalogEntry       Permission         @relation(fields: [permission], references: [identifier], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([platformMembershipId, permission])
+  @@map("platform_membership_grants")
   @@schema("identity")
 }
 
@@ -394,7 +429,7 @@ model Branch {
   @@schema("tenancy")
 }
 
-/// P4.3 (ADR-15 T8): merchant-defined role names only; permissions are P5.
+/// P4.3 (ADR-15 T8): merchant-defined role names; their permissions are RolePermission rows (P5.1).
 model Role {
   id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
   merchantId String    @map("merchant_id") @db.Uuid
@@ -407,9 +442,27 @@ model Role {
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   memberships MerchantMembership[]
   invitations Invitation[]
+  permissions RolePermission[]
 
   @@unique([merchantId, id])
   @@map("roles")
+  @@schema("tenancy")
+}
+
+/// P5.1 (ADR-16): a merchant role's permissions, same tenant by composite key. Only active, grantable merchant
+/// permissions (trigger in SQL); RLS in SQL. No app or readonly privilege; written by tenancy.set_role_permissions
+/// from P5.6.
+model RolePermission {
+  merchantId String   @map("merchant_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  permission String
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  role         Role       @relation(fields: [merchantId, roleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  catalogEntry Permission @relation(fields: [permission], references: [identifier], onDelete: Restrict, onUpdate: Restrict)
+
+  @@id([merchantId, roleId, permission])
+  @@map("role_permissions")
   @@schema("tenancy")
 }
 

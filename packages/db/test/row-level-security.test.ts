@@ -23,6 +23,11 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
   ['tenancy.invitations', 'merchant_id'],
 ];
 
+// Tenant tables the app holds no privilege on at all (so the visibility tests above, which read as the app, do not
+// apply); they still must carry RLS and an app policy, so that any later grant is tenant-scoped from the start.
+// P5.1: role permissions are read and written only through database functions (ADR-16).
+const NO_APP_ACCESS_TENANT_TABLES = ['tenancy.role_permissions'];
+
 let app: pg.Client;
 let readonly: pg.Client;
 let owner: pg.Client;
@@ -215,7 +220,9 @@ describe('catalog guard: no tenant table may ship without RLS', () => {
         AND (EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'merchant_id' AND NOT a.attisdropped)
              OR (n.nspname = 'tenancy' AND c.relname = 'merchants'))
       ORDER BY 1`);
-    expect(rows.map((r) => r.name).sort()).toEqual(TENANT_TABLES.map(([t]) => t).sort());
+    expect(rows.map((r) => r.name).sort()).toEqual(
+      [...TENANT_TABLES.map(([t]) => t), ...NO_APP_ACCESS_TENANT_TABLES].sort(),
+    );
     for (const r of rows) {
       expect({ table: r.name, rls: r.rls, appPolicy: r.app_policy }).toEqual({
         table: r.name,

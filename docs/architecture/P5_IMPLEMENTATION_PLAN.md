@@ -344,11 +344,6 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | branch / role / profile writers | 2: merchant / S (profile: NKU) → 3: actor / NKU → 7: {actor's role} / S, plus the edited role / NKU (one sorted call) → 8: edited branch / NKU | write |
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.release_purge_run` (operator only; R43, R44) | 0: reservation / NKU `NOWAIT` | write the reservation row |
-| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
-| `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
-| `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
-| `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
 | `set_platform_grants` (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | 9: rewrite the target's grant rows |
 | `create_platform_staff` (P5.7) | unlocked lookup of the email (an existing identity ⇒ refused, O8(a)) → 1: actor / S | contested inserts last (L3): identity (`email`), platform membership (`identity_id`), setup token |
@@ -361,11 +356,18 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `change_password` | 6 → 10 | — |
 | `rotate_refresh_token` | 5 → 10 | — |
 | selection, MFA verify / enrolment | 5 → 6 (credential rows) | session insert (fresh key) |
+| **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
+| `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
+| `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.release_purge_run` (operator only; R43, R44) | 0: reservation / NKU `NOWAIT` | write the reservation row |
+| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
+| `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
+| `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 
 **Why these read footprints and no more (R20).** A sensitive read locks only the rows that carry the actor's
 authority, so that a concurrent revocation is either seen or waits (§7.5): the actor's platform membership for the
-three platform reads (platform authority comes entirely from it and its grants), and the actor's merchant membership and
-for the merchant audit read (owner-only, D8′: authority comes from the owner's membership; the merchant's active status is re-checked by
+three platform reads (platform authority comes entirely from it and its grants), and the owner's merchant membership
+for the merchant audit read (owner-only, D8′: authority comes from that membership; the merchant's active status is re-checked by
 the in-function session validation, and a concurrent merchant deactivation takes effect from the next request, as T5
 specifies). No merchant, membership or audit row is locked: nothing about them needs to be serialized with a read, and
 adding locks would only make readers block writers. **Read semantics:** transactions run at `READ COMMITTED`; the

@@ -1088,6 +1088,17 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   deleted (L1); instead the purge **clears these fields** on sessions that ended (revoked or past their absolute
   expiry) more than two years ago and on links sent more than two years ago that are already used or expired —
   the same two-year rule, with the exact conditions in the retention design below (R37).
+- **Application logs (rev 19).** [Fact] Every request is logged by `pino-http`, whose request serializer writes the
+  client's `remoteAddress`, `remotePort` and **all headers** — `user-agent` and any `x-forwarded-for` included
+  (`pino-std-serializers` `lib/req.js`) — and the redaction list (`apps/api/src/platform/logger.ts`, `REDACT_PATHS`)
+  removes credentials only. So today every log line carries the IP address and user agent, readable by whoever reads
+  the logs — which F3 forbids ("the AlphaKolect team cannot see this information"), and with no two-year limit.
+  [Plan, P5.8] `REDACT_PATHS` gains `req.remoteAddress`, `req.remotePort`, `req.headers["user-agent"]`,
+  `req.headers["x-forwarded-for"]`, `req.headers["x-real-ip"]` and `req.headers.forwarded`; the activity record keeps
+  these fields under the D9 rules, and a log line is still matched to its activity entry by the request id. The
+  leak sweep (`apps/api/test/identity/no-secrets-sweep.test.ts`) is extended to fail if a client IP address or user
+  agent appears in captured log output. Error tracking added later (Sentry, TARGET_ARCHITECTURE §28; P15) must send
+  no IP address or user agent either; recorded here as an obligation of P15.
 - **Copy before deletion:** before a clean-up, the owner may ask for a copy of the entries about to be deleted (the
   request is recorded in the database and enforced by every run until one delivers it, R44); it is
   handed over as a report (a file) and **the system keeps no copy** (F4, confirmed by the owner as CF2b on 2026-10-12:
@@ -1661,7 +1672,8 @@ independent of the permission catalog); it is listed with them so it is complete
 - **Order inside P5.8 (implementability).** (a) The **retention purge** first — it does not depend on O4: the
   migration (purger role and grants, reservation table, the eight functions, trigger change), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
-  (d) the **D9 written policy**, drafted from the decisions and from the purge as built, and handed to the owner.
+  (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
+  (e) the **D9 written policy**, drafted from the decisions and from the purge and logs as built, and handed to the owner.
 - **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
   `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
   recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page

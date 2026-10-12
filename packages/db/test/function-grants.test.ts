@@ -140,6 +140,28 @@ describe('execute-grant inventory (plan §9.1, R31)', () => {
     expect(actual).toEqual(EXPECTED);
   });
 
+  it('effective EXECUTE (has_function_privilege: role membership and PUBLIC included) matches the list', async () => {
+    const { rows } = await owner.query<{ fn: string; app: boolean; readonly: boolean }>(
+      `SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS fn,
+              has_function_privilege('alphakolect_app', p.oid, 'EXECUTE') AS app,
+              has_function_privilege('alphakolect_readonly', p.oid, 'EXECUTE') AS readonly
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ANY ($1)`,
+      [MODULE_SCHEMAS],
+    );
+    const effective = Object.fromEntries(rows.map((r) => [r.fn, { app: r.app, readonly: r.readonly }]));
+    const expected = Object.fromEntries(
+      Object.entries(EXPECTED).map(([fn, g]) => [
+        fn,
+        {
+          app: g.includes('alphakolect_app') || g.includes('PUBLIC'),
+          readonly: g.includes('alphakolect_readonly') || g.includes('PUBLIC'),
+        },
+      ]),
+    );
+    expect(effective).toEqual(expected);
+  });
+
   it('every function is owned by the migrator', async () => {
     const owners = new Set((await moduleFunctions()).map((f) => f.owner));
     expect(owners).toEqual(new Set(['alphakolect_migrator']));

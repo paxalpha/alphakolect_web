@@ -357,3 +357,53 @@ describe('identity.platform_membership_grants', () => {
     }
   });
 });
+
+// P5.1 gate review: "no access" must hold at the SQL privilege level, through role membership included — not only for
+// the statements tried above, and not by relying on row-level security.
+describe('effective privileges on the permission storage (inheritance included)', () => {
+  const TABLES = [
+    'identity.permission_catalog',
+    'tenancy.role_permissions',
+    'identity.platform_membership_grants',
+  ];
+  const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+
+  it.each(['alphakolect_app', 'alphakolect_readonly'])(
+    '%s belongs to no other role, so it inherits nothing',
+    async (role) => {
+      const { rows } = await owner.query(
+        `SELECT m.roleid::regrole::text AS granted FROM pg_auth_members m WHERE m.member = $1::regrole`,
+        [role],
+      );
+      expect(rows).toEqual([]);
+    },
+  );
+
+  it.each(['alphakolect_app', 'alphakolect_readonly'])(
+    '%s holds no table or column privilege on any of the three tables (has_*_privilege: effective, PUBLIC included)',
+    async (role) => {
+      const { rows } = await owner.query(
+        `SELECT t AS "table", p AS privilege
+           FROM unnest($1::text[]) AS t, unnest($2::text[]) AS p
+          WHERE has_table_privilege($3, t, p)
+         UNION ALL
+         SELECT t, 'some column' FROM unnest($1::text[]) AS t
+          WHERE has_any_column_privilege($3, t, 'SELECT, INSERT, UPDATE, REFERENCES')`,
+        [TABLES, PRIVILEGES, role],
+      );
+      expect(rows).toEqual([]);
+    },
+  );
+
+  it.each([
+    `ALTER TABLE identity.permission_catalog DISABLE TRIGGER permission_catalog_protected`,
+    `ALTER TABLE tenancy.role_permissions DISABLE TRIGGER role_permissions_grantable`,
+    `ALTER TABLE identity.platform_membership_grants DISABLE TRIGGER platform_membership_grants_grantable`,
+    `ALTER TABLE tenancy.role_permissions DISABLE ROW LEVEL SECURITY`,
+  ])(
+    'the app cannot switch a protection off (only the owner, through a reviewed migration): %s',
+    async (sql) => {
+      await expectSqlState(app.query(sql), SQLSTATE.insufficientPrivilege);
+    },
+  );
+});

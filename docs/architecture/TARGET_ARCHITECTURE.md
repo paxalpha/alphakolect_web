@@ -417,6 +417,11 @@ operations fail with a 500: the system fails closed rather than act without a re
 `audit_write_failure` signal and on sign-in failures caused by audit unavailability (500s on the sign-in, refresh and
 MFA endpoints together with that signal).
 
+**The owner's condition (follow-up C1 and C2, 2026-10-12):** the rule stays, provided that when the system goes live the
+database has a standby copy that takes over automatically, continuous backups and the alerts above, with recovery
+targets of **at most 5 minutes of activity lost** and **service back within 1 hour** if the main database fails. These
+are P15 obligations (`RESTRUCTURING_MAP.md`, obligations P5 passes to P15).
+
 #### Frozen contracts of the new operations (Part 1)
 
 All additions are non-breaking (new operations, new optional query parameters, new response fields). Every list uses
@@ -485,7 +490,8 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | Owner go-ahead G1 | "yes, start now with Part 1." | owner, 2026-10-12 | `P5_OWNER_GO_AHEAD.md` | `951b909`; plan `c533e58` |
 | Reviewer — Part 2 | — | — | — | **pending** |
 | B1 | Every permission-gated read is also checked in the database — the profile, branches, roles, the catalog and the invitation list get read functions with permission checks; the app loses direct `SELECT` on those tables (P5.5) | owner, 2026-10-12 | ADR-16 approval form B1: "Add the database check now … an extra layer of protection" | `d4ac17e`; this section |
-| ADR-16 text — owner | "Yes i approve ADR-16 for Part 1, with the answers above." Part A all correct; B1 as above; C1 asked for a recommendation (pending his answer) | owner, 2026-10-12 | `P5_OWNER_ADR16_APPROVAL.md` | `d4ac17e` |
+| ADR-16 text — owner | "Yes i approve ADR-16 for Part 1, with the answers above." Part A all correct; B1 as above; C1 asked for a recommendation (answered in the follow-up, next row) | owner, 2026-10-12 | `P5_OWNER_ADR16_APPROVAL.md` | `d4ac17e` |
+| ADR-16 follow-up — owner | C1: the rule is kept, with a standby database, continuous backups and alerts required at go-live; C2: at most 5 minutes of activity lost and service back within 1 hour; A3 confirmed: only the owner manages the platform team, person by person | owner, 2026-10-12 | `P5_OWNER_ADR16_FOLLOWUP.md` | `130fbda`; availability consequence above |
 | ADR-16 text — reviewer | Approval of this section as written for Part 1, including the B1 change to Part 1 | — | — | **pending** |
 
 ---

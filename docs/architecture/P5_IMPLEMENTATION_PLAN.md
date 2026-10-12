@@ -345,6 +345,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
 | `audit.reserve_purge_run`, `audit.release_purge_run` (operator only; R43) | 0: reservation / NKU `NOWAIT` | write the reservation |
+| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
 | `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
@@ -1112,7 +1113,9 @@ The exception is:
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
    `occurred_at < p_as_of − COALESCE(retention_override, audit.d9_retention())` for its pair (R42). Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
-   - `audit.purge_candidates(p_as_of, p_after_id, p_limit)` — read-only, paged by `id`: returns up to `p_limit`
+   - `audit.purge_candidates(p_run_id, p_as_of, p_after_id, p_limit)` — reads audit rows without locking them, paged
+     by `id`; its only write is renewing this run's reservation (R43), which it checks first like every purge
+     function, so a long export keeps the run alive page by page. It returns up to `p_limit`
      eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its canonical text
      (`to_jsonb(row)::text`), and a SHA-256 digest the database computes over those texts joined by newlines in that
      order — the exact bytes the report file contains for that page, so the digest can be recomputed from the file;
@@ -1159,7 +1162,8 @@ The exception is:
 7. **the operator command and its failure semantics (R36).** One run, in this order:
    0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id`, or fails at once if another run
       holds a live reservation — before anything is read, written or deleted;
-   1. with that `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests);
+   1. with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests); each
+      page renews the reservation, so an export of any size stays within the lease;
    2. **if the owner asked for a report:** write all pages to a new file at the path the operator names (never in the
       repository or on the server), flush it to disk (`fsync` of the file and its directory), read it back, and check
       that every page's rows reproduce that page's database digest; record the file's own SHA-256. Any failure here —
@@ -1193,7 +1197,7 @@ The exception is:
    - `release_purge_run(p_run_id)` frees the row if it still holds this run.
 
    **What this guarantees.** A second run fails at once — with `purge_run_active` if the first run is between
-   transactions, with `lock_not_available` if the first run's page transaction holds the row — before it reads or
+   transactions, with `lock_not_available` if one of the first run's transactions holds the row — before it reads or
    changes anything. A takeover can only happen **between** the old run's transactions (each holds the row until it
    commits), and only after the lease has expired. If the old run was merely slow rather than dead, its next page
    finds the reservation no longer its own and stops without deleting; everything it had deleted was in its verified
@@ -1205,8 +1209,8 @@ The exception is:
    path. Its other locks:
    - **audit rows (deletion by id):** a `DELETE` locks the rows it removes, but nothing else ever locks
      `audit.audit_events` rows — request paths only insert new rows, no foreign key references the table, `UPDATE`
-     and every other `DELETE` are refused by the append-only trigger, and a second purge is excluded by the run
-     lock — so these deletes cannot wait;
+     and every other `DELETE` are refused by the append-only trigger, and a second purge is excluded by the run-wide
+     reservation (R43) — so these deletes cannot wait;
    - **category 5, then category 10 (field clearing):** `SKIP LOCKED`, so they cannot wait either. [Fact] Request
      paths never lock an eligible token (consumption and supersession touch only unconsumed, unexpired tokens:
      `20261003000200:80-89`, `20261004000200:43-45`), but they **can** lock an eligible session: revocations update
@@ -1215,8 +1219,8 @@ The exception is:
      skipped and cleared by a later run.
 
    A transaction that never waits cannot be part of a deadlock; request transactions may wait briefly for a purge
-   that holds a row, which is a one-way wait. The lock-order guard checks both locking purge functions (`purge_candidates` takes no lock) against their
-   planned-footprint rows (§7.2) like any other operation — no exemption — and verifies the facts this relies on: no
+   that holds a row, which is a one-way wait. The lock-order guard checks every purge function against its planned-footprint row (§7.2;
+   `purge_candidates` locks only the reservation, never an audit row) like any other operation — no exemption — and verifies the facts this relies on: no
    function other than the purge locks, updates or deletes `audit.audit_events` rows, and no foreign key references
    the table.
 
@@ -1254,7 +1258,8 @@ transaction of the first holds the row fails at once with `lock_not_available`; 
 changes nothing; a run killed after its first page leaves a reservation that blocks new runs until the lease expires
 (the test redefines `audit.purge_lease()` to a short interval), after which a new run takes over and records the
 takeover; the old run, resumed, has its next page refused without deleting anything; a page called with a stale or
-foreign `run_id`, or another `p_as_of`, is refused; release frees the reservation; a request revoking an
+foreign `run_id`, or another `p_as_of`, is refused; release frees the reservation; an export whose pages together take longer than one lease (short test lease)
+completes, because each `purge_candidates` page renews the reservation; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
 classify all five purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's

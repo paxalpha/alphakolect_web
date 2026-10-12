@@ -66,7 +66,7 @@ is not in P5 and says where it goes instead.
 | `P5_AUDIT_REPORT.md` §22.4 | owner decisions D1, D4, D5, D9 | §3; D9: §8.6, P5.10, §13 item 9 |
 | Found in planning (§7.2, §8.1) | latent P4 deadlock (re-invite during account setup); no acceptance event on the setup path | §7.2 footprints, P5.5 test (h); #14, P5.5 |
 | Legacy system (§15) | per-staff audit view | O4 actor filter; P5.8 |
-| D9 decisions (§8.6), passed forward | backups must not keep deleted entries longer than the owner's backup retention; error tracking must send no IP address or user agent | **not P5** — P15 obligations, recorded here and in the P5 record; the retention itself is O10 |
+| D9 decisions (§8.6) and the availability consequence, passed forward | backups must not keep deleted entries longer than the owner's backup retention; error tracking must send no IP address or user agent; the reverse proxy records no client IP address or user agent and logs the server's `x-request-id`; alerts on `audit_write_failure` and on sign-in failures caused by audit unavailability | **not P5** — P15 obligations, recorded here, in RESTRUCTURING_MAP (obligations P5 passes to P15) and in ADR-16; the retention itself is O10 |
 
 **Constraints for every package:**
 

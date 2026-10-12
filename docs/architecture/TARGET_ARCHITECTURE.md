@@ -509,6 +509,8 @@ request → authenticate (session) → resolve Actor {identity, audience, member
         → repository (always scoped) → Postgres (SET LOCAL app.merchant_id; RLS)
 ```
 
+- **Subscription gate:** its form, and how it fits ADR-16's fail-closed policy pipeline, is decided in P10's design
+  (`TARGET_ARCHITECTURE_REVIEW.md` TA-12); billing suspension is not part of P5.
 - **Layer responsibilities:** *authorization policies* (application) decide what the actor may do to which resource; *scoped repositories* make it impossible to address another tenant's rows; *RLS* is the last line of defence against bugs in the first two. None substitutes for another.
 - **Repositories require a `TenantContext` argument**; there is no unscoped repository for tenant data. Platform-audience code uses explicit, permission-gated cross-tenant read services.
 - **Composite foreign keys** `(merchant_id, id)` on tenant tables so a row can only reference rows of the same tenant (e.g. a collection cannot point at another merchant's customer).

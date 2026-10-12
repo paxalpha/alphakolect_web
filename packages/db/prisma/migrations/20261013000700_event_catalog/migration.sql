@@ -150,7 +150,7 @@ INSERT INTO "audit"."event_catalog" ("identifier", "outcome", "class", "writer_p
   ('merchant.invitation_revoked',  'success', 'atomic', 'A', '{"kind": {"type": "string", "max": 16}}'),
   ('platform.merchant_deactivated','success', 'atomic', 'A', '{"status": {"type": "string", "max": 32}, "reason": {"type": "string", "max": 500}}'),
   ('platform.merchant_reactivated','success', 'atomic', 'A', '{"status": {"type": "string", "max": 32}}'),
-  ('platform.ownership_transferred','success','atomic', 'A', '{"formerOwnerIdentityId": {"type": "string", "max": 36}, "formerOwnerMembershipId": {"type": "string", "max": 36}, "newOwnerIdentityId": {"type": "string", "max": 36}, "newOwnerMembershipId": {"type": "string", "max": 36}, "formerOwnerRoleId": {"type": "string", "max": 36, "nullable": true}, "formerOwnerDeactivated": {"type": "boolean"}}'),
+  ('platform.ownership_transferred','success','atomic', 'A', '{"formerOwnerIdentityId": {"type": "string", "max": 36}, "formerOwnerMembershipId": {"type": "string", "max": 36}, "newOwnerIdentityId": {"type": "string", "max": 36}, "newOwnerMembershipId": {"type": "string", "max": 36}, "formerOwnerRoleId": {"type": "string", "max": 36}, "formerOwnerDeactivated": {"type": "boolean"}}'),
   -- best effort: identity failures, and the link-issuing successes of O6
   ('auth.signup',                  'failure', 'best_effort', NULL, '{"reason": {"type": "string", "max": 64}}'),
   ('auth.email_verify',            'failure', 'best_effort', NULL, '{"reason": {"type": "string", "max": 64}}'),

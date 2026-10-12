@@ -90,7 +90,7 @@ export const AUDIT_CATALOG = [
     formerOwnerMembershipId: uuid,
     newOwnerIdentityId: uuid,
     newOwnerMembershipId: uuid,
-    formerOwnerRoleId: nullableUuid,
+    formerOwnerRoleId: uuid,
     formerOwnerDeactivated: flag,
   }),
   // best effort — identity failures, and the link-issuing successes of O6

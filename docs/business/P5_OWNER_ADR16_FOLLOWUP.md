@@ -32,7 +32,7 @@ when the system goes live.
 - ☐ **Yes** — keep the rule, with the protections above *(our suggestion)*
 - ☐ No — let's discuss
 
-> Answer:
+> Answer: Yes, I accept the recommendation to keep the rule with the protections in place when the system goes live.
 
 **C2.** If the main database fails, how much may be lost and how long may the system be down? (This tells the
 deployment stage how strong the standby and backups must be — stricter targets cost more to run.)
@@ -42,7 +42,7 @@ deployment stage how strong the standby and backups must be — stricter targets
 - ☐ Other:
 - ☐ Not sure — please advise when the system goes live
 
-> Answer:
+> Answer: lose at most 5 minutes of activity; back within 1 hour. This ensures minimal disruption to users and maintains the integrity of the system.
 
 ---
 
@@ -60,8 +60,8 @@ appropriate access based on their roles."* We want to be sure we built what you 
 - ☐ **Yes** — only I manage my team, person by person
 - ☐ No — my team should also be able to manage accounts or permissions (please say how):
 
-> Answer:
+> Answer: Yes, that is correct.
 
 ---
 
-> Name: Date:
+> Name: Mayowa Edward Fadahunsi Date: 12th of October, 2026

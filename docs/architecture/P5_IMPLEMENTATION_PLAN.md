@@ -275,9 +275,11 @@ rules that make that set finite and checkable:
   of fresh random values (token and session hashes, UUIDv7 ids) are not contested.
 - **L4 — triggers and policies.** [Fact] The triggers on tables written by these flows lock nothing:
   `merchant_keeps_one_owner` (deferred, reads only), the append-only triggers on `audit.audit_events` (fire on
-  `UPDATE`/`DELETE`; refuse them except the purge's age-checked `DELETE`, §8.6 — they read `current_user`, the row and its pair's
-  retention — the catalog override or `audit.d9_retention()`, a `STABLE` function that only returns a constant and is on
-  the guard's lock-free allowlist (R42) — nothing else, and lock nothing), [Plan] the event-validation trigger (reads the event catalog, §8.1), and the ledger triggers (not touched by these flows); RLS policies call
+  `UPDATE`/`DELETE`/`TRUNCATE`; from rev 20 they call the dedicated `audit.audit_events_guard()`, §8.6, which refuses
+  them except a purge run's age-checked `DELETE` — it reads the transaction's `audit.purge_run_id` setting, the
+  reservation row (without a lock), the row and its pair's retention — the catalog override or `audit.d9_retention()`,
+  a `STABLE` function that only returns a constant and is on the guard's lock-free allowlist (R42) — nothing else, and
+  locks nothing; the ledger keeps `util.reject_modification()` unchanged), [Plan] the event-validation trigger (reads the event catalog, §8.1), and the ledger triggers (not touched by these flows); RLS policies call
   `util.current_merchant_id()`, which reads a setting. The guard re-checks every trigger function.
 - **L5 — whole footprint first, one row at a time.** A function acquires its complete footprint before its first write,
   category by category in the order below, ascending id within a category, one row per statement, through the
@@ -1133,8 +1135,15 @@ calendar rule gives the natural answer — a cutoff computed on 29 February 2028
 
 The exception is:
 
-1. a dedicated `NOLOGIN` role, `alphakolect_audit_purger`, is the only role with `DELETE` on the table;
-2. two functions, both owned by that role (`SECURITY DEFINER`, pinned `search_path` and `TimeZone`, R41),
+1. **who runs it — no separate role (rev 20, resolves R46).** [Fact] Database roles are cluster-level: a superuser
+   creates them in `packages/db/sql/bootstrap/roles.sql` **before** migrations, and the migrator is `NOCREATEROLE`,
+   so no migration can create a role. A dedicated purger role would need that bootstrap changed and the migrator made a
+   **member** of it (the only way the migrator can give it ownership of the purge functions) — which lets the migrator
+   act as it, so it would add no boundary, only a privilege list to keep complete (R39, R46). The purge functions are
+   therefore **owned by `alphakolect_migrator`**, like every other function (`bootstrap_super_admin` included). As the
+   owner of the `audit` and `identity` schemas, their tables and `util.uuid_v7()` (id defaults), and with row-level
+   security not forced, they need **no additional grant**; nothing is granted to the app;
+2. two functions (`SECURITY DEFINER`, owned by the migrator, pinned `search_path` and `TimeZone`, R41),
    operator-only, define
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
    `occurred_at < p_as_of − COALESCE(retention_override, audit.d9_retention())` for its pair (R42). Because `p_as_of` can never be in the future, an operator
@@ -1157,11 +1166,23 @@ The exception is:
      `purge_candidates`, so the same check guards every run. `purge_candidates` writes no event of its own: it is
      reachable only by the operator role, which as the table owner can already read the table, and each run's export
      is recorded in its #38 event;
-3. the append-only trigger is changed to allow a `DELETE` **only** when `current_user` is that role **and** the row is
-   older than its pair's retention, `COALESCE(retention_override, audit.d9_retention())` (R41, R42), so even
-   a defect in the purge
-   function cannot delete a younger row; `UPDATE` stays forbidden for everyone;
-4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_run_id, p_as_of)`, run once per
+3. **the activity record gets its own guard (rev 20).** [Fact] Its append-only triggers call
+   `util.reject_modification()` — the **same** function that protects the ledger's money tables
+   (`journal_entries`, `journal_lines`, `20260927000300:119-146`). That function is **not changed**: the ledger keeps
+   it exactly as it is. On `audit.audit_events` only, the two triggers are replaced by triggers calling a dedicated
+   function, `audit.audit_events_guard()` (runs as the caller; pinned `search_path` and `TimeZone`), which refuses
+   every `UPDATE` and `TRUNCATE`, and refuses a `DELETE` unless **both**: (a) the transaction-local setting
+   `audit.purge_run_id` names the run that holds the **live** reservation (`purge_expired_events` sets it with
+   `set_config(…, true)` after taking the reservation, so it ends with the transaction); and (b) the row is older than
+   its pair's retention, `COALESCE(retention_override, audit.d9_retention())` (R41, R42). So even a defect in the
+   purge function, or a faulty migration, cannot delete a younger row or delete outside a purge run;
+
+   **Trust boundary, stated plainly.** The app cannot reach this exception at all: it has no `DELETE` privilege on the
+   table and no `EXECUTE` on any purge function. The guard protects against **defects** — code or migrations that
+   would delete audit rows outside a purge run or too early. The migrator itself is **trusted**, as everywhere in this
+   system: it owns the table and could replace the trigger. That is a property of the P1 role model (§9.1), not something
+   P5 claims to change;
+4. a third operator-only function owned by the migrator, `audit.clear_expired_request_metadata(p_run_id, p_as_of)`, run once per
    purge run after the deletion pages, in its own transaction with its own event (#40), clears (CF4) — an `UPDATE` of
    non-key columns, outside every request path — exactly these, **tokens first, then sessions** (lock categories 5
    then 10), each row selected `FOR NO KEY UPDATE SKIP LOCKED` and then updated by id, so a row a request transaction
@@ -1231,7 +1252,8 @@ The exception is:
    - `release_purge_run(p_run_id, p_completed)` frees the row if it still holds this run.
 
    **A requested report is a database fact, enforced at deletion (R44).** The owner's request (F4/CF2b) is not an
-   option of one run. Two tables hold the state (audit schema, no tenant data, purger-only, R45):
+   option of one run. Two tables hold the state (audit schema, no tenant data, migrator-owned, nothing granted to the
+   app, R45):
    `audit.purge_report_requests` (`id`, `requested_at`, `note`, `satisfied_at`) and `audit.purge_reports` (`id`,
    `request_id`, `run_id`, `confirmed_at`, `row_count`, `file_sha256`, `file_location`, `delivered_at`,
    `delivery_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
@@ -1309,8 +1331,11 @@ pair has an override; a `p_as_of` in the future is
 refused (by every purge function that takes it); the app role cannot execute any purge function (`reserve_purge_run`,
 `renew_purge_run`, `request_purge_report`, `purge_candidates`, `confirm_purge_report`, `purge_expired_events`,
 `clear_expired_request_metadata`, `record_report_delivery`, `release_purge_run`) or delete directly;
-an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
-than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active
+an `UPDATE` or `TRUNCATE` of `audit.audit_events` refused for every role, the table owner included; a `DELETE` refused for
+every role, the table owner included, outside a purge run holding the live reservation (setting absent, or naming a
+stale or foreign run) and for any row younger than its retention; **the ledger is untouched** — a `DELETE` or `UPDATE`
+of a journal entry or line is still refused by `util.reject_modification()`, whose definition is unchanged (compared
+with the P1 migration text); **eligibility (R37)** — old and recent sessions, active
 (unrevoked, unexpired), revoked and absolutely expired sessions, revoked or expired less than two years ago, and
 consumed, expired and still-valid tokens (a still-valid token backdated in the test fixture) — only the named fields of
 eligible rows change, every other column and row is unchanged; the summary event commits with the deletion and a
@@ -1368,29 +1393,14 @@ functions a request path calls. **No app grant** for: operator and maintenance f
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
-app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **The purger role**
-(`alphakolect_audit_purger`, §8.6) is `NOLOGIN`, a member of no other role, and holds **exactly** (R39):
-
-| Object | Privilege | Why |
-|---|---|---|
-| schema `audit` | `USAGE` | its own functions and tables |
-| schema `identity` | `USAGE` | the field clearing of CF4 — [Fact] today only `alphakolect_app` has it (`20261003000200:7`) |
-| `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 and #40 events |
-| `audit.event_catalog` | `SELECT` | retention periods |
-| `audit.purge_reservation` (one row, §8.6) | `SELECT`, `UPDATE` | the run-wide reservation and its running totals (R43, R44; `FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
-| `audit.purge_report_requests`, `audit.purge_reports` | `SELECT`, `INSERT`, `UPDATE` | report requests, confirmations and deliveries (R45) |
-| `identity.sessions` | `SELECT (id, revoked_at, absolute_expires_at)`, `UPDATE (created_ip, user_agent)` | CF4 clearing |
-| `identity.one_time_tokens` | `SELECT (id, created_at, consumed_at, expires_at)`, `UPDATE (requested_ip)` | CF4 clearing |
-
-[Fact] No `identity` table has row-level security (RLS is enabled only on tenancy, ledger and audit tables,
-`20260927000400`, `20261003000100:276`, `20261009000300:71,78`, `20261012000100:84`), so the column grants
-above are the whole boundary there. On `audit.audit_events` its RLS policies allow `SELECT` and `DELETE` of rows
-older than their retention period and `INSERT` of the tenant-less `platform.audit_purged`,
-`platform.request_metadata_cleared`, `platform.purge_report_delivered` and `platform.purge_report_requested` events only. **Tests:** the
-purge succeeds end to end when its functions run as their owner, the purger (export, deletion, field clearing, #38 and #40);
-with any one of the grants above removed in a scratch copy of the role, the step that needs it fails with
-`insufficient_privilege`; and a test enumerates its privileges across every table, column, sequence, function and
-schema and fails on anything not in the table.
+app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Purge ownership and privileges (rev 20; replaces the R39 purger table).** The purge functions are owned by
+`alphakolect_migrator` (§8.6 item 1) and run through the operator's migrator connection, so they need no grant
+beyond ownership — id defaults (`util.uuid_v7()`), the `identity` schema and the report tables included (R46).
+What is enumerated and tested is what **others** may not do: `alphakolect_app` and `alphakolect_readonly` have no
+`EXECUTE` on any purge function, no `DELETE` on `audit.audit_events`, and no privilege on the reservation and report
+tables. **Tests:** the purge runs end to end as the function owner through the migrator connection (export, deletion,
+field clearing, report confirmation and delivery, events #38, #40, #41, #42); each of the app and readonly roles is
+refused every purge function and every write to those tables with `insufficient_privilege`.
 
 ### 9.2 Guards that must keep passing
 
@@ -1693,7 +1703,8 @@ independent of the permission catalog); it is listed with them so it is complete
   tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
   follows it too (`admin:containment`, built in P5.5).
 - **Order inside P5.8 (implementability).** (a) The **retention purge** first — it does not depend on O4: the
-  migration (purger role and grants, reservation table, the eight functions, trigger change), the operator command and
+  migration (the dedicated audit guard function and its triggers, the reservation and report tables, the nine
+  functions), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
   (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
   (e) the **D9 written policy**, drafted from the decisions (including O10–O12) and from the purge and logs as built, and

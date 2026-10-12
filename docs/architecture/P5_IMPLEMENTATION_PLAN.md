@@ -1831,7 +1831,9 @@ independent of the permission catalog); it is listed with them so it is complete
 - **Equivalence oracle:** with owners holding all merchant permissions and no staff grants, the P4 isolation matrix
   must produce identical results before and after.
 - **Tests:** P4 matrix unchanged; source guard: no `kind === 'owner'` / `requireOwner` outside the authorization
-  module; denial responses unchanged.
+  module; denial responses unchanged; **route parity asserts the authorization middleware is mounted for every
+  `permission` endpoint and only there** (moved from P5.3 with the middleware it checks — reviewer's condition at the
+  P5.3 gate, 2026-10-12).
 - **Done when:** the API enforces declarations with zero behaviour change for existing actors.
 
 ### P5.5 — Database functions aligned (and direct writes moved)

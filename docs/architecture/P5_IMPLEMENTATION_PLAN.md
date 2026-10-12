@@ -1609,6 +1609,10 @@ independent of the permission catalog); it is listed with them so it is complete
   only grantable platform permissions, no
   app grant). **Storage only: no function that writes grants exists after P5.1.** The writers arrive with their
   authorization foundation — `tenancy.set_role_permissions` in P5.6, `identity.set_platform_grants` in P5.7.
+- **Migration names:** migrations apply in name order, and `20261013000100_audience_checked_refresh` (P4.7) is named
+  ahead of its commit date. So P5's first migration must sort after it (for example `20261013000200_permission_catalog`),
+  never before it with today's date: on a fresh database it would run earlier than on an existing one. No existing
+  migration is renamed (critic review TA-26).
 - **Seed:** catalog rows only. **No grant rows.**
 - **Tests:** seed = contracts union; platform permission refused for a role; cross-merchant role refused; reserved
   permission refused (constraints exercised as the table owner, since nothing else can write); the app role cannot

@@ -1,6 +1,6 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: DRAFT, revision 20 (owner review A–E; independent reviews R1–R49 and fixes A–D applied; self-review cycles
+**Status: DRAFT, revision 21 (owner review A–E; independent reviews R1–R52 and fixes A–D applied; self-review cycles
 recorded in §16; every owner question answered — O3, O5, O6, O8, O9 decided, O7 resolved, D5 and D8 superseded, D9
 decided; owner confirmation CF1–CF5 signed 2026-10-12; O4 by design decided at P5.8 step 2; O10–O12 (privacy, needed by P5.8 step e) open; decision log in §14;
 awaiting the reviewer's final verdict, then the owner's final go-ahead).
@@ -369,7 +369,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.release_purge_run` (operator only; R43–R45) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
 | `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
 | `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
@@ -798,7 +798,7 @@ and the catalog assigns each atomic pair to exactly one:
     compared with the invitation, never written as the actor. The password check of the invitation-link path remains
     in the API (T11), as in P4;
   - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38, its field clearing #40, report
-    requests #42 and deliveries #41, the containment switch #39): actor
+    requests #42, deliveries #41 and losses #43, the containment switch #39): actor
     `NULL`, as for the bootstrap today.
 
   In every pattern-A function, `request_id`, `ip` and `user_agent` are passed in as **request context**: they are
@@ -874,6 +874,7 @@ once per audience.
 | 40 | `platform.request_metadata_cleared` *new* (R40, rev 16) | success | A | `audit.clear_expired_request_metadata` (operator only, §8.6) | P5.8 tests |
 | 41 | `platform.purge_report_delivered` *new* (R45, rev 19) | success | A | `audit.record_report_delivery` (operator only, §8.6) | P5.8 tests |
 | 42 | `platform.purge_report_requested` *new* (R45, rev 19) | success | A | `audit.request_purge_report` (operator only, §8.6) | P5.8 tests |
+| 43 | `platform.purge_report_lost` *new* (R52, rev 21) | success | A | `audit.record_report_lost` (operator only, §8.6) | P5.8 tests |
 
 **Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
 
@@ -923,7 +924,7 @@ Error logs carry the event identifier, request id and reason only — never summ
 ### 8.2 Failure classes
 
 This table defines what each class **means**. It is not an event list: **§8.1's inventory is the exhaustive authority**
-for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#42, sensitive read #33–#36, and every
+for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#43, sensitive read #33–#36, and every
 best-effort pair), and the coverage guard compares the catalog with that inventory alone. The examples below are
 illustrative.
 
@@ -1298,8 +1299,8 @@ The exception is:
    option of one run. Two tables hold the state (audit schema, no tenant data, migrator-owned, nothing granted to the
    app, R45):
    `audit.purge_report_requests` (`id`, `requested_at`, `note`, `satisfied_at`) and `audit.purge_reports` (`id`,
-   `request_id`, `run_id`, `confirmed_at`, `row_count`, `file_sha256`, `file_location`, `delivered_at`,
-   `delivery_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
+   `request_id`, `run_id`, `p_as_of`, `confirmed_at`, `row_count`, `file_sha256`, `file_location`, `delivered_at`,
+   `delivery_note`, `lost_at`, `loss_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
    inserts an **open** request; "a report is pending", in this section, means a request is open. `confirm_purge_report(p_run_id, p_row_count, p_file_sha256, p_file_location)` inserts
    this run's report for the open request, after checking the run's live reservation and that the count equals the
    rows `purge_candidates` returned to this run — each candidates page adds its row count and page digest to running
@@ -1310,14 +1311,33 @@ The exception is:
    **Delivery is recorded, and closes the request (R45).** Confirmation proves a file was written and checked, not
    that it reached the owner. A request is **satisfied** — and later runs may delete without a report — only when
    (i) a run has **completed** with a confirmed report for it, **and** (ii) **every** confirmed report of that request
-   has been **delivered**. Delivery is recorded by `record_report_delivery(p_report_id, p_file_sha256, p_note)`
+   has been **delivered** (or, if it could not be recovered, recorded as lost — R52, below). Delivery is recorded by `record_report_delivery(p_report_id, p_file_sha256, p_note)`
    (operator-only), which the command `audit:purge-report-delivered --report <id> [--file <path>]` calls after
    recomputing the SHA-256 of the file it is handing over; a hash that differs from the confirmed one is refused, so
    what is recorded as delivered is exactly the verified report. **What that record proves (R48):** the hash proves the
    file handed over is the confirmed report, unaltered — **not** that the owner received it, which the database cannot
    know. A recorded delivery is therefore the **operator's attestation**, made only after the handover, and its note
    states the delivery method and the receipt evidence agreed under O11 (the runbook gives the form); if the owner's
-   answer to O11 requires his own confirmation of receipt, the delivery is recorded only once that confirmation exists. `audit:purge-reports` lists every confirmed,
+   answer to O11 requires his own confirmation of receipt, the delivery is recorded only once that confirmation exists.
+
+   **Keeping the report until it is delivered (R52).** The database holds a report's path, hash, count and `p_as_of`,
+   never its contents; once its run has deleted rows, the file is their only copy. So:
+   1. the operator writes the report to a **durable location they control** — never a temporary directory; the runbook
+      names acceptable places — and keeps it there, unchanged, until its delivery is recorded;
+   2. `audit:purge-reports` re-reads every undelivered report at its recorded path and states for each: present and
+      matching, **missing**, or **altered** (hash differs);
+   3. **a missing or altered report is recovered exactly where possible:** restore a database backup taken before the
+      run's deletions into a scratch database (backups are kept as O10 decides), recompute the candidates with the
+      report's recorded `p_as_of` — audit rows are immutable, so the same rows give the same canonical text — rewrite the
+      file and check its SHA-256 against the confirmed one; if it matches, the report is recovered bit for bit and is
+      delivered as usual;
+   4. **if it cannot be recovered** (no backup old enough, or the regenerated hash differs), the operator records the
+      loss with `record_report_lost(p_report_id, p_note)` — operator-only, an attestation whose note records that the
+      owner was told, refused for a report already delivered — which writes `platform.purge_report_lost` (#43) and
+      closes that report's delivery obligation; the incident is recorded in `docs/security/`.
+
+   A request is satisfied when a run has completed with a confirmed report and **every** confirmed report of it is
+   either delivered or recorded as lost. `audit:purge-reports` lists every confirmed,
    undelivered report (id, run, request, count, SHA-256, recorded path) straight from the database, so a report whose
    run stopped after confirming — even after deleting some pages — is found and delivered from there; nothing
    depends on the operator having kept the command's output. Each request and each delivery writes an atomic event
@@ -1396,7 +1416,8 @@ changed; a scratch event entry with an override uses its override, not the funct
 pair has an override; a `p_as_of` in the future is
 refused (by every purge function that takes it); the app role cannot execute any purge function (`reserve_purge_run`,
 `renew_purge_run`, `request_purge_report`, `purge_candidates`, `confirm_purge_report`, `purge_expired_events`,
-`clear_expired_request_metadata`, `record_report_delivery`, `release_purge_run`) or delete directly;
+`clear_expired_request_metadata`, `record_report_delivery`, `record_report_lost`, `release_purge_run`) or delete
+directly;
 an `UPDATE` or `TRUNCATE` of `audit.audit_events` refused for every role, the table owner included; a `DELETE` refused for
 every role, the table owner included, outside a purge run holding the live reservation (setting absent, or naming a
 stale or foreign run) and for any row younger than its retention; **the ledger is untouched** — a `DELETE` or `UPDATE`
@@ -1436,10 +1457,14 @@ completing leaves the request pending; **delivery (R45)** — the command stoppe
 again after deleting its first page: `audit:purge-reports` lists the report with its path, hash and count; a later
 run completes with its own report, yet the request stays open until **both** reports are recorded as delivered, and
 only then may a run delete without a report; `record_report_delivery` with a file whose hash differs is refused;
-#41 and #42 commit with their changes; a request revoking an
+#41 and #42 commit with their changes; **report durability (R52)** — a report file deleted after its run's first page
+is flagged **missing** by `audit:purge-reports`, and one edited is flagged **altered**; regenerated from a copy of the
+database taken before the run (the test keeps one) with the recorded `p_as_of`, the file matches the confirmed
+SHA-256 and is delivered; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
+can be satisfied; `record_report_lost` on a delivered report is refused; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
-classify all nine purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
+classify all ten purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates
@@ -1456,7 +1481,8 @@ when each migration is written.
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
 `audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.renew_purge_run`,
-`audit.request_purge_report`, `audit.confirm_purge_report`, `audit.record_report_delivery`, `audit.release_purge_run`,
+`audit.request_purge_report`, `audit.confirm_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`,
+`audit.release_purge_run`,
 `audit.d9_retention`,
 `audit.purge_lease`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
@@ -1605,7 +1631,7 @@ independent of the permission catalog); it is listed with them so it is complete
   template-built identifier anywhere else fails the writer guard. The coverage guard
   accepts exactly these pairs from exactly those call sites through a **closed transitional list** in the guard; P5.5
   empties the list and deletes it, and from then on the guard fails if it exists. No other pair may use it. New pairs
-  (#21, #30–#42, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
+  (#21, #30–#43, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
   that writer and its tests.
 - **Tests:** every row of the §8.1 entry-point table for each entry point (unknown identifier, known event of another
   class — atomic and sensitive-read events through `recordBestEffort` — invalid outcome, disallowed and over-length
@@ -1757,7 +1783,7 @@ independent of the permission catalog); it is listed with them so it is complete
 ### P5.8 — Audit reads (and O9 list pagination)
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its nine functions, the reservation, the report request and delivery tables, and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its ten functions, the reservation, the report request and delivery tables, and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
@@ -1768,11 +1794,12 @@ independent of the permission catalog); it is listed with them so it is complete
   `apps/api/src/modules/identity/bootstrap.ts`, and printing outcomes but never secrets. The purge follows it:
   `apps/api/scripts/audit-purge.ts` (`audit:purge`, with `--report <path>` to write a pending report, and
   `audit:purge-request-report` to record the owner's request, `audit:purge-reports` to list undelivered reports and
-  `audit:purge-report-delivered` to record a delivery) and its logic in `apps/api/src/modules/audit/purge.ts`,
+  `audit:purge-report-delivered` to record a delivery, `audit:purge-report-lost` to record an unrecoverable loss) and
+  its logic in `apps/api/src/modules/audit/purge.ts`,
   tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
   follows it too (`admin:containment`, built in P5.5).
 - **Order inside P5.8 (implementability).** (a) The **retention purge** first — it does not depend on O4: the
-  migration (the dedicated audit guard function and its triggers, the reservation and report tables, the nine
+  migration (the dedicated audit guard function and its triggers, the reservation and report tables, the ten
   functions), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
   (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
@@ -1823,8 +1850,8 @@ independent of the permission catalog); it is listed with them so it is complete
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
   deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); **operator runbooks** in
-  `docs/operations/` for `audit:purge` (requesting a report, running, recovering a stopped run, listing and recording
-  deliveries) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
+  `docs/operations/` for `audit:purge` (requesting a report, running, recovering a stopped run, where to keep a report
+  until delivery, listing and recording deliveries, recovering a missing report from a backup, recording a loss) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
   invocation and expected output; full gate twice;
   gitleaks over full history; the three review documents are already committed on this branch as planning records —
   whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
@@ -1919,7 +1946,7 @@ owner, in either case.
    still present when their page is read), proven by the concurrency tests including the concurrent purge (R25, R35).
 8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
 9. An owner-approved written D9 policy (§8.6) exists, matching the decisions recorded there (O10–O12 included); the
-   retention purge is built and tested, including recorded delivery of every confirmed report (R45); application logs
+   retention purge is built and tested, including recorded delivery — or recorded, unrecoverable loss — of every confirmed report (R45, R52); application logs
    carry no IP address or user agent (leak sweep); the P15 obligations are recorded in the P5 record.
 10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).
 11. Every `permission` endpoint declares its branch scope; branch-restricted and archived-branch staff are covered by
@@ -2021,6 +2048,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 21 | 2026-10-12 | Full-document review of rev 20 (close; three findings, none blocking P5.0), recorded as **R50–R52**: **(R50)** nothing a caller controls reaches a log line unchecked — request ids are always server-generated (a caller's `X-Request-ID`, today accepted if it matches `[A-Za-z0-9._-]{1,128}`, is ignored; two existing tests change to assert this, a recorded deviation), the path is logged without its query string, and database errors are logged as structural fields with a fixed message (message, detail, stack dropped); leak-sweep cases for a forged request id, a query string and a database message; **(R51)** the §14 summary no longer says every owner decision is answered — O10–O12 are open, needed only at P5.8 step (e); **(R52)** a confirmed report is kept at a durable location until delivered, re-checked by `audit:purge-reports`, regenerated bit for bit from a pre-deletion backup with its recorded `p_as_of` if lost, or its loss recorded (`record_report_lost`, event #43) with the owner informed; a request is satisfied when every confirmed report is delivered or recorded lost; exit criterion 9 and the P5.10 runbooks updated. |
 | 20 | 2026-10-12 | Review of rev 19 (four findings), recorded as **R46–R49**, and a systematic sweep of every subsystem P5 adds through five lenses — privileges (including what defaults and triggers run as), state and cardinality, claims versus evidence, allowlist versus denylist, and timing — plus test feasibility. **(R46)** resolved by design: roles are cluster-level (`roles.sql`, superuser, before migrations; the migrator is `NOCREATEROLE`), so a dedicated purger role needed a bootstrap change and migrator membership that gave no boundary; the purge functions are migrator-owned like every function and need no extra grant. **Sweep finding:** the audit table's append-only triggers share `util.reject_modification()` with the ledger's money tables — the ledger keeps it unchanged and the audit table gets its own guard, allowing a delete only inside a live purge run and past retention; trust boundary stated. **(R47)** at most one open report request (partial unique index, serialized on the reservation), and state rules for every new table (one-row tables, one report per run, confirmed and delivered once, the empty run). **(R48)** a recorded delivery is the operator's attestation; the hash proves the file, not receipt; questionnaire P2c asks whether the owner confirms receipt himself. **(R49)** logs use an allowlist (request id, method, path; status code; no headers or remote address); **sweep finding:** database error details ("Failing row contains …") can print a session's IP and user agent, so the error serializer keeps structural fields only. **Sweep findings:** the reporting role could read every IP address and user agent and both roles could read activity rows without a read event — the app loses `SELECT`, readonly loses the `ip` and `user_agent` columns; catalog entries are never deleted, with a retention fallback; the trigger swap is atomic; the late-commit test gets a concrete pause mechanism. No new owner decision beyond P2c. |
 | 19 | 2026-10-12 | Review of rev 18 (R44 sound; one finding), recorded as **R45**: confirmed reports must be **delivered** — requests and reports move to two purger-only tables; confirmation records the path (never contents) and is printed before any deletion; `audit:purge-reports` lists undelivered reports from the database; `record_report_delivery` records a delivery only on a matching SHA-256; a request is satisfied only when a run completed with a confirmed report **and** every confirmed report is delivered; events #41, #42. **Full-scope review against the code:** no metrics system exists, so §9.4 defines a closed list of log signals (alerting in P15); `pino-http` logs every request's IP and user agent, which F3 forbids — P5.8 redacts them and the leak sweep checks it; the contract freeze names new error codes (`INVALID_CURSOR`, `EMAIL_IN_USE`) and states inherited CSRF and the reused setup email; rate limits deliberately unchanged, with reasons; platform grants primary key; operator runbooks in P5.10; a test budget for the concurrency suites; exit criterion 9 widened. Three owner questions opened (`P5_OWNER_PRIVACY_QUESTIONS.md`): O10 backup retention, O11 the report copy's handling, O12 a privacy notice — needed only by the D9 written policy (P5.8 step e), not by P5.0. A defect in the edit helper (`$` patterns in replacements) was found and fixed; the document was verified free of duplication. |
 | 18 | 2026-10-12 | Review of rev 17 (R42 resolved; one finding), recorded as **R44**: a requested report is a database fact enforced at deletion — `request_purge_report` records it, pending until a run completes with a confirmed report; `confirm_purge_report` records a run's verified report against the totals `purge_candidates` handed out; while a report is pending `purge_expired_events` deletes nothing unless this run confirmed its own report; a takeover inherits the request; a heartbeat (`renew_purge_run`) keeps a healthy slow write reserved; every confirmed file is delivered; tests for a paused write with and without heartbeats. **Full-document review** (not only the retention section): operator-only footprints grouped at the end of the §7.2 table and a missing footprint row for the containment switch added (the guard would have failed on it as unclassified); a garbled footprint sentence corrected; operator commands placed on the existing `admin:bootstrap` pattern (`apps/api/scripts`, migrator connection) — `audit:purge`, `audit:purge-request-report`, `admin:containment`; P5.8 given an internal order (purge, O9, audit reads in the O4 order, D9 policy). No owner question arose. |

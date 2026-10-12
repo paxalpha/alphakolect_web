@@ -22,6 +22,9 @@ const SETS_TENANT = [
   'platform/tenant.ts', // withTenant
   'modules/audit/audit-log.ts', // a tenant event recorded on its own
   'modules/tenancy/merchant-lifecycle.ts', // platform action: audit row of the target merchant (P4.1)
+  // Capability flow without a tenant session: the invitation-link acceptance's audit row, in the business just joined,
+  // committed with the admission (P5.3a — atomic until P5.5's pattern-A function writes it in the database).
+  'modules/tenancy/invitations.ts',
 ];
 
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });

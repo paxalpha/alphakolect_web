@@ -45,10 +45,10 @@ function transferRefusal(outcome: Exclude<TransferOutcome, 'ok'>): AppError {
 type Outcome = 'ok' | 'forbidden' | 'not_found' | 'invalid_transition' | 'invalid_reason';
 type Row = { outcome: Outcome; status: MerchantLifecycle['status'] | null };
 
-const AUDIT_ACTION: Record<Action, string> = {
+const AUDIT_ACTION = {
   deactivate: 'platform.merchant_deactivated',
   reactivate: 'platform.merchant_reactivated',
-};
+} as const satisfies Record<Action, string>;
 
 function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppError {
   switch (outcome) {
@@ -71,7 +71,9 @@ function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppErr
 }
 
 export class MerchantLifecycleService {
-  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'record' | 'recordWithin'> }) {}
+  constructor(
+    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
+  ) {}
 
   async change(
     auth: AuthContext,
@@ -112,8 +114,9 @@ export class MerchantLifecycleService {
     });
 
     if (row.outcome !== 'ok') {
-      // Nothing changed; the refused attempt is recorded on its own (tenant-less: the target may not exist).
-      await audit.record({
+      // Nothing changed; the refused attempt is recorded on its own, best effort (tenant-less: the target may not
+      // exist).
+      await audit.recordBestEffort({
         ...event,
         outcome: row.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: row.outcome },
@@ -135,7 +138,7 @@ export class MerchantLifecycleService {
   ): Promise<OwnershipTransferred> {
     const { db, audit } = this.deps;
     const event = {
-      action: 'platform.ownership_transferred',
+      action: 'platform.ownership_transferred' as const,
       actorIdentityId: auth.identityId,
       actorAudience: auth.audience,
       actorMembershipId: auth.membershipId,
@@ -178,7 +181,7 @@ export class MerchantLifecycleService {
     });
 
     if (row.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: row.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: row.outcome },

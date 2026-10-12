@@ -27,6 +27,9 @@ import {
 
 const ITEM: Record<CatalogTable, 'branch' | 'role'> = { branches: 'branch', roles: 'role' };
 
+/** The audit identifiers of these settings (P5.3a: literal types, so each writer accepts only catalog pairs). */
+type SettingsAction = 'merchant.profile_updated' | `merchant.${'branch' | 'role'}_${'created' | 'updated'}`;
+
 const notFound = (table: CatalogTable) =>
   new AppError(404, 'NOT_FOUND', table === 'branches' ? 'Branch not found' : 'Role not found');
 
@@ -45,7 +48,9 @@ export const toBranch = (row: CatalogRow): Branch => ({ branchId: row.id, ...toI
 export const toRole = (row: CatalogRow): Role => ({ roleId: row.id, ...toItem(row) });
 
 export class MerchantSettingsService {
-  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'record' | 'recordWithin'> }) {}
+  constructor(
+    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
+  ) {}
 
   /** Any member: their own membership and business, as of this request. */
   async currentMembership(tenant: TenantContext): Promise<CurrentMembership> {
@@ -106,7 +111,8 @@ export class MerchantSettingsService {
     name: string,
     ctx: RequestContext,
   ): Promise<CatalogRow> {
-    const action = `merchant.${ITEM[table]}_created`;
+    // Template-built (P5.3a transitional list: these two call sites and their four identifiers only).
+    const action = `merchant.${ITEM[table]}_created` as const;
     await this.ownerOrDenied(tenant, action, ITEM[table], null, ctx);
     try {
       return await withTenant(this.deps.db, tenant, async (tx) => {
@@ -130,7 +136,8 @@ export class MerchantSettingsService {
     change: UpdateCatalogItemRequest,
     ctx: RequestContext,
   ): Promise<CatalogRow> {
-    const action = `merchant.${ITEM[table]}_updated`;
+    // Template-built (P5.3a transitional list: these two call sites and their four identifiers only).
+    const action = `merchant.${ITEM[table]}_updated` as const;
     await this.ownerOrDenied(tenant, action, ITEM[table], id, ctx);
     let row: CatalogRow | null;
     try {
@@ -152,10 +159,10 @@ export class MerchantSettingsService {
     return row;
   }
 
-  /** T9: only the owner changes settings. A refused attempt is audited (in the caller's own tenant). */
+  /** T9: only the owner changes settings. A refused attempt is audited, best effort (in the caller's own tenant). */
   private async ownerOrDenied(
     tenant: TenantContext,
-    action: string,
+    action: SettingsAction,
     targetType: string,
     targetId: string | null,
     ctx: RequestContext,
@@ -163,7 +170,7 @@ export class MerchantSettingsService {
     try {
       requireOwner(tenant);
     } catch (err) {
-      await this.deps.audit.record({
+      await this.deps.audit.recordBestEffort({
         ...this.event(tenant, action, targetType, targetId, ctx),
         outcome: 'denied',
         summary: { reason: 'not_owner', kind: tenant.kind },
@@ -172,9 +179,9 @@ export class MerchantSettingsService {
     }
   }
 
-  private event(
+  private event<A extends SettingsAction>(
     tenant: TenantContext,
-    action: string,
+    action: A,
     targetType: string,
     targetId: string | null,
     ctx: RequestContext,

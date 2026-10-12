@@ -23,7 +23,7 @@ afterAll(() => owner.end());
 
 describe('AuditLog (as alphakolect_app, through RLS)', () => {
   it('records tenant-less and tenant events without secrets', async () => {
-    const audit = new AuditLog(db);
+    const audit = new AuditLog(db, pino({ level: 'silent' }));
     const email = `audit-${randomBytes(4).toString('hex')}@example.test`;
     const signup = await auth.identity.signupMerchantOwner(
       email,

@@ -49,7 +49,7 @@ const invalidInvitation = () =>
 export type InvitationDeps = {
   db: Db;
   identity: IdentityRepository;
-  audit: Pick<AuditLog, 'record' | 'recordWithin'>;
+  audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'>;
   limiter: RateLimiter;
   mailer: Pick<Mailer, 'dispatch'>;
   webAppUrl: string;
@@ -108,7 +108,7 @@ export class InvitationService {
 
     const { issued, row, business } = result;
     if (issued.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: issued.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: issued.outcome },
@@ -143,7 +143,7 @@ export class InvitationService {
       return { outcome, row: row! };
     });
     if (result.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: result.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: result.outcome },
@@ -173,47 +173,54 @@ export class InvitationService {
     const tokenHash = hashReceivedToken(input.token);
 
     const event = {
-      action: 'auth.invitation_accepted',
+      action: 'auth.invitation_accepted' as const,
       actorIdentityId: candidate?.identity_id ?? null,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
       requestId: ctx.requestId,
     };
     const fail = async (reason: string) => {
-      await audit.record({ ...event, outcome: 'failure', summary: { reason } });
+      await audit.recordBestEffort({ ...event, outcome: 'failure', summary: { reason } });
       return invalidInvitation();
     };
 
     if (!candidate || !passwordOk) throw await fail(candidate ? 'wrong_password' : 'unknown_account');
     if (!tokenHash) throw await fail('malformed_token');
 
-    const [result] = await db.query<{
-      outcome: string;
-      membership_id: string | null;
-      merchant_id: string | null;
-      invitation_id: string | null;
-    }>(`SELECT outcome, membership_id, merchant_id, invitation_id FROM tenancy.accept_invitation($1, $2)`, [
-      tokenHash,
-      candidate.identity_id,
-    ]);
-    if (result!.outcome !== 'ok') throw await fail(result!.outcome);
-
-    await audit.record({
-      ...event,
-      merchantId: result!.merchant_id,
-      actorMembershipId: result!.membership_id,
-      targetType: 'invitation',
-      targetId: result!.invitation_id,
-      outcome: 'success',
-      summary: {},
+    // The admission and its event commit together (P5.3a: #14 on the link path was written in a separate
+    // transaction after the admission — now atomic, on the transitional list until P5.5's pattern-A function).
+    const outcome = await db.transaction(async (tx) => {
+      const [result] = await tx.query<{
+        outcome: string;
+        membership_id: string | null;
+        merchant_id: string | null;
+        invitation_id: string | null;
+      }>(`SELECT outcome, membership_id, merchant_id, invitation_id FROM tenancy.accept_invitation($1, $2)`, [
+        tokenHash,
+        candidate.identity_id,
+      ]);
+      if (result!.outcome !== 'ok') return result!.outcome;
+      // A tenant event: written in the business just joined (the activity record is tenant-scoped by RLS).
+      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [result!.merchant_id]);
+      await audit.recordWithin(tx, {
+        ...event,
+        merchantId: result!.merchant_id,
+        actorMembershipId: result!.membership_id,
+        targetType: 'invitation',
+        targetId: result!.invitation_id,
+        outcome: 'success',
+        summary: {},
+      });
+      return 'ok';
     });
+    if (outcome !== 'ok') throw await fail(outcome);
   }
 
   private async ownerOrDenied(tenant: TenantContext, event: ReturnType<InvitationService['event']>) {
     try {
       requireOwner(tenant);
     } catch (err) {
-      await this.deps.audit.record({
+      await this.deps.audit.recordBestEffort({
         ...event,
         outcome: 'denied',
         summary: { reason: 'not_owner', kind: tenant.kind },
@@ -222,7 +229,12 @@ export class InvitationService {
     }
   }
 
-  private event(tenant: TenantContext, action: string, targetId: string | null, ctx: RequestContext) {
+  private event<A extends 'merchant.invitation_issued' | 'merchant.invitation_revoked'>(
+    tenant: TenantContext,
+    action: A,
+    targetId: string | null,
+    ctx: RequestContext,
+  ) {
     return {
       action,
       merchantId: tenant.merchantId,

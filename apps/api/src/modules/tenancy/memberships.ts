@@ -18,11 +18,11 @@ import {
 // and its audit row commit together; a refused one is audited on its own. The effect on the member is immediate:
 // their next request re-reads the membership (T5), and a deactivation also revokes their sessions.
 
-const AUDIT_ACTION: Record<MembershipAction, string> = {
+const AUDIT_ACTION = {
   assign: 'merchant.member_assigned',
   deactivate: 'merchant.member_deactivated',
   reactivate: 'merchant.member_reactivated',
-};
+} as const satisfies Record<MembershipAction, string>;
 
 export const toMember = (row: MemberRow): Member => ({
   membershipId: row.membership_id,
@@ -61,7 +61,9 @@ function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: Me
 }
 
 export class MembershipService {
-  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'record' | 'recordWithin'> }) {}
+  constructor(
+    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
+  ) {}
 
   async list(tenant: TenantContext): Promise<MemberRow[]> {
     requireOwner(tenant);
@@ -97,7 +99,7 @@ export class MembershipService {
     try {
       requireOwner(tenant);
     } catch (err) {
-      await this.deps.audit.record({
+      await this.deps.audit.recordBestEffort({
         ...event,
         outcome: 'denied',
         summary: { reason: 'not_owner', kind: tenant.kind },
@@ -124,7 +126,7 @@ export class MembershipService {
 
     if (result.change.outcome !== 'ok') {
       const outcome = result.change.outcome;
-      await this.deps.audit.record({
+      await this.deps.audit.recordBestEffort({
         ...event,
         outcome: outcome === 'forbidden' || outcome === 'owner_protected' ? 'denied' : 'failure',
         summary: { reason: outcome },

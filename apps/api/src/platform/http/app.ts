@@ -79,7 +79,7 @@ export function createApp({
   );
   app.use(express.json({ limit: '100kb' }));
 
-  const audit = new AuditLog(db);
+  const audit = new AuditLog(db, logger);
   const limiter = new RateLimiter(auth.identity);
   const sessions = new SessionService({
     identity: auth.identity,

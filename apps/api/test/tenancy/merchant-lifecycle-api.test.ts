@@ -277,7 +277,7 @@ describe('atomicity', () => {
   it('a failed audit write rolls the status change back', async () => {
     const m = await merchant();
     const failingAudit = {
-      record: async () => undefined,
+      recordBestEffort: async () => undefined,
       recordWithin: async () => {
         throw new Error('audit store unavailable');
       },

@@ -370,7 +370,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables, and delete manifest rows per the manifest lifecycle (no request path touches any of them); #41/#42/#43 inserts (fresh key) |
 | `audit.purge_candidates` (Part 2; operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
 | `audit.purge_expired_events` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
@@ -1193,7 +1193,9 @@ The exception is:
    `occurred_at < p_as_of − COALESCE(retention_override, audit.d9_retention())` for its pair (R42). Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
    - `audit.purge_candidates(p_run_id, p_as_of, p_after_id, p_limit)` — reads audit rows without locking them, paged
-     by `id`; its only write is renewing this run's reservation (R43), which it checks first like every purge
+     by `id`; its writes are exactly two — renewing this run's reservation (R43), which it checks first like every purge
+     function, and recording each page it returns in the manifest, `audit.purge_run_pages` (R53) — and it never writes an
+     audit event or touches an audit row; like every purge
      function, so a long export keeps the run alive page by page. It returns up to `p_limit`
      eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its canonical text
      (`to_jsonb(row)::text`), and a SHA-256 digest the database computes over those texts joined by newlines in that
@@ -1335,9 +1337,11 @@ The exception is:
       manifest** — the same pages, the same ordered ids — not by re-running the selection, which could pick up an
       eligible row that committed late, or miss one; audit rows are immutable, so the same ids give the same canonical
       text. Every page digest and the file's SHA-256 are checked against the recorded ones; if they match, the report is
-      recovered bit for bit and is delivered as usual. Rows eligible for deletion are at least two years old, so any
-      backup taken before the deletion holds them; an id the backup lacks makes the rebuild fail its check, and step 4
-      applies;
+      recovered bit for bit and is delivered as usual. **The backup is checked before the rebuild:** every id of the
+      manifest must be present in the restored database (one query: manifest ids without a matching row); if any is
+      missing, that backup cannot rebuild the report — another, still pre-deletion backup is tried, and if none holds
+      them all, step 4 applies. (Rows eligible for deletion are at least two years old, so normally any backup taken
+      before the deletion holds them all.)
    4. **if it cannot be recovered** (no backup old enough, or the regenerated hash differs), the operator records the
       loss with `record_report_lost(p_report_id, p_note)` — operator-only, an attestation whose note records that the
       owner was told, refused for a report already delivered — which writes `platform.purge_report_lost` (#43) and
@@ -1362,7 +1366,13 @@ The exception is:
      **lost** — enforced by a `CHECK (delivered_at IS NULL OR lost_at IS NULL)` and by both functions, which refuse a
      report that is already delivered or already lost; never deleted.
      These rows hold a path, a hash and counts — no personal data. `audit.purge_run_pages` rows (the manifest, R53)
-     are written only by `purge_candidates`, never changed, and kept with their report.
+     are written only by `purge_candidates` and never changed. **Lifecycle:** a run's manifest is kept while it can
+     still be needed and removed in the same transaction that ends that need — by `release_purge_run` when the run
+     completes **without** a report; by `record_report_delivery` or `record_report_lost` when the run's report reaches
+     its terminal state; and, for a run that stopped without confirming a report, by the next `reserve_purge_run`
+     (no later run uses another run's manifest). A run **with** a confirmed report keeps its manifest until that report
+     is delivered or recorded lost, because recovery (step 3 above) needs it. [Plan] No foreign key references
+     the manifest, so these deletions are allowed by L1.
    - **A run with nothing eligible** confirms no report and deletes nothing; an open request stays open for the next
      run that has rows to delete.
    - `util.authorization_containment` (§11.1) uses the same one-row key and is inserted by its migration.
@@ -1472,7 +1482,10 @@ is flagged **missing** by `audit:purge-reports`, and one edited is flagged **alt
 database taken before the run (the test keeps one) with the recorded `p_as_of`, the file matches the confirmed
 SHA-256 and is delivered; **a late-committing eligible event present in that copy but absent from the original report
 is left out of the rebuild (it is not in the manifest) and the hashes still match (R53)**; a page whose ids differ from
-the manifest is refused by `purge_expired_events`; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
+the manifest is refused by `purge_expired_events`; **backup coverage** — a restored copy missing one manifest id is
+reported as unable to rebuild, before any file is written; **manifest lifecycle** — removed at release of a run
+without a report, kept while a confirmed report is undelivered, removed when it is delivered or recorded lost, and a
+stopped run's manifest without a report removed by the next reservation; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
 can be satisfied; **terminal states (R54)** — a delivered report cannot be marked lost, a lost report cannot be
 delivered, neither can be recorded twice, and a direct update setting both columns fails the `CHECK`; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never

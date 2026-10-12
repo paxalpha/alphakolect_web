@@ -1820,6 +1820,64 @@ independent of the permission catalog); it is listed with them so it is complete
   table.
 - **Done when:** every audit writer in the code is one of the three entry points (or on the transitional list), and
   every identity security change commits with its event.
+- **Built 2026-10-13 — awaiting review at the P5.3a gate.** Commits `4068baf` (migration
+  `20261013000700_event_catalog`: `audit.event_catalog`, 66 pairs, the validation trigger; database tests; older tests
+  and fixtures use real pairs), `f2a2133` (the three entry points, the TypeScript mirror, §9.4 signals, the tenancy
+  writers), `12ff1ad` (every identity flow pattern B; `record()` removed), `7f655c7` (one allowlist tightened),
+  `0957b1c` (the writer and coverage guards, the per-pair and refusal-path tests). **Tests, each listed item:** every
+  row of the §8.1 behaviour table for each entry point with stored rows, exact signal lines and the request's status
+  (`test/audit/audit-log.test.ts`, 25); per atomic pair — all 28 that exist, sign-in in four forms and selection and
+  refresh for both audiences — one real request stores exactly one row with its actor, business, target and request
+  id and the change commits with it, and with that pair's insert failing the request fails and the change is absent
+  (`coverage.test.ts`, 64, and the operator bootstrap in `packages/db`); every refusal path and O6 success keeps its
+  status when its best-effort insert fails, stores nothing and logs its signal (`refusal-paths.test.ts`, 25); the
+  writer-guard mutation tests (1)–(3), the run-time and build-time (`@ts-expect-error`) halves of (3) included; the
+  coverage guard in both directions and exactly one named writer per atomic pair (`guards.test.ts`); the leak sweep and
+  P4's member and invitation atomicity tests unchanged and passing; the trigger rejects nothing legitimate — the whole
+  API suite runs with it and logs no signal — and refuses an unknown pair, a disallowed or wrong-typed field, a
+  disallowed null and an over-long value, as the app and as the owner (`packages/db/test/event-catalog.test.ts`); the
+  mirror equals the table. **Gate (§9.3), local, on the tree of `0957b1c`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 424, api 546, all passing; the OpenAPI spec is unchanged
+  since `277d389` (its oasdiff against `origin/main`: no breaking changes); gitleaks clean per commit. Not CI.
+  **Guards proven by sabotage** (restored byte-identical): an atomic success routed through `recordBestEffort`, a
+  second writer of an atomic pair, an identifier cast into a literal type (caught after the guard was extended — see
+  call 10), and a pair dropped from the coverage table — each fails. **Judgement calls for the reviewer:**
+  (1) **finding:** the invitation-link success (#14) was **not** atomic in P4 — it was written in a separate transaction
+  after the admission (`invitations.ts`), although this package's transitional list recorded it as already atomic. It
+  now commits with the admission (`recordWithin`, transitional until P5.5), and the T14 tenant-scope guard lists
+  `invitations.ts` as one more place that sets `app.merchant_id`, with the reason (a capability flow without a tenant
+  session, writing in the business just joined);
+  (2) the catalog holds exactly the 66 pairs written today — not the plan's whole inventory: the other pairs (for
+  example `merchant.profile_updated`/failure, #21, #30–#43, `authz.denied`, the sensitive reads) arrive with their
+  writers, as §10 P5.3a says;
+  (3) the `retention_override` column exists (§8.1 is Part 1) and is NULL for every pair, tested; nothing reads it, and
+  no `audit.d9_retention()` exists — that is Part 2;
+  (4) `mutateAudited(tx, event)` takes the change's transaction; the change itself runs in the same `db.transaction`
+  body just before it (one call per flow), rather than as a callback argument;
+  (5) `mutateAudited` scopes a tenant event to its business itself (it sets `app.merchant_id` when the transaction has
+  none and refuses one scoped to another business), so the identity services never set the tenant;
+  (6) a summary rule is `string` (with a character bound), `integer` or `boolean`, optionally nullable; strings are
+  bounded by what is written today (reason codes 64, names 120, the deactivation reason 500, ids 36);
+  (7) the trigger reports every refusal as `check_violation` named `audit_event_catalog`, so `recordBestEffort` can tell
+  a validation failure from a storage failure; a disallowed outcome of a best-effort identifier is caught before any
+  round trip (reason `outcome_not_in_catalog`); signal reasons are SQLSTATE codes, never messages;
+  (8) failures are injected by a test-only trigger keyed to one request id, because the API test files share one
+  database and run in parallel; from P5.8, when request ids become server-generated, the key must change (noted for
+  P5.8); the operator bootstrap's injection runs inside a rolled-back transaction (the database tests run one file at
+  a time);
+  (9) the sensitive-read rows of the behaviour table cannot be tested yet — no sensitive-read pair exists until P5.7
+  and P5.8, which add them with their functions;
+  (10) the writer guard resolves pairs through the compiler, so a cast could lie: the guard also refuses any type
+  assertion of an audit identifier or outcome into a literal type anywhere in the source, and any assertion other than
+  `as const` inside an audit call's argument (added after the cast sabotage passed the first version);
+  (11) MFA verification uses the TOTP step or recovery code inside the transaction, so a failed event leaves a recovery
+  code unused; the attempt counter stays outside (it must count failures);
+  (12) a reset or setup now hashes the new password before checking the token's format (before, only for a
+  well-formed token): the same cost either way, no change in answers;
+  (13) older tests and fixtures used made-up actions; they now use real pairs, and P1's audit `CHECK`s are still proven
+  beneath the trigger (owner, trigger off, rolled back);
+  (14) `complete_account_setup`'s event (#10) now commits with it; #14 on the setup path is still not written — the
+  gap §8.1 assigns to P5.5's `admit_invitation_locked`.
 
 ### P5.4 — Policy middleware; replace `requireOwner`
 
@@ -2268,6 +2326,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 35 | 2026-10-13 | **P5.3a built; awaiting review at its gate.** The audit event catalog and its validation trigger (66 pairs), the three entry points with §9.4 signals and the TypeScript mirror, every identity flow committing with its event (pattern B), every refusal best effort, and the writer and coverage guards with per-pair co-commit and rollback tests (`4068baf`, `f2a2133`, `12ff1ad`, `7f655c7`, `0957b1c`). Finding: the invitation-link success was not atomic in P4; it is now. Gate passed locally; evidence and 14 judgement calls under P5.3a. P5.4 waits for the gate review. |
 | 34 | 2026-10-12 | **P5.3 gate approved.** All eight judgement calls accepted; the authorization-middleware parity assertion moves to P5.4 as a condition (P5.4's tests updated). The reviewer re-ran the focused tests (36 passed). Local runs only; CI has not run. Next: P5.3a, with its own gate. |
 | 33 | 2026-10-12 | **P5.3 built; awaiting review at its gate.** Every endpoint declares its authorization (the frozen route map, published as `x-authorization`), the router refuses to start on a missing or invalid declaration, and query parameters are validated from the contract with unknown ones refused (`8adec6f`, `277d389`). Gate passed locally; evidence and eight judgement calls under P5.3 — notably, the route-parity assertion for the authorization middleware moves to P5.4, where that middleware is built. P5.3a waits for the gate review. |
 | 32 | 2026-10-12 | **P5.2 gate approved.** The reviewer approved P5.2 to close on the reported evidence and gave the go for P5.3 and P5.3a, each with its own gate. Follow-up `3baa6bf` checks the resolver's identifiers at the API boundary; the review's conditions are answered under P5.2 (every current revocation path conflicts with the re-check's locks; obligations carried to P5.5). Local runs only; CI has not run. |

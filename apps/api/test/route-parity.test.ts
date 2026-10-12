@@ -62,7 +62,7 @@ describe('Express routes and the contract registry are identical', () => {
     expect(expressRoutes).toEqual(contractRoutes);
   });
 
-  it('mounts authentication in front of every secured endpoint and input validation in front of every endpoint with a body or path parameters, and only there', () => {
+  it('mounts authentication in front of every secured endpoint (and only there), then input validation in front of every endpoint', () => {
     const v1 = appStack.find(isRouter)!;
     // Keyed by method and path: one path may carry several endpoints (e.g. GET and PATCH /merchant/profile).
     const byRoute = new Map(
@@ -78,10 +78,10 @@ describe('Express routes and the contract registry are identical', () => {
     for (const e of Object.values(endpoints) as EndpointContract[]) {
       const chain = byRoute.get(`${e.method} ${toExpressPath(e.path)}`);
       const secured = (e.security?.length ?? 0) > 0;
-      const hasInput = e.request?.body !== undefined || e.request?.params !== undefined;
       const expected = [
         ...(secured ? ['authenticateRequest'] : []),
-        ...(hasInput ? ['validateRequestInput'] : []),
+        // P5.3: every endpoint — path parameters, query parameters (none unless declared) and body.
+        'validateRequestInput',
       ];
       expect(chain?.slice(0, -1), `${e.id} middleware chain`).toEqual(expected);
     }

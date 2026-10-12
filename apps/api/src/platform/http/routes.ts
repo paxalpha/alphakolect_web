@@ -7,13 +7,13 @@ import {
   type EndpointId,
 } from '@alphakolect/contracts';
 import { Router, type RequestHandler } from 'express';
-import { needsValidation, validateRequest } from './validate.js';
+import { validateRequest } from './validate.js';
 
 // Every HTTP route comes from the contract registry (packages/contracts). The Handlers type requires a
 // handler for every registered endpoint (a missing one is a compile error), and test/route-parity.test.ts
 // fails if any Express route exists that is not in the registry. Every endpoint whose contract declares
 // `security` gets the authentication middleware mounted in front of its handler — it cannot be left out — and
-// every endpoint with a request body gets that body validated against its contract schema.
+// every endpoint gets its path parameters, query parameters and body validated against its contract.
 //
 // P5.3: every endpoint declares exactly one authorization class (P5 plan §5). The router checks every declaration
 // before it mounts anything and refuses to start on a missing or invalid one, so no endpoint is public by omission.
@@ -106,7 +106,7 @@ export function buildV1Router(
     // Authentication first: an unauthenticated caller learns nothing from validation errors.
     const chain = [
       ...(endpoint.security?.length ? [authenticateFor(endpoint)] : []),
-      ...(needsValidation(endpoint) ? [validateRequest(endpoint)] : []),
+      validateRequest(endpoint),
       handlers[id],
     ];
     router[endpoint.method](toExpressPath(endpoint.path), ...chain);

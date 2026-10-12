@@ -4,9 +4,12 @@ import type { z } from 'zod';
 import { AppError } from '../errors.js';
 
 // Request validation from the contract (TARGET_ARCHITECTURE §17): the same zod schemas that the OpenAPI document
-// and the typed client are generated from decide what a handler receives. Mounted automatically by the router
-// for every endpoint whose contract declares path parameters or a request body, so a handler never sees
-// unvalidated input.
+// and the typed client are generated from decide what a handler receives. Mounted by the router in front of every
+// endpoint, so a handler never sees unvalidated path parameters, query parameters or body.
+//
+// Query parameters (P5.3): a contract that declares `query` gets exactly those parameters, parsed (coerced, defaults
+// applied) — an unknown or invalid one is refused with 400 before the handler runs; a contract without `query` gets
+// none, whatever the URL carries.
 
 /** Problems are reported by field and message only — never the submitted value (it may be a password). */
 export type ValidationIssue = { path: string; message: string };
@@ -17,23 +20,29 @@ const issuesOf = (error: z.ZodError, prefix: string): ValidationIssue[] =>
     message: issue.message,
   }));
 
-export function needsValidation(endpoint: EndpointContract): boolean {
-  const request = endpoint.request ?? {};
-  // Fail at startup, not silently at runtime, if a contract declares input this middleware does not check yet.
-  for (const part of ['query', 'headers'] as const) {
-    if (request[part]) throw new Error(`${endpoint.id}: request.${part} validation is not implemented yet`);
-  }
-  return request.body !== undefined || request.params !== undefined;
-}
+const NO_QUERY: Readonly<Record<string, never>> = Object.freeze({});
 
 export function validateRequest(endpoint: EndpointContract): RequestHandler {
-  const { params, body } = endpoint.request ?? {};
-  if (!params && !body) throw new Error(`${endpoint.id}: nothing to validate`);
+  const { params, query, headers, body } = endpoint.request ?? {};
+  // Fail at startup, not silently at runtime, if a contract declares input this middleware does not check yet.
+  if (headers) throw new Error(`${endpoint.id}: request.headers validation is not implemented yet`);
+  const declared: ReadonlySet<string> = new Set(query ? Object.keys(query.shape) : []);
+
   return function validateRequestInput(req, _res, next) {
     const issues: ValidationIssue[] = [];
     if (params) {
       const result = params.safeParse(req.params);
       if (!result.success) issues.push(...issuesOf(result.error, 'params'));
+    }
+    let parsedQuery: Readonly<Record<string, unknown>> = NO_QUERY;
+    if (query) {
+      const presented = req.query as Record<string, unknown>;
+      for (const name of Object.keys(presented)) {
+        if (!declared.has(name)) issues.push({ path: `query.${name}`, message: 'Unknown query parameter' });
+      }
+      const result = query.safeParse(presented);
+      if (result.success) parsedQuery = Object.freeze(result.data as Record<string, unknown>);
+      else issues.push(...issuesOf(result.error, 'query'));
     }
     let parsedBody: unknown;
     if (body) {
@@ -45,6 +54,9 @@ export function validateRequest(endpoint: EndpointContract): RequestHandler {
       next(new AppError(400, 'VALIDATION_ERROR', 'The request is not valid', { issues }));
       return;
     }
+    // Express 5 defines req.query as a getter; an own property replaces it for this request. Handlers see only the
+    // contract's parameters, parsed — or none.
+    Object.defineProperty(req, 'query', { value: parsedQuery, enumerable: true, configurable: true });
     // Handlers receive the parsed body: unknown fields stripped, defaults applied. Path parameters are already
     // strings in req.params and have now been checked against the contract.
     if (body) req.body = parsedBody;

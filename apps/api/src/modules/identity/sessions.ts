@@ -1,4 +1,5 @@
 import type { LoginRequest, LoginResponse, Session } from '@alphakolect/contracts';
+import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
 import type { AuditLog } from '../audit/audit-log.js';
@@ -55,6 +56,7 @@ export const toSession = (v: ValidSession): Session => ({
 export class SessionService {
   constructor(
     private readonly deps: {
+      db: Db;
       identity: IdentityRepository;
       accessTokens: AccessTokens;
       audit: AuditLog;
@@ -62,8 +64,11 @@ export class SessionService {
     },
   ) {}
 
+  // Audit (P5.3a, plan §8.4): every successful step commits together with its event — the session, challenge,
+  // rotation or revocation and the event in one transaction (pattern B); refusals are best effort, after it.
+
   async login(input: SignInRequest, ctx: RequestContext): Promise<LoginResult> {
-    const { identity, audit, limiter } = this.deps;
+    const { db, identity, audit, limiter } = this.deps;
     await limiter.enforce('login', ctx.ip, input.email);
 
     // Credentials only (P4.2): which membership to use is decided after the password check, by the database.
@@ -73,15 +78,14 @@ export class SessionService {
       ? await verifyPassword(input.password, candidate.password_hash)
       : await burnPasswordCheck(input.password);
 
+    const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
     const fail = async (reason: string) => {
-      await audit.record({
+      await audit.recordBestEffort({
         action: 'auth.login',
         outcome: 'failure',
         actorIdentityId: candidate?.identity_id ?? null,
         actorAudience: input.audience,
-        ip: ctx.ip,
-        userAgent: ctx.userAgent,
-        requestId: ctx.requestId,
+        ...request,
         summary: { reason },
       });
     };
@@ -101,29 +105,29 @@ export class SessionService {
     }
     // ADR-15 T4: never guess. Eligibility (active membership of a kind valid for the audience, in an active
     // merchant; platform: the super admin) is decided by the database. Several eligible memberships create a
-    // selection challenge and no session.
+    // selection challenge and no session — that challenge and its event commit together.
     const selection = newOpaqueToken();
-    const resolved = await identity.resolveLoginMembership(
-      candidate.identity_id,
-      input.audience,
-      selection.hash,
-    );
+    const resolved = await db.transaction(async (tx) => {
+      const r = await identity
+        .within(tx)
+        .resolveLoginMembership(candidate.identity_id, input.audience, selection.hash);
+      if (r.eligible_count > 0 && r.membership_id === null) {
+        await audit.mutateAudited(tx, {
+          action: 'auth.login',
+          outcome: 'success',
+          actorIdentityId: candidate.identity_id,
+          actorAudience: input.audience,
+          ...request,
+          summary: { stage: 'membership_selection_required', choices: r.eligible_count },
+        });
+      }
+      return r;
+    });
     if (resolved.eligible_count === 0) {
       await fail('no_active_membership');
       throw invalidCredentials();
     }
     if (resolved.membership_id === null) {
-      // Several eligible memberships: the database stored the selection challenge; no session is created here.
-      await audit.record({
-        action: 'auth.login',
-        outcome: 'success',
-        actorIdentityId: candidate.identity_id,
-        actorAudience: input.audience,
-        ip: ctx.ip,
-        userAgent: ctx.userAgent,
-        requestId: ctx.requestId,
-        summary: { stage: 'membership_selection_required', choices: resolved.eligible_count },
-      });
       return { kind: 'membership_selection', challengeToken: selection.raw };
     }
     const membershipId = resolved.membership_id;
@@ -137,39 +141,44 @@ export class SessionService {
       );
     }
 
-    const succeed = async (stage: LoginResponse['status'], merchantId: string | null) => {
-      await audit.record({
+    const succeeded = (stage: LoginResponse['status'], merchantId: string | null) =>
+      ({
         action: 'auth.login',
         outcome: 'success',
         merchantId,
         actorIdentityId: candidate.identity_id,
         actorAudience: input.audience,
         actorMembershipId: membershipId,
-        ip: ctx.ip,
-        userAgent: ctx.userAgent,
-        requestId: ctx.requestId,
+        ...request,
         summary: { stage },
-      });
-    };
+      }) as const;
 
-    // D8: platform identities always need a second factor.
+    // D8: platform identities always need a second factor — the challenge and its event commit together.
     if (input.audience === 'platform' && candidate.mfa_enrolled) {
       const challenge = newOpaqueToken();
-      await identity.createMfaChallenge(candidate.identity_id, membershipId, challenge.hash);
-      await succeed('mfa_required', null);
+      await db.transaction(async (tx) => {
+        await identity.within(tx).createMfaChallenge(candidate.identity_id, membershipId, challenge.hash);
+        await audit.mutateAudited(tx, succeeded('mfa_required', null));
+      });
       return { kind: 'mfa_challenge', status: 'mfa_required', challengeToken: challenge.raw };
     }
 
     const enrolmentOnly = input.audience === 'platform';
-    const issued = await this.startSession({
-      identityId: candidate.identity_id,
-      audience: input.audience,
-      membershipId,
-      scope: enrolmentOnly ? 'mfa_enrollment' : 'full',
-      ctx,
-    });
     const status = enrolmentOnly ? 'mfa_enrollment_required' : 'authenticated';
-    await succeed(status, issued.session.merchantId);
+    const issued = await db.transaction(async (tx) => {
+      const started = await this.startSession(
+        {
+          identityId: candidate.identity_id,
+          audience: input.audience,
+          membershipId,
+          scope: enrolmentOnly ? 'mfa_enrollment' : 'full',
+          ctx,
+        },
+        identity.within(tx),
+      );
+      await audit.mutateAudited(tx, succeeded(status, started.session.merchantId));
+      return started;
+    });
     return { kind: 'session', status, issued };
   }
 
@@ -185,49 +194,66 @@ export class SessionService {
     ctx: RequestContext,
     audience: 'merchant' | 'agent' = 'merchant',
   ): Promise<IssuedSession> {
-    const { identity, audit } = this.deps;
-    const taken = challengeHash ? await identity.takeSelection(challengeHash, selectionId) : null;
+    const { db, identity, audit } = this.deps;
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
-    if (!taken || taken.audience !== audience) {
-      await audit.record({
+    // #4: the challenge's consumption, the session and the event commit together.
+    const result = challengeHash
+      ? await db.transaction(async (tx) => {
+          const repo = identity.within(tx);
+          const taken = await repo.takeSelection(challengeHash, selectionId);
+          if (!taken || taken.audience !== audience) return { taken, issued: null };
+          const issued = await this.startSession(
+            {
+              identityId: taken.identity_id,
+              audience,
+              membershipId: taken.membership_id,
+              scope: 'full',
+              ctx,
+            },
+            repo,
+          );
+          await audit.mutateAudited(tx, {
+            action: 'auth.login_select',
+            outcome: 'success',
+            merchantId: issued.session.merchantId,
+            actorIdentityId: taken.identity_id,
+            actorAudience: audience,
+            actorMembershipId: taken.membership_id,
+            ...request,
+          });
+          return { taken, issued };
+        })
+      : { taken: null, issued: null };
+    if (!result.issued) {
+      await audit.recordBestEffort({
         action: 'auth.login_select',
         outcome: 'failure',
-        ...(taken ? { actorIdentityId: taken.identity_id } : {}),
+        ...(result.taken ? { actorIdentityId: result.taken.identity_id } : {}),
         ...request,
         summary: { reason: challengeHash ? 'not_available' : 'no_challenge' },
       });
       throw invalidRefresh();
     }
-    const issued = await this.startSession({
-      identityId: taken.identity_id,
-      audience,
-      membershipId: taken.membership_id,
-      scope: 'full',
-      ctx,
-    });
-    await audit.record({
-      action: 'auth.login_select',
-      outcome: 'success',
-      merchantId: issued.session.merchantId,
-      actorIdentityId: taken.identity_id,
-      actorAudience: audience,
-      actorMembershipId: taken.membership_id,
-      ...request,
-    });
-    return issued;
+    return result.issued;
   }
 
-  /** Create a session and its first tokens. Also used after a successful MFA step (P3.8). */
-  async startSession(args: {
-    identityId: string;
-    audience: SessionAudience;
-    membershipId: string;
-    scope: 'full' | 'mfa_enrollment';
-    ctx: RequestContext;
-  }): Promise<IssuedSession> {
-    const { identity, accessTokens } = this.deps;
+  /**
+   * Create a session and its first tokens. Also used after a successful MFA step (P3.8). `repo` binds it to the
+   * caller's transaction, so the session commits with the caller's audit event (P5.3a).
+   */
+  async startSession(
+    args: {
+      identityId: string;
+      audience: SessionAudience;
+      membershipId: string;
+      scope: 'full' | 'mfa_enrollment';
+      ctx: RequestContext;
+    },
+    repo: IdentityRepository = this.deps.identity,
+  ): Promise<IssuedSession> {
+    const { accessTokens } = this.deps;
     const refresh = newOpaqueToken();
-    const created = await identity.createSession({
+    const created = await repo.createSession({
       identityId: args.identityId,
       audience: args.audience,
       membershipId: args.membershipId,
@@ -237,7 +263,7 @@ export class SessionService {
       ip: args.ctx.ip,
       userAgent: args.ctx.userAgent,
     });
-    const valid = await identity.validateSession(created.session_id);
+    const valid = await repo.validateSession(created.session_id);
     if (!valid) throw new Error('a session just created is not valid');
     return {
       session: toSession(valid),
@@ -256,19 +282,25 @@ export class SessionService {
 
   /**
    * Rotate a refresh token (§3.2). Reuse of a spent token ends the whole session (exit criterion 5).
-   * Every outcome is audited (P3.5 review): success lightly; failure; and reuse as a distinct, high-severity
-   * security event. Tokens never reach the audit log.
+   * Every outcome is audited (P3.5 review): success and the reuse revocation commit together with their events
+   * (#5, #6 — the reuse is a high-severity security event); a plain failure is best effort. Tokens never reach the
+   * audit log.
    */
   async refresh(
     rawRefreshToken: string | undefined,
     ctx: RequestContext,
     audiences: readonly SessionAudience[] = WEB_AUDIENCES,
   ): Promise<IssuedSession> {
-    const { identity, accessTokens, audit, limiter } = this.deps;
+    const { db, identity, accessTokens, audit, limiter } = this.deps;
     await limiter.enforce('refresh', ctx.ip);
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
     const failed = async (reason: string) => {
-      await audit.record({ action: 'auth.refresh', outcome: 'failure', ...request, summary: { reason } });
+      await audit.recordBestEffort({
+        action: 'auth.refresh',
+        outcome: 'failure',
+        ...request,
+        summary: { reason },
+      });
       return invalidRefresh();
     };
 
@@ -276,36 +308,43 @@ export class SessionService {
     if (!oldHash) throw await failed(rawRefreshToken ? 'malformed_token' : 'no_token');
 
     const next = newOpaqueToken();
-    // Each endpoint rotates only its own audiences' tokens: cookies the web ones, the agent endpoint agents' (T12).
-    const rotated = await identity.rotateRefreshToken(oldHash, next.hash, audiences);
-    if (rotated.outcome === 'reuse_detected') {
-      await audit.record({
-        action: 'auth.refresh_token_reuse',
-        outcome: 'denied',
-        actorIdentityId: rotated.identity_id,
+    const result = await db.transaction(async (tx) => {
+      const repo = identity.within(tx);
+      // Each endpoint rotates only its own audiences' tokens: cookies the web ones, the agent endpoint agents' (T12).
+      const rotated = await repo.rotateRefreshToken(oldHash, next.hash, audiences);
+      if (rotated.outcome === 'reuse_detected') {
+        // The revocation inside rotate_refresh_token and this event commit together (#6).
+        await audit.mutateAudited(tx, {
+          action: 'auth.refresh_token_reuse',
+          outcome: 'denied',
+          actorIdentityId: rotated.identity_id,
+          targetType: 'session',
+          targetId: rotated.session_id,
+          ...request,
+          summary: { severity: 'high', sessionRevoked: true },
+        });
+        return { kind: 'reuse' as const };
+      }
+      if (rotated.outcome !== 'rotated') return { kind: 'invalid' as const };
+      const valid = await repo.validateSession(rotated.session_id!);
+      if (!valid) return { kind: 'invalid' as const };
+      await audit.mutateAudited(tx, {
+        action: 'auth.refresh',
+        outcome: 'success',
+        merchantId: valid.merchant_id,
+        actorIdentityId: valid.identity_id,
+        actorAudience: valid.audience,
+        actorMembershipId: valid.membership_id,
         targetType: 'session',
         targetId: rotated.session_id,
         ...request,
-        summary: { severity: 'high', sessionRevoked: true },
       });
-      throw invalidRefresh();
-    }
-    if (rotated.outcome !== 'rotated') throw await failed('invalid_or_expired');
-
-    const valid = await identity.validateSession(rotated.session_id!);
-    if (!valid) throw await failed('invalid_or_expired');
-
-    await audit.record({
-      action: 'auth.refresh',
-      outcome: 'success',
-      merchantId: valid.merchant_id,
-      actorIdentityId: valid.identity_id,
-      actorAudience: valid.audience,
-      actorMembershipId: valid.membership_id,
-      targetType: 'session',
-      targetId: rotated.session_id,
-      ...request,
+      return { kind: 'rotated' as const, rotated, valid };
     });
+    if (result.kind === 'reuse') throw invalidRefresh();
+    if (result.kind === 'invalid') throw await failed('invalid_or_expired');
+
+    const { rotated, valid } = result;
     return {
       session: toSession(valid),
       tokens: {
@@ -325,19 +364,22 @@ export class SessionService {
     auth: Pick<AuthContext, 'sessionId' | 'identityId' | 'audience' | 'membershipId' | 'merchantId'>,
     ctx: RequestContext,
   ): Promise<void> {
-    await this.deps.identity.revokeSession(auth.sessionId, 'logout');
-    await this.deps.audit.record({
-      action: 'auth.logout',
-      outcome: 'success',
-      merchantId: auth.merchantId,
-      actorIdentityId: auth.identityId,
-      actorAudience: auth.audience,
-      actorMembershipId: auth.membershipId,
-      targetType: 'session',
-      targetId: auth.sessionId,
-      ip: ctx.ip,
-      userAgent: ctx.userAgent,
-      requestId: ctx.requestId,
+    // #7: the revocation and its event commit together.
+    await this.deps.db.transaction(async (tx) => {
+      await this.deps.identity.within(tx).revokeSession(auth.sessionId, 'logout');
+      await this.deps.audit.mutateAudited(tx, {
+        action: 'auth.logout',
+        outcome: 'success',
+        merchantId: auth.merchantId,
+        actorIdentityId: auth.identityId,
+        actorAudience: auth.audience,
+        actorMembershipId: auth.membershipId,
+        targetType: 'session',
+        targetId: auth.sessionId,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        requestId: ctx.requestId,
+      });
     });
   }
 }

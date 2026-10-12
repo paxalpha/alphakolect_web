@@ -32,20 +32,23 @@ describe('AuditLog (as alphakolect_app, through RLS)', () => {
     );
     const requestId = `req-${randomBytes(4).toString('hex')}`;
 
-    await audit.record({
+    await audit.recordBestEffort({
       action: 'auth.login',
       outcome: 'failure',
       requestId,
       summary: { reason: 'invalid_credentials' },
     });
-    await audit.record({
-      action: 'auth.login',
-      outcome: 'success',
-      merchantId: signup.merchant_id,
-      actorIdentityId: signup.identity_id,
-      actorAudience: 'merchant',
-      requestId,
-    });
+    // P5.3a: an atomic event is written inside its change's transaction; mutateAudited scopes it to its tenant.
+    await db.transaction((tx) =>
+      audit.mutateAudited(tx, {
+        action: 'auth.login',
+        outcome: 'success',
+        merchantId: signup.merchant_id,
+        actorIdentityId: signup.identity_id,
+        actorAudience: 'merchant',
+        requestId,
+      }),
+    );
 
     const { rows } = await owner.query(
       `SELECT merchant_id, actor_identity_id, outcome, summary FROM audit.audit_events WHERE request_id = $1 ORDER BY occurred_at`,

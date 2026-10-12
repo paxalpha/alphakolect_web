@@ -39,7 +39,7 @@ export type AuditContext = {
   summary?: Readonly<Record<string, string | number | boolean | null>>;
 };
 
-/** The P4 shape, kept only until every writer has moved to the entry points below. */
+/** Any event, before its class is checked (internal: the entry points narrow it). */
 export type AuditEvent = AuditContext & { action: string; outcome: 'success' | 'failure' | 'denied' };
 
 /** §9.4: the closed list of audit signals. Each is one error-level log line — never summary values or personal data. */
@@ -90,6 +90,7 @@ export class AuditLog {
    */
   async mutateAudited(tx: Queryable, event: AuditContext & PatternBPair): Promise<void> {
     requireClass(event, 'mutateAudited', (cls, pattern) => cls === 'atomic' && pattern === 'B');
+    await scopeTo(tx, event.merchantId ?? null);
     await insert(tx, event);
   }
 
@@ -145,15 +146,6 @@ export class AuditLog {
     }
   }
 
-  /** @deprecated P4's own-transaction writer; every caller moves to recordBestEffort or mutateAudited (P5.3a). */
-  async record(event: AuditEvent): Promise<void> {
-    const merchantId = event.merchantId ?? null;
-    await this.db.transaction(async (tx) => {
-      if (merchantId) await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
-      await insert(tx, event);
-    });
-  }
-
   /** §9.4: the event identifier, the request id and a reason code — never summary values, tokens or personal data. */
   private signal(signal: AuditSignal, event: AuditEvent, reason: string): void {
     this.logger.error(
@@ -161,6 +153,20 @@ export class AuditLog {
       signal,
     );
   }
+}
+
+/**
+ * A tenant event of a pattern-B flow (identity flows run without a tenant context): set its tenant for the rest of the
+ * transaction (RLS on the activity record). A transaction already scoped to another tenant is a programming error.
+ */
+async function scopeTo(tx: Queryable, merchantId: string | null): Promise<void> {
+  if (!merchantId) return;
+  const [row] = await tx.query<{ current: string | null }>(
+    `SELECT nullif(current_setting('app.merchant_id', true), '') AS current`,
+  );
+  if (row?.current === merchantId) return;
+  if (row?.current) throw new AuditUsageError('mutateAudited: the transaction is scoped to another tenant');
+  await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
 }
 
 async function insert(tx: Queryable, event: AuditEvent): Promise<void> {

@@ -82,6 +82,7 @@ export function createApp({
   const audit = new AuditLog(db, logger);
   const limiter = new RateLimiter(auth.identity);
   const sessions = new SessionService({
+    db,
     identity: auth.identity,
     accessTokens: auth.accessTokens,
     audit,
@@ -89,6 +90,7 @@ export function createApp({
   });
   const mailer = new Mailer(email, logger);
   const accounts = new AccountService({
+    db,
     identity: auth.identity,
     audit,
     limiter,
@@ -96,9 +98,10 @@ export function createApp({
     webAppUrl,
     ...(signupGuard ? { signupGuard } : {}),
   });
-  const passwords = new PasswordService({ identity: auth.identity, audit, limiter, mailer, webAppUrl });
+  const passwords = new PasswordService({ db, identity: auth.identity, audit, limiter, mailer, webAppUrl });
   const cookies = { domain: cookieDomain };
   const mfa = new MfaService({
+    db,
     identity: auth.identity,
     sessions,
     secretBox: new SecretBox(mfaEncryption.current, mfaEncryption.previous),

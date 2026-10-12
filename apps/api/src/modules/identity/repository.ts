@@ -53,6 +53,14 @@ export type SessionLifetime = { idleSeconds: number; absoluteSeconds: number };
 export class IdentityRepository {
   constructor(private readonly db: Queryable) {}
 
+  /**
+   * The same functions inside the caller's transaction (P5.3a, pattern B): a flow's definer calls and its
+   * mutateAudited event then commit together or not at all.
+   */
+  within(tx: Queryable): IdentityRepository {
+    return new IdentityRepository(tx);
+  }
+
   // ── accounts ──────────────────────────────────────────────────────────────────────────────────
   async signupMerchantOwner(email: string, passwordHash: string, merchantName: string) {
     const [row] = await this.db.query<{

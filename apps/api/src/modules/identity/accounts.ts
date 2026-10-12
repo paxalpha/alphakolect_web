@@ -1,4 +1,5 @@
 import type { ResendVerificationRequest, SignupRequest } from '@alphakolect/contracts';
+import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { Mailer } from '../../platform/email.js';
 import type { AuditLog } from '../audit/audit-log.js';
@@ -12,6 +13,8 @@ import { hashReceivedToken, newOpaqueToken } from './tokens.js';
 // Signup and email verification (TARGET_ARCHITECTURE §3.2, ADR-14 D1, D2, D10, D12, D13, D14).
 // Anti-enumeration (D12): signup and resend answer identically whether or not the email has an account, and do
 // the same expensive work (the password hash) either way; the email is sent outside the request (Mailer).
+// Audit (P5.3a, plan §8.4): a sign-up or a verification commits together with its event (pattern B); refusals, and
+// the link-issuing resend (O6), are best effort.
 
 /** D14: a CAPTCHA (or similar) check before signup, added before launch (P15). Throws to refuse. */
 export type SignupGuard = (ctx: RequestContext) => Promise<void>;
@@ -22,6 +25,7 @@ export const invalidOrExpiredToken = () =>
 export class AccountService {
   constructor(
     private readonly deps: {
+      db: Db;
       identity: IdentityRepository;
       audit: AuditLog;
       limiter: RateLimiter;
@@ -43,12 +47,30 @@ export class AccountService {
     }
 
     const passwordHash = await hashPassword(input.password);
-    const result = await identity.signupMerchantOwner(input.email, passwordHash, input.businessName);
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
+    const result = await this.deps.db.transaction(async (tx) => {
+      const created = await identity
+        .within(tx)
+        .signupMerchantOwner(input.email, passwordHash, input.businessName);
+      if (created.created) {
+        // #1: the new business, its owner and this event commit together (a tenant event of the new merchant).
+        await audit.mutateAudited(tx, {
+          action: 'auth.signup',
+          outcome: 'success',
+          merchantId: created.merchant_id,
+          actorIdentityId: created.identity_id,
+          actorAudience: 'merchant',
+          targetType: 'merchant',
+          targetId: created.merchant_id,
+          ...request,
+        });
+      }
+      return created;
+    });
 
     if (!result.created) {
       // The caller is told exactly what a new signup is told. The real owner can sign in or reset.
-      await audit.record({
+      await audit.recordBestEffort({
         action: 'auth.signup',
         outcome: 'failure',
         ...request,
@@ -56,17 +78,6 @@ export class AccountService {
       });
       return;
     }
-
-    await audit.record({
-      action: 'auth.signup',
-      outcome: 'success',
-      merchantId: result.merchant_id,
-      actorIdentityId: result.identity_id,
-      actorAudience: 'merchant',
-      targetType: 'merchant',
-      targetId: result.merchant_id,
-      ...request,
-    });
     await this.sendVerification(result.identity_id!, input.email, ctx);
   }
 
@@ -76,9 +87,23 @@ export class AccountService {
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
 
     const tokenHash = hashReceivedToken(rawToken);
-    const identityId = tokenHash ? await identity.verifyEmail(tokenHash) : null;
+    const identityId = tokenHash
+      ? await this.deps.db.transaction(async (tx) => {
+          const verified = await identity.within(tx).verifyEmail(tokenHash);
+          // #2: the verification and its event commit together.
+          if (verified) {
+            await audit.mutateAudited(tx, {
+              action: 'auth.email_verify',
+              outcome: 'success',
+              actorIdentityId: verified,
+              ...request,
+            });
+          }
+          return verified;
+        })
+      : null;
     if (!identityId) {
-      await audit.record({
+      await audit.recordBestEffort({
         action: 'auth.email_verify',
         outcome: 'failure',
         ...request,
@@ -86,12 +111,6 @@ export class AccountService {
       });
       throw invalidOrExpiredToken();
     }
-    await audit.record({
-      action: 'auth.email_verify',
-      outcome: 'success',
-      actorIdentityId: identityId,
-      ...request,
-    });
   }
 
   async resendVerification(input: ResendVerificationRequest, ctx: RequestContext): Promise<void> {
@@ -107,7 +126,7 @@ export class AccountService {
           ? 'already_verified'
           : null;
     if (skip) {
-      await audit.record({
+      await audit.recordBestEffort({
         action: 'auth.verification_resend',
         outcome: 'failure',
         actorIdentityId: account?.identity_id ?? null,
@@ -118,7 +137,8 @@ export class AccountService {
       });
       return;
     }
-    await audit.record({
+    // O6: the link-issuing success is best effort; the link's use is itself atomic (#2).
+    await audit.recordBestEffort({
       action: 'auth.verification_resend',
       outcome: 'success',
       actorIdentityId: account!.identity_id,

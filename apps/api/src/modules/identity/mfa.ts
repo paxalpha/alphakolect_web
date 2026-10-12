@@ -1,4 +1,5 @@
 import type { TotpEnrollment, VerifyMfaRequest } from '@alphakolect/contracts';
+import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
 import type { AuditLog } from '../audit/audit-log.js';
@@ -23,6 +24,7 @@ const alreadyEnrolled = () =>
 export class MfaService {
   constructor(
     private readonly deps: {
+      db: Db;
       identity: IdentityRepository;
       sessions: SessionService;
       secretBox: SecretBox;
@@ -31,27 +33,35 @@ export class MfaService {
     },
   ) {}
 
+  // Audit (P5.3a, plan §8.3, §8.4): each successful step commits together with its event (pattern B); failures are
+  // best effort. The P3 shared helper is split accordingly.
+
   /** A new unconfirmed secret (replacing any earlier unconfirmed one). The response is its only appearance. */
   async beginEnrollment(auth: AuthContext, ctx: RequestContext): Promise<TotpEnrollment> {
     const secret = newTotpSecret();
     const sealed = this.deps.secretBox.seal(secret, auth.identityId);
-    if (!(await this.deps.identity.beginTotpEnrollment(auth.identityId, sealed.ciphertext, sealed.kid))) {
-      throw alreadyEnrolled();
-    }
-    await this.audit(auth, ctx, 'auth.mfa_enrollment_started', 'success');
+    // #11: the new secret and its event commit together.
+    const started = await this.deps.db.transaction(async (tx) => {
+      const ok = await this.deps.identity
+        .within(tx)
+        .beginTotpEnrollment(auth.identityId, sealed.ciphertext, sealed.kid);
+      if (ok) await this.deps.audit.mutateAudited(tx, this.event(auth, ctx, 'auth.mfa_enrollment_started'));
+      return ok;
+    });
+    if (!started) throw alreadyEnrolled();
     return { otpauthUri: otpauthUri(secret, 'platform'), secret: base32Encode(secret) };
   }
 
   /**
    * Confirm with a valid code: TOTP becomes active, 10 recovery codes are issued (returned once), and the
-   * enrolment-only session is replaced by a full platform session.
+   * enrolment-only session is replaced by a full platform session — all of it with its event, in one transaction.
    */
   async confirmEnrollment(
     auth: AuthContext,
     code: string,
     ctx: RequestContext,
   ): Promise<{ issued: IssuedSession; recoveryCodes: string[] }> {
-    const { identity, limiter, sessions } = this.deps;
+    const { db, identity, limiter, sessions, audit } = this.deps;
     await limiter.enforce('mfa', ctx.ip, auth.identityId);
 
     const credential = await identity.mfaCredential(auth.identityId);
@@ -64,27 +74,39 @@ export class MfaService {
     );
     const step = secret ? verifyTotp(secret, code) : null;
     if (step === null) {
-      await this.audit(auth, ctx, 'auth.mfa_enrollment_confirmed', 'failure', { reason: 'invalid_code' });
+      await audit.recordBestEffort({
+        ...this.event(auth, ctx, 'auth.mfa_enrollment_confirmed'),
+        outcome: 'failure',
+        summary: { reason: 'invalid_code' },
+      });
       throw invalidCode();
     }
 
     const recoveryCodes = newRecoveryCodes();
-    const confirmed = await identity.confirmTotpEnrollment(
-      auth.identityId,
-      step,
-      recoveryCodes.map((c) => hashRecoveryCode(c)!),
-    );
-    if (!confirmed) throw alreadyEnrolled();
-
-    await identity.revokeSession(auth.sessionId, 'mfa_enrolled');
-    const issued = await sessions.startSession({
-      identityId: auth.identityId,
-      audience: 'platform',
-      membershipId: auth.membershipId,
-      scope: 'full',
-      ctx,
+    // #12: the confirmation, the recovery codes, the session swap and the event commit together.
+    const issued = await db.transaction(async (tx) => {
+      const repo = identity.within(tx);
+      const confirmed = await repo.confirmTotpEnrollment(
+        auth.identityId,
+        step,
+        recoveryCodes.map((c) => hashRecoveryCode(c)!),
+      );
+      if (!confirmed) return null;
+      await repo.revokeSession(auth.sessionId, 'mfa_enrolled');
+      const started = await sessions.startSession(
+        {
+          identityId: auth.identityId,
+          audience: 'platform',
+          membershipId: auth.membershipId,
+          scope: 'full',
+          ctx,
+        },
+        repo,
+      );
+      await audit.mutateAudited(tx, this.event(auth, ctx, 'auth.mfa_enrollment_confirmed'));
+      return started;
     });
-    await this.audit(auth, ctx, 'auth.mfa_enrollment_confirmed', 'success');
+    if (!issued) throw alreadyEnrolled();
     return { issued, recoveryCodes };
   }
 
@@ -94,12 +116,13 @@ export class MfaService {
     input: VerifyMfaRequest,
     ctx: RequestContext,
   ): Promise<IssuedSession> {
-    const { identity, limiter, sessions } = this.deps;
+    const { db, identity, limiter, sessions, audit } = this.deps;
     const challengeHash = hashReceivedToken(rawChallenge);
+    // The attempt is counted in its own statement, so a failed code still uses one up.
     const challenge = challengeHash ? await identity.takeMfaChallengeAttempt(challengeHash) : null;
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
     if (!challenge || !challengeHash) {
-      await this.deps.audit.record({
+      await audit.recordBestEffort({
         action: 'auth.mfa_verify',
         outcome: 'failure',
         ...request,
@@ -110,41 +133,51 @@ export class MfaService {
     await limiter.enforce('mfa', ctx.ip, challenge.identity_id);
 
     const method = 'code' in input ? 'totp' : 'recovery_code';
-    const ok =
-      'code' in input
-        ? await this.acceptTotp(challenge.identity_id, input.code)
-        : await this.acceptRecoveryCode(challenge.identity_id, input.recoveryCode);
     const event = {
-      action: 'auth.mfa_verify',
+      action: 'auth.mfa_verify' as const,
       actorIdentityId: challenge.identity_id,
       actorAudience: 'platform',
       actorMembershipId: challenge.platform_membership_id,
       ...request,
     };
-    if (!ok) {
-      await this.deps.audit.record({
+    // #13: the code's use (the TOTP step, or the recovery code), the challenge's consumption, the session and the
+    // event commit together — so a failed event leaves a recovery code unused.
+    const result = await db.transaction(async (tx) => {
+      const repo = identity.within(tx);
+      const ok =
+        'code' in input
+          ? await this.acceptTotp(repo, challenge.identity_id, input.code)
+          : await this.acceptRecoveryCode(repo, challenge.identity_id, input.recoveryCode);
+      if (!ok) return 'invalid_code' as const;
+      if (!(await repo.consumeMfaChallenge(challengeHash))) return 'challenge_over' as const;
+      const issued = await sessions.startSession(
+        {
+          identityId: challenge.identity_id,
+          audience: 'platform',
+          membershipId: challenge.platform_membership_id,
+          scope: 'full',
+          ctx,
+        },
+        repo,
+      );
+      await audit.mutateAudited(tx, { ...event, outcome: 'success', summary: { method } });
+      return issued;
+    });
+    if (result === 'invalid_code') {
+      await audit.recordBestEffort({
         ...event,
         outcome: 'failure',
         summary: { method, reason: 'invalid_code' },
       });
       throw invalidCode();
     }
-    if (!(await identity.consumeMfaChallenge(challengeHash))) throw challengeOver();
-
-    const issued = await sessions.startSession({
-      identityId: challenge.identity_id,
-      audience: 'platform',
-      membershipId: challenge.platform_membership_id,
-      scope: 'full',
-      ctx,
-    });
-    await this.deps.audit.record({ ...event, outcome: 'success', summary: { method } });
-    return issued;
+    if (result === 'challenge_over') throw challengeOver();
+    return result;
   }
 
   /** A valid code whose time step is newer than the last one used (replay protection, in the database). */
-  private async acceptTotp(identityId: string, code: string): Promise<boolean> {
-    const credential = await this.deps.identity.mfaCredential(identityId);
+  private async acceptTotp(repo: IdentityRepository, identityId: string, code: string): Promise<boolean> {
+    const credential = await repo.mfaCredential(identityId);
     if (!credential?.confirmed) return false;
     const secret = this.deps.secretBox.open(
       credential.secret_ciphertext,
@@ -152,31 +185,32 @@ export class MfaService {
       identityId,
     );
     const step = secret ? verifyTotp(secret, code) : null;
-    return step !== null && (await this.deps.identity.acceptTotpStep(identityId, step));
+    return step !== null && (await repo.acceptTotpStep(identityId, step));
   }
 
-  private async acceptRecoveryCode(identityId: string, code: string): Promise<boolean> {
+  private async acceptRecoveryCode(
+    repo: IdentityRepository,
+    identityId: string,
+    code: string,
+  ): Promise<boolean> {
     const hash = hashRecoveryCode(code);
-    return hash !== null && (await this.deps.identity.consumeRecoveryCode(identityId, hash));
+    return hash !== null && (await repo.consumeRecoveryCode(identityId, hash));
   }
 
-  private async audit(
+  private event<A extends 'auth.mfa_enrollment_started' | 'auth.mfa_enrollment_confirmed'>(
     auth: AuthContext,
     ctx: RequestContext,
-    action: string,
-    outcome: 'success' | 'failure',
-    summary?: Record<string, string>,
+    action: A,
   ) {
-    await this.deps.audit.record({
+    return {
       action,
-      outcome,
+      outcome: 'success' as const,
       actorIdentityId: auth.identityId,
       actorAudience: auth.audience,
       actorMembershipId: auth.membershipId,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
       requestId: ctx.requestId,
-      ...(summary ? { summary } : {}),
-    });
+    };
   }
 }

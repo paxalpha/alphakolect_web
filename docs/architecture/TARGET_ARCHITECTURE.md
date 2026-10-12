@@ -38,7 +38,7 @@ Conventions: **MUST** = invariant the implementation and tests enforce. **ADR-n*
 | ADR-13 | **This repository (`paxalpha/alphakolect_web`) is the reconstruction workspace.** The imported legacy application is quarantined, unchanged in layout, under **`legacy/current-system/`**; the new system is built beside it in `apps/` and `packages/` per §21. Governing documents live in `docs/`. Nothing deploys from this repository. (Owner decision, 2026-09-26; refines ADR-12 and supersedes the `legacy/app` / `legacy/ops` / `legacy/docs` split in §26.) | The repo already holds the clean-history import (ADR-12). Keeping the legacy layout intact keeps it runnable as a behavioural reference (its frontend imports root folders by relative path); a split would break it for no benefit. |
 | ADR-14 | **Identity & session decisions for P3** (owner-approved 2026-10-03; details in §3.3): email via an `EmailSender` port (outbox/provider in P12); signup creates only identity + merchant + owner membership; P3 audiences are platform super admin and merchant owner; the app role reaches `identity.*` only through `SECURITY DEFINER` functions; EdDSA JWT access tokens with `kid`, re-validated against the session on every request; cookies + CSRF for platform/merchant, bearer for agent/customer; mandatory platform TOTP with encrypted secrets and recovery codes; operator CLI bootstrap of the first super admin. | Resolves the P3 readiness decisions D1–D16 before implementation, so P3 is built once against fixed rules. |
 | ADR-15 | **Tenancy, memberships and tenant context for P4** (owner-approved 2026-10-09; details in §3.4): P4 is tenancy and isolation, P5 permissions and policies, P10 billing suspension; merchant staff and agents come online (platform staff in P5); one validated membership per session, chosen by an explicit selection step when several are eligible — never by the server guessing; membership, merchant status, role and branch re-read on every request; merchant lifecycle with platform-admin activation/deactivation; one optional branch per staff membership; merchant-defined roles as data only until P5; invitations only in their own table until accepted; atomic ownership transfer with exactly one owner enforced at commit; audience-checked refresh rotation; scoped repositories, RLS and composite keys on every tenant table. | Resolves the P4 design before implementation (E1–E7 and five follow-up decisions), so tenancy is built once against fixed rules and the tenant-isolation matrix has a precise target. |
-| ADR-16 | **Authorization, policies and audit for P5 — Part 1** (from the plan approved 2026-10-12; ADR text pending approval; details in §3.5): the database permission catalog is the only authority; effective permissions resolved per request, never cached; owner and super admin hold fixed sets, staff exactly their role, platform staff exactly their per-person grants, agents self only; role, member, invitation and audit-record management owner-only; every endpoint declares its authorization class and the router fails closed; every privileged write re-checked in its own database transaction under one global lock order; a closed audit catalog with atomic, best-effort and sensitive-read classes; ordinary reads authorized by the API alone within the tenant (stated with its residual risk). Part 2 (retention) is a later addendum. | Replaces the P4 interim owner checks (ADR-15 T9) with one authority shared by API and database; makes every security claim testable. |
+| ADR-16 | **Authorization, policies and audit for P5 — Part 1** (from the plan approved 2026-10-12; ADR text pending approval; details in §3.5): the database permission catalog is the only authority; effective permissions resolved per request, never cached; owner and super admin hold fixed sets, staff exactly their role, platform staff exactly their per-person grants, agents self only; role, member, invitation and audit-record management owner-only; every endpoint declares its authorization class and the router fails closed; every privileged write re-checked in its own database transaction under one global lock order; a closed audit catalog with atomic, best-effort and sensitive-read classes; every permission-gated read also checked in the database (owner decision B1). Part 2 (retention) is a later addendum. | Replaces the P4 interim owner checks (ADR-15 T9) with one authority shared by API and database; makes every security claim testable. |
 
 ---
 
@@ -300,7 +300,8 @@ there are excluded.
 | `platform.merchants.lifecycle` · `platform.merchants.transfer_ownership` · `platform.staff.manage` | platform | **no** | super admin |
 
 A retired permission is never resolved or granted; its grant rows remain but are inert. A new identifier is granted to
-no grantee. The catalog is read-only to the app role.
+no grantee. The app role has no direct access to the catalog: it is read through `tenancy.list_permission_catalog` and the
+resolver (B1).
 
 #### Endpoint classes and the route map (frozen)
 
@@ -354,32 +355,36 @@ The new operations and their classes are in the frozen contracts below.
   migration creates them and revokes the app's direct write grants together; an older application version can only be
   denied, never bypass.
 
-#### Read authorization — the boundary, stated plainly
+#### Read authorization — both layers for every permission-gated read (owner decision B1)
 
-Writes and **sensitive reads** are enforced in **both** layers: the API policy check, then the database (writes re-check
-authority in their transaction; sensitive reads are database functions that check authority, record the read and return
-the rows together). **Ordinary reads are not.** The database enforces only **tenant separation** (row-level security and
-explicit `merchant_id` predicates) for them, and **tenant separation does not prove that the caller holds the
-permission** — within a business, the permission is checked by the API alone.
+Every write, every sensitive read **and every other permission-gated read** is checked in **both** layers: the API
+policy check, then the database. The owner decided this on 2026-10-12 (ADR-16 approval form, B1: "Add the database
+check now"), so no screen relies on the API's check alone. **Tenant separation** (row-level security and explicit
+`merchant_id` predicates) remains underneath, but it is not what proves permission — the database functions below do.
 
-| Read | Permission enforced by | Database role |
+| Read | Checked in the database by | Permission |
 |---|---|---|
-| Business profile (`GET /v1/merchant/profile`) | **API only** | tenant separation |
-| Branches (`GET /v1/merchant/branches`, `…/{branchId}`) | **API only** | tenant separation |
-| Roles, role permission sets and the catalog (`GET /v1/merchant/roles`, `…/{roleId}`, `GET /v1/merchant/permissions`) | **API only** | tenant separation |
-| **Invitation list** (`GET /v1/merchant/invitations`) — **exposes invitees' email addresses** | **API only** | tenant separation |
-| Members (`GET /v1/merchant/members`, `…/{membershipId}`) — exposes member emails | API **and** database (`tenancy.list_members` checks the permission from P5.5; today it checks owner kind) | tenant separation |
-| Merchant and platform audit reads; platform merchant and member lists | API **and** database (designated sensitive-read functions) | tenant separation where tenant-scoped |
+| Business profile (`GET /v1/merchant/profile`) | `tenancy.read_profile(session)` | `merchant.profile.read` |
+| Branches (`GET /v1/merchant/branches`, `…/{branchId}`) | `tenancy.list_branches(session, branch?)` | `merchant.branches.read` |
+| Roles and their permission sets (`GET /v1/merchant/roles`, `…/{roleId}`) | `tenancy.list_roles(session, role?)` | `merchant.roles.read` |
+| The permission catalog (`GET /v1/merchant/permissions`) | `tenancy.list_permission_catalog(session)` | `merchant.roles.read` |
+| **Invitation list** (`GET /v1/merchant/invitations`) — exposes invitees' email addresses | `tenancy.list_invitations(session, status, cursor, limit)` | `merchant.invitations.read` |
+| Members (`GET /v1/merchant/members`, `…/{membershipId}`) — exposes member emails | `tenancy.list_members(session, …)` (owner kind today; the permission from P5.5) | `merchant.members.read` |
+| Merchant and platform audit reads; platform merchant and member lists | the designated sensitive-read functions (they also record the read) | as in the catalog |
 
-**Assumptions:** the policy middleware is mounted from the endpoint registry and fails closed (A7); a route without a
-declaration cannot start. **Tests:** the registry-driven authorization matrix calls every endpoint as every actor
-(owner, staff with and without the permission, archived-role and branch-restricted staff, agent, platform staff with
-none, one or a revoked grant, anonymous, invalid session) and asserts the expected status and that no row changed;
-route-parity asserts the middleware on every `permission` endpoint. **Residual risk:** a defect in the API policy layer
-for one of the "API only" reads would expose that data to other people **of the same business** (never another
-business); the most sensitive case is the invitation list, which holds invitees' email addresses. This is accepted for
-P5 and must appear in the as-built threat model (P5.10). Moving these reads into database functions is a possible later
-hardening, not part of P5.
+Each read function follows the rule for merchant-scoped definer functions: it re-validates the session, takes the
+merchant **only** from the session, checks the permission from the same resolver as every other check, filters every
+query explicitly on that merchant, takes no row locks and writes nothing. **The app loses direct `SELECT`** on
+`tenancy.merchants`, `tenancy.branches`, `tenancy.roles`, `tenancy.invitations` and the permission catalog, in the
+same migration that creates these functions (P5.5) — so no code path can read them without the check; the reporting
+role is unchanged. [Fact] The only direct app reads of these tables today are in
+`apps/api/src/modules/tenancy/repository.ts` (profile `:103`, branches and roles `:131-139`, invitations `:223`).
+**Tests:** each function refuses a session without the permission and returns another business's rows to no one;
+`alphakolect_app` gets `insufficient_privilege` on a direct `SELECT` of each table; the previous application
+version's direct reads fail the same way (the mixed-version test, extended to reads); the authorization matrix runs
+every read as every actor. **Residual risk:** none specific to reads beyond those of any database function — a defect
+in a read function, caught by its tests and the matrix. The earlier boundary (these reads checked by the API alone) is
+superseded; see the decision log.
 
 #### Audit (Part 1)
 
@@ -475,11 +480,13 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | CF1 | All earlier answers confirmed and signed | owner, 2026-10-12 | confirmation CF1 | `fa5a22f` |
 | O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` — **open by design** |
 | O10–O12 | Backup retention, the report copy's handling, a privacy notice | — | `P5_OWNER_PRIVACY_QUESTIONS.md` | `4b4ece9` — **open**, needed at P5.8 step (e) |
-| Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk; atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
+| Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk (**superseded by B1**); atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
 | Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |
 | Owner go-ahead G1 | "yes, start now with Part 1." | owner, 2026-10-12 | `P5_OWNER_GO_AHEAD.md` | `951b909`; plan `c533e58` |
 | Reviewer — Part 2 | — | — | — | **pending** |
-| ADR-16 text | Approval of this section as written for Part 1 (P5.0's completion rule) | — | — | **pending** |
+| B1 | Every permission-gated read is also checked in the database — the profile, branches, roles, the catalog and the invitation list get read functions with permission checks; the app loses direct `SELECT` on those tables (P5.5) | owner, 2026-10-12 | ADR-16 approval form B1: "Add the database check now … an extra layer of protection" | `d4ac17e`; this section |
+| ADR-16 text — owner | "Yes i approve ADR-16 for Part 1, with the answers above." Part A all correct; B1 as above; C1 asked for a recommendation (pending his answer) | owner, 2026-10-12 | `P5_OWNER_ADR16_APPROVAL.md` | `d4ac17e` |
+| ADR-16 text — reviewer | Approval of this section as written for Part 1, including the B1 change to Part 1 | — | — | **pending** |
 
 ---
 

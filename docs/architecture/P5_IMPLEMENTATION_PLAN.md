@@ -344,7 +344,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | branch / role / profile writers | 2: merchant / S (profile: NKU) → 3: actor / NKU → 7: {actor's role} / S, plus the edited role / NKU (one sorted call) → 8: edited branch / NKU | write |
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
-| `audit.reserve_purge_run`, `audit.release_purge_run` (operator only; R43) | 0: reservation / NKU `NOWAIT` | write the reservation |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.release_purge_run` (operator only; R43, R44) | 0: reservation / NKU `NOWAIT` | write the reservation row |
 | `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
 | `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
@@ -1084,7 +1084,8 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   deleted (L1); instead the purge **clears these fields** on sessions that ended (revoked or past their absolute
   expiry) more than two years ago and on links sent more than two years ago that are already used or expired —
   the same two-year rule, with the exact conditions in the retention design below (R37).
-- **Copy before deletion:** before a clean-up, the owner may ask for a copy of the entries about to be deleted; it is
+- **Copy before deletion:** before a clean-up, the owner may ask for a copy of the entries about to be deleted (the
+  request is recorded in the database and enforced by every run until one delivers it, R44); it is
   handed over as a report (a file) and **the system keeps no copy** (F4, confirmed by the owner as CF2b on 2026-10-12:
   "A copy of the entries about to be deleted may be sent as a report, but the system will not keep a copy"). The copy holds personal data: the written D9 policy states who may hold it, where it is kept and when it is
   destroyed, and the operator command writes it only to the path the operator names, never into the repository or
@@ -1160,24 +1161,30 @@ The exception is:
    `platform.request_metadata_cleared` (#40, pattern A, actor `NULL`), with `p_as_of` and the numbers of session and
    token rows cleared — one writer per pair, as the coverage guard requires;
 7. **the operator command and its failure semantics (R36).** One run, in this order:
-   0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id`, or fails at once if another run
-      holds a live reservation — before anything is read, written or deleted;
+   0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and whether a report is
+      **pending** (R44, below), or fails at once if another run holds a live reservation — before anything is read,
+      written or deleted;
    1. with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests); each
       page renews the reservation, so an export of any size stays within the lease;
-   2. **if the owner asked for a report:** write all pages to a new file at the path the operator names (never in the
+   2. **if a report is pending:** write all pages to a new file at the path the operator names (never in the
       repository or on the server), flush it to disk (`fsync` of the file and its directory), read it back, and check
-      that every page's rows reproduce that page's database digest; record the file's own SHA-256. Any failure here —
-      unwritable path, full disk, interrupted process, mismatch — **ends the run before any deletion**; nothing is
-      deleted and the run can simply be repeated;
+      that every page's rows reproduce that page's database digest; record the file's own SHA-256. Throughout this
+      step the command calls `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44), so a healthy slow
+      write keeps its reservation. When — and only when — the read-back check passes, it calls
+      `confirm_purge_report(run_id, row count, file SHA-256)`, which records this run's verified report in the
+      database. Any failure here — unwritable path, full disk, interrupted process, a stalled `fsync`, mismatch, a
+      refused heartbeat — **ends the run before any deletion**; nothing is deleted and the run can simply be repeated;
    3. only then, page by page, call `purge_expired_events(run_id, p_as_of, page ids, page digest)`, each in its own
       transaction with its own #38 event. If a call raises or its commit fails, that page deletes nothing and the run
       stops; pages already committed were deleted exactly as exported. **Invariant: every row ever deleted is a row of
-      a verified report** (when one was requested), and the report covers every row of the run, deleted or not; a
+      a verified report** of the deleting run itself (while a report is pending), and that report covers every row of the run, deleted or not; a
       repeat run exports the remaining rows again;
    4. after the last page, call `clear_expired_request_metadata(run_id, p_as_of)` (no export: these fields are not part of
       the report the owner asked for, and clearing destroys no row);
-   5. **release the reservation** with `release_purge_run(run_id)`, also when a step above failed (the command
-      always tries); if the process dies first, the reservation simply expires (below);
+   5. **release the reservation** with `release_purge_run(run_id, completed)`, also when a step above failed (the
+      command always tries); `completed` is true only after every page and the clearing committed. A completed run with
+      a confirmed report clears the pending request; any other release leaves it pending. If the process dies first, the
+      reservation simply expires (below);
    6. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
       file holds personal data until delivered: the written D9 policy states who holds it, how it reaches the owner and
       when it is destroyed.
@@ -1195,14 +1202,38 @@ The exception is:
      row `FOR NO KEY UPDATE NOWAIT` and raise — doing nothing — unless it holds **this** run's live reservation with
      the same `p_as_of`; they then renew `renewed_at`. Pages are bounded (`p_limit`), so a live run renews well within
      the lease;
-   - `release_purge_run(p_run_id)` frees the row if it still holds this run.
+   - `renew_purge_run(p_run_id)` — the heartbeat: checks this run's live reservation under `NOWAIT` and renews it;
+     refused (and the run must stop) if the reservation is no longer this run's;
+   - `release_purge_run(p_run_id, p_completed)` frees the row if it still holds this run.
+
+   **A requested report is a database fact, enforced at deletion (R44).** The owner's request (F4/CF2b) is not an
+   option of one run: `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
+   records it in the reservation row (`report_requested_at`), where it stays **pending until a run completes with a
+   confirmed report**. `confirm_purge_report(p_run_id, p_row_count, p_file_sha256)` records this run's verified report
+   (`report_run_id`, count, file hash) after checking the run's live reservation and that the count equals the rows
+   `purge_candidates` returned to this run — each candidates page adds its row count and page digest to running totals
+   in the reservation row, reset by `reserve_purge_run`, so the database knows what it handed out. While a request is pending, `purge_expired_events` **raises and deletes
+   nothing** unless the reservation's `report_run_id` is **this** run. So the guarantee no longer depends on timing:
+   - a run that **takes over** an expired reservation inherits the pending request and cannot delete anything until it
+     has exported, verified and confirmed **its own** report — the stalled run's partial file never authorizes a
+     deletion, and that run is refused at its next database call;
+   - the heartbeat keeps a healthy run's reservation alive during the file work, so a takeover happens only after a
+     real stall or crash;
+   - `confirm_purge_report` records the command's own assertion (the database cannot read the file); what the database
+     enforces is the **order** — no deletion by a run before that run's confirmation — and the identity of what is
+     deleted (the R38 page checks).
+
+   The #38 events carry the run's report status (requested at, confirmed file SHA-256 and count), and a takeover is
+   recorded there too. If a run with a confirmed report deleted some pages and then stopped, its file is the only
+   record of those rows: the command's output, and the #38 events, identify every such file, and **every confirmed
+   file is delivered to the owner**, not only the last run's (the written D9 policy says so).
 
    **What this guarantees.** A second run fails at once — with `purge_run_active` if the first run is between
    transactions, with `lock_not_available` if one of the first run's transactions holds the row — before it reads or
    changes anything. A takeover can only happen **between** the old run's transactions (each holds the row until it
    commits), and only after the lease has expired. If the old run was merely slow rather than dead, its next page
    finds the reservation no longer its own and stops without deleting; everything it had deleted was in its verified
-   report. The page-level checks of R38 (every id present, eligible and matching the digest) remain a second line of
+   report; and a run that took over deletes nothing until its own report is confirmed (R44). The page-level checks of R38 (every id present, eligible and matching the digest) remain a second line of
    defence for any interleaving.
 
    **Purge lock footprint (R40) — inside the global order, and never waiting.** Every purge transaction first takes
@@ -1225,8 +1256,9 @@ The exception is:
    function other than the purge locks, updates or deletes `audit.audit_events` rows, and no foreign key references
    the table.
 
-   A report can therefore never be lost to a deletion: deletion requires a verified report when one was requested, and
-   it deletes only rows, identified by id, that the report contains. Until a job runner exists (P12) the command is run by hand; the D9
+   A report can therefore never be lost to a deletion: while a report is pending, the database lets a run delete only
+   after that run has confirmed its own verified report (R44), and it deletes only rows, identified by id, that the
+   report contains. Until a job runner exists (P12) the command is run by hand; the D9
    written policy states how often.
 
 Tests: rows younger than their retention period always survive, whatever `p_as_of`; **boundary (R41)** — for the
@@ -1237,7 +1269,8 @@ result under two different session time zones; redefining `audit.d9_retention()`
 changed; a scratch event entry with an override uses its override, not the function; the catalog test fails if a P5
 pair has an override; a `p_as_of` in the future is
 refused (by every purge function that takes it); the app role cannot execute any purge function (`reserve_purge_run`,
-`purge_candidates`, `purge_expired_events`, `clear_expired_request_metadata`, `release_purge_run`) or delete directly;
+`renew_purge_run`, `request_purge_report`, `purge_candidates`, `confirm_purge_report`, `purge_expired_events`,
+`clear_expired_request_metadata`, `release_purge_run`) or delete directly;
 an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
 than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active
 (unrevoked, unexpired), revoked and absolutely expired sessions, revoked or expired less than two years ago, and
@@ -1260,10 +1293,17 @@ changes nothing; a run killed after its first page leaves a reservation that blo
 (the test redefines `audit.purge_lease()` to a short interval), after which a new run takes over and records the
 takeover; the old run, resumed, has its next page refused without deleting anything; a page called with a stale or
 foreign `run_id`, or another `p_as_of`, is refused; release frees the reservation; an export whose pages together take longer than one lease (short test lease)
-completes, because each `purge_candidates` page renews the reservation; a request revoking an
+completes, because each `purge_candidates` page renews the reservation; **report under takeover (R44)** — with a
+report requested, run A's report write is paused (test hook) beyond a short lease **without** heartbeats; run B
+takes over: B's `purge_expired_events` before its own `confirm_purge_report` raises and deletes nothing; B exports,
+confirms and deletes only rows in its own report; A, resumed, is refused at its next call (heartbeat, confirmation or
+page) and deletes nothing; the request stays pending until B completes, then clears; with heartbeats, the same paused
+write keeps A's reservation and B is refused; `confirm_purge_report` with a count other than this run's candidates,
+or for another run, is refused; `request_purge_report` during a live run is refused; a run that releases without
+completing leaves the request pending; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
-classify all five purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
+classify all eight purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates
@@ -1279,7 +1319,8 @@ when each migration is written.
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
-`audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.release_purge_run`, `audit.d9_retention`,
+`audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.renew_purge_run`,
+`audit.request_purge_report`, `audit.confirm_purge_report`, `audit.release_purge_run`, `audit.d9_retention`,
 `audit.purge_lease`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
@@ -1293,7 +1334,7 @@ app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Th
 | schema `identity` | `USAGE` | the field clearing of CF4 — [Fact] today only `alphakolect_app` has it (`20261003000200:7`) |
 | `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 and #40 events |
 | `audit.event_catalog` | `SELECT` | retention periods |
-| `audit.purge_reservation` (one row, §8.6) | `SELECT`, `UPDATE` | the run-wide reservation (R43; `FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
+| `audit.purge_reservation` (one row, §8.6) | `SELECT`, `UPDATE` | the run-wide reservation and the pending-report state (R43, R44; `FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
 | `identity.sessions` | `SELECT (id, revoked_at, absolute_expires_at)`, `UPDATE (created_ip, user_agent)` | CF4 clearing |
 | `identity.one_time_tokens` | `SELECT (id, created_at, consumed_at, expires_at)`, `UPDATE (requested_ip)` | CF4 clearing |
 
@@ -1567,7 +1608,7 @@ independent of the permission catalog); it is listed with them so it is complete
 ### P5.8 — Audit reads (and O9 list pagination)
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its five functions, the reservation and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its eight functions, the reservation with the report request, and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor

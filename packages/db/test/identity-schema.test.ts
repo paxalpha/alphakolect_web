@@ -174,7 +174,7 @@ describe('identity invariants enforced by PostgreSQL', () => {
     await inOwnerTx(() =>
       expectSqlState(
         owner.query(
-          `INSERT INTO audit.audit_events (actor_identity_id, action, outcome) VALUES ('01900000-0000-7000-8000-00000000dead', 'x', 'success')`,
+          `INSERT INTO audit.audit_events (actor_identity_id, action, outcome) VALUES ('01900000-0000-7000-8000-00000000dead', 'auth.logout', 'success')`,
         ),
         SQLSTATE.foreignKeyViolation,
       ),

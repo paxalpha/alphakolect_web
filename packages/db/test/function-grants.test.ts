@@ -36,6 +36,9 @@ const OWNER_ONLY: Grantee[] = [];
 
 /** Every function in a module schema → who may execute it besides its owner, alphakolect_migrator. */
 const EXPECTED: Record<string, Grantee[]> = {
+  // audit — P5.3a: the catalog's protection and the validation trigger on audit.audit_events (trigger functions)
+  'audit.protect_event_catalog()': OWNER_ONLY,
+  'audit.validate_event()': OWNER_ONLY,
   // identity — request paths (P3/P4)
   'identity.accept_totp_step(uuid, bigint)': APP,
   'identity.account_for_email(text)': APP,

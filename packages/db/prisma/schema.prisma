@@ -200,6 +200,30 @@ model AuditEvent {
   @@schema("audit")
 }
 
+/// P5.3a (ADR-16, plan §8.1): the closed catalog of (identifier, outcome) pairs with their class, writer pattern and
+/// summary allowlist. A BEFORE INSERT trigger on audit_events validates every row against it (SQL). Entries are never
+/// deleted (retired instead). App SELECT only; nothing for the reporting role.
+model AuditEventCatalogEntry {
+  identifier        String
+  /// success | failure | denied
+  outcome           String
+  /// atomic | best_effort | sensitive_read
+  class             String
+  /// A | B for atomic pairs; null otherwise
+  writerPattern     String?                  @map("writer_pattern")
+  /// field → { type: string | integer | boolean, max?: characters, nullable?: true }
+  summaryAllowlist  Json                     @default("{}") @map("summary_allowlist")
+  /// NULL for every P5 pair: the D9 retention applies
+  retentionOverride Unsupported("interval")? @map("retention_override")
+  /// active | retired
+  status            String                   @default("active")
+  createdAt         DateTime                 @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@id([identifier, outcome])
+  @@map("event_catalog")
+  @@schema("audit")
+}
+
 // ── identity (P3, TARGET_ARCHITECTURE §3, ADR-14) ───────────────────────────────────────────────
 // The app role has NO table privileges here: it reaches identity data only through SECURITY DEFINER
 // functions (ADR-14 D4). Tokens are stored only as SHA-256 hashes; passwords only as argon2id hashes.

@@ -26,6 +26,7 @@ const MODULE_SCHEMAS = [
 
 const TABLES = [
   'audit.audit_events',
+  'audit.event_catalog',
   'identity.identities',
   'identity.membership_selection_challenges',
   'identity.mfa_challenges',

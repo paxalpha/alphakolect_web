@@ -179,15 +179,15 @@ describe('tenant A cannot write into tenant B', () => {
   it('may record tenant-less audit events, but not events for another tenant', async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
       await db.query(
-        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES (NULL, 'auth.login_failed', 'failure')`,
+        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES (NULL, 'auth.login', 'failure')`,
       );
       await db.query(
-        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'x.done', 'success')`,
+        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'merchant.profile_updated', 'success')`,
         [MERCHANT_A],
       );
       await expectSqlState(
         db.query(
-          `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'x.done', 'success')`,
+          `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'merchant.profile_updated', 'success')`,
           [MERCHANT_B],
         ),
         SQLSTATE.rlsViolation,

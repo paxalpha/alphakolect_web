@@ -52,6 +52,14 @@ device details as the entries, so it needs care too.
 
 > Answer:
 
+**P2d.** Should **you** confirm, in writing, that you received the copy before the clean-up is marked complete?
+
+- ☐ **Yes** — a short signed or emailed "received" from me *(our suggestion: then the record shows you actually got it,
+  not just that it was sent)*
+- ☐ No — the person who ran the clean-up confirms they handed it over
+
+> Answer:
+
 **P2c.** How long do **you** keep the copy?
 
 - ☐ As long as I decide; it is my responsibility

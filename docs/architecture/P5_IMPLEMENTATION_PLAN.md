@@ -1878,7 +1878,10 @@ independent of the permission catalog); it is listed with them so it is complete
   counts, limitations, deviations); the owner-approved D9 written policy (§8.6) in place; the **as-built P5
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
-  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); **operator runbooks** in
+  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); it must document the
+  **read-authorization boundary** of ADR-16 §3.5 — which reads rely on the API's permission check alone, that tenant
+  separation in the database does not prove permission, that the invitation list exposes invitees' email addresses,
+  and the assumptions, tests and residual risk (project lead's decision, 2026-10-12); **operator runbooks** in
   `docs/operations/` for `audit:purge` (Part 2; requesting a report, running, recovering a stopped run, where to keep a report
   until delivery, listing and recording deliveries, recovering a missing report from a backup, recording a loss) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
   invocation and expected output; full gate twice;

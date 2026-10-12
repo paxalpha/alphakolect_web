@@ -109,7 +109,7 @@ identity (one per person/login)
 
 | Aspect | Design |
 |---|---|
-| Access token | Short-lived (15 min) signed token carrying `session_id`, `identity_id`, `audience`, `membership_id`. **Claims are hints; the server re-resolves membership + status from DB/cache per request.** |
+| Access token | Short-lived (15 min) signed token carrying `session_id`, `identity_id`, `audience`, `membership_id`. **Claims are hints; the server re-validates the session, membership and status in the database on every request and resolves permissions there too — never cached (ADR-14 D6, ADR-16).** |
 | Refresh | Rotating refresh tokens stored **hashed** in `identity.sessions`; reuse detection revokes the family. |
 | Web | httpOnly, Secure, SameSite=Lax cookies on `.alphakolect.com`; CSRF token for state-changing requests. |
 | Mobile | Bearer access + refresh in platform secure storage (Keychain/Keystore). |

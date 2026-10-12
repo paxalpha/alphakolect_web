@@ -440,7 +440,11 @@ codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
 
 Additive steps first (catalog and resolver change no access), then the API switch (unchanged results for existing
 actors, proven by the P4 matrix), then the single database enforcement migration; new capabilities start empty. Rollback
-is forward-only; an over-grant is contained with the switch (A11) and corrected forward; an application version older
+is forward-only; an over-grant is handled by the incident procedure — **contain** (remove the grant through the normal writers,
+or set the containment switch, A11; end affected sessions by deactivating the membership), **assess** (the activity
+record shows what the excess access did), **reconcile** (the owner or super admin confirms the intended grants),
+**correct forward** (a regression test that fails before the fix), **verify and lift** (the matrix and full gate pass;
+the switch is cleared; the incident is recorded in `docs/security/`); an application version older
 than the enforcement migration is never run.
 
 #### Decision log (moved from the P5 plan §14 in P5.0)

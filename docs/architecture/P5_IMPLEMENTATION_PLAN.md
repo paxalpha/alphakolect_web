@@ -1,13 +1,12 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 25 — the owner's go-ahead for Part 1 is given (G1, 2026-10-12); the reviewer's Part 1 approval is
-requested on this revision (the correction asked for is made; Part 1's design is unchanged since its approval on
-revision 22); Part 2 (retention design) pending. (Owner review A–E; independent reviews R1–R54 and fixes A–D
+**Status: revision 26 — PART 1 APPROVED** (independent reviewer, 2026-10-12, on `e6b367d`) **and the owner's go-ahead
+for Part 1 given** (G1, 2026-10-12): **P5.0 may begin** (§12). Part 2 (retention design) is not approved and is not
+built until it is. (Owner review A–E; independent reviews R1–R54 and fixes A–D
 applied; self-review cycles
 recorded in §16; every owner question asked before rev 19 answered — O3, O5, O6, O8, O9 decided, O7 resolved, D5 and D8 superseded, D9
 decided; owner confirmation CF1–CF5 signed 2026-10-12; O4 by design decided at P5.8 step 2; O10–O12 (privacy, needed by P5.8 step e) open; decision log in §14;
-awaiting the reviewer's Part 1 approval, then the reviewer's Part 2 before P5.8 step a).
-Implementation is not yet authorized:** P5.0 begins once the reviewer's Part 1 approval is in force (§12, §14).
+Part 2 must be approved before P5.8 step a).** Implementation of Part 1 is authorized (§12, §14).
 
 | | |
 |---|---|
@@ -2053,15 +2052,15 @@ decision-maker, the date, the source, the selected option, the affected contract
 | CF4 | Two-year rule for IP/user agent in sessions and one-time tokens (§8.6) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Yes, two years." | §8.6, §9.1 purger grants; P5.8 |
 | CF5 | Platform actors' IP/user agent hidden from business owners (§8.5) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Show your team's action, but not your team's internet address or device." | §8.5; P5.8 |
 | Reviewer approval — **Part 1** (§12), first | "Part 1 is approved … This is approval of Part 1 only; it does not supply the owner's go-ahead or authorize P5.0 by itself." | The independent reviewer, 2026-10-12, on revision 22 (`5b51190`) | **Withdrawn** — in the next review (2026-10-12, on revision 23) the reviewer wrote "I have not approved Part 1 in this review": the approval had been recorded with a wrong date (2026-10-13), and P5.0 still put the retention design (Part 2) into ADR-16. Both corrected in revision 24 | §12, P5.0 |
-| Reviewer approval — **Part 1** (§12), current | "I recommend approving Part 1. I found no remaining design-changing blocker … I have no Part 1 design finding to return." Part 2 "is not approved by this verdict" | The independent reviewer, 2026-10-12, on revision 25 (`48b5e50`) | **Recommended; formal approval to be confirmed** — recorded as "approved" only on an explicit statement of approval (R26) | §12 |
+| Reviewer approval — **Part 1** (§12), current | "Part 1 of revision 25 (`e6b367d`) is approved. Part 2, including the retention design and purge, is not approved by this verdict." (preceded by: "I recommend approving Part 1 … I have no Part 1 design finding to return.") | The independent reviewer, 2026-10-12, on revision 25 (`e6b367d`) | **APPROVED** — Part 1 only, as defined in §12 | §12 |
 | Reviewer approval — **Part 2** (§12) | — | — | **Pending** — the retention design of §8.6 and P5.8 step (a); needed before P5.8 step (a) and before P5.10 closes | §8.6, P5.8 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
 signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for Part 1 is given** (G1, 2026-10-12).
 **Still open:** O10–O12, the privacy questions of `docs/business/P5_OWNER_PRIVACY_QUESTIONS.md`, needed only by the
-D9 written policy at P5.8 step (e). **What remains before P5.0 is one approval:** the reviewer's approval of Part 1
-(§12). O4 is decided at P5.8 step 2 on measured evidence, by design. P5.0 then moves this log into ADR-16 (Part 1
+D9 written policy at P5.8 step (e). **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
+owner's G1. O4 is decided at P5.8 step 2 on measured evidence, by design. P5.0 then moves this log into ADR-16 (Part 1
 entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
 
 | # | Item | Proposed position |
@@ -2104,6 +2103,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 26 | 2026-10-12 | The independent reviewer approved Part 1 explicitly — "Part 1 of revision 25 (`e6b367d`) is approved. Part 2 … is not approved by this verdict." Recorded in §14; with the owner's G1 both §12 conditions are met and P5.0 may begin. Part 2 remains unapproved. No plan content changed. |
 | 25 | 2026-10-12 | Reviewer's direction on the coding agent's audit of revision 24: approve Part 1 after one documentation correction; keep Part 2 pending. **Part 1:** §12 is now the only statement of when implementation is authorized (P5.0 begins when §14 records the reviewer's Part 1 approval and the owner's G1, given 2026-10-12; nothing of Part 2 is built before its own approval); §14's summary says one approval remains, and a garbled sentence there is gone; Part 2 is listed by every place it appears and tagged "(Part 2)" in place. **Part 1 design unchanged since the approval on revision 22 (`5b51190`):** a word-level diff of `5b51190..e3c0971` outside §12, §14 and §16 shows only status-line text, "(Part 2)" tags, and P5.0's ADR-16 scope narrowed to Part 1 (the defect the reviewer named in revision 23). **Part 2 (pending its own review):** `purge_candidates`' writes stated consistently; a restored backup is checked to hold every manifest id before any rebuild; the manifest's lifecycle defined, with tests. |
 | 24 | 2026-10-12 | The reviewer withdrew the Part 1 approval of revision 23 and named its defects: (1) the approval was dated 2026-10-13, a day in the future — corrected here, with revisions 22 and 23 re-dated 2026-10-12; (2) P5.0 still put the retention design (Part 2) into ADR-16 and required approval of the "final" ADR-16 — P5.0 now writes Part 1 only, with the retention design added as an ADR-16 addendum after Part 2 is approved. §14 records the approval as given and withdrawn, and the Part 1 approval as pending re-review. The owner's go-ahead G1 ("yes, start now with Part 1", form dated 12 October 2026) is recorded; it takes effect once Part 1 is approved again. Revision 23's entry below is left as history, with its date corrected. |
 | 23 | 2026-10-12 | The independent reviewer **approved Part 1** (§12) on revision 22 — R53 and R54 resolved as written, no further findings for Part 1 — and stated that this approval does not supply the owner's go-ahead. Recorded in §14 with scope; Part 2 (the retention design) pending; status line updated. No content of the plan changed. |

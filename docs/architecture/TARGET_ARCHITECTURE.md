@@ -91,7 +91,7 @@ Out of scope for AlphaKolect itself: holding cash (businesses do), bank-level cu
 ```
 identity (one per person/login)
   ├── credentials: email/phone, password hash (argon2id), MFA (TOTP), status
-  ├── platform_membership?      → role: super_admin | platform_staff(role_id)
+  ├── platform_membership?      → role: super_admin | platform_staff (per-person grants, ADR-16)
   ├── merchant_membership*      → merchant_id, kind: owner | staff | agent,
   │                                role_id (staff), branch_id?, status, deactivated_at
   └── customer_profile*         → merchant_id, customer_id (app login for savers)
@@ -99,7 +99,7 @@ identity (one per person/login)
 
 - A person logs in **into an audience**: `platform`, `merchant` (owner/staff, web), `agent` (mobile), `customer` (mobile). A session is bound to exactly one audience and, for tenant audiences, **one membership** (BR-3).
 - Super Admin: exactly the platform role with all permissions; **MFA mandatory** for all platform identities.
-- Platform staff roles: **support, verification, finance** (BR-3, F-B4a); access to merchant customer/money data only via explicit permission (BR-3).
+- Platform staff: each person holds exactly the permissions the super admin grants them, person by person, starting with none; a label such as support, verification or finance gives no access by itself (BR-3, F-B4a; ADR-16; owner A3, confirmed in the follow-up of 2026-10-12). Access to merchant customer/money data only via explicit permission (BR-3).
 - Merchant owner: one per merchant at creation (more owners = OPEN-1).
 - Staff: permissions from a merchant-defined role (BR-3, Q7c).
 - Agent: fixed capability set — record collections for **assigned customers only** (BR-3); **deactivated ⇒ cannot authenticate immediately** (BR-10.6b).

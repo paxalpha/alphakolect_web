@@ -302,6 +302,37 @@ there are excluded.
 A retired permission is never resolved or granted; its grant rows remain but are inert. A new identifier is granted to
 no grantee. The catalog is read-only to the app role.
 
+#### Endpoint classes and the route map (frozen)
+
+Classes: **`public`** — no credential; **`capability`** — one named, narrow credential other than a session
+(`credentials`, `refresh_token`, `mfa_challenge`, `selection_challenge`, `email_verification_token`,
+`password_reset_token`, `account_setup_token`, `invitation_token`); **`self`** — a session acting only on its own
+identity or membership; **`permission`** — one catalog permission (reserved permissions and owner protection are
+enforced in the database, not by combining permissions). All **44** existing operations (verified against the contract
+registry) are classified:
+
+| Operation | Class | Declaration |
+|---|---|---|
+| getHealth, signup, resendVerification, forgotPassword | public | — |
+| login, agentLogin | capability | `credentials` |
+| refreshSession, agentRefresh | capability | `refresh_token` |
+| verifyMfa | capability | `mfa_challenge` |
+| listLoginMemberships, selectLoginMembership, agentSelectMembership | capability | `selection_challenge` |
+| verifyEmail | capability | `email_verification_token` |
+| resetPassword | capability | `password_reset_token` |
+| completeAccountSetup | capability | `account_setup_token` |
+| acceptInvitation | capability | `invitation_token` |
+| logout, getSession, changePassword, beginTotpEnrollment, confirmTotpEnrollment, getCurrentMembership, getAgentMembership | self | — |
+| getMerchantProfile / updateMerchantProfile | permission | `merchant.profile.read` / `merchant.profile.update` |
+| listBranches, getBranch / createBranch, updateBranch | permission | `merchant.branches.read` / `merchant.branches.manage` |
+| listRoles, getRole / createRole, updateRole | permission | `merchant.roles.read` / `merchant.roles.manage` (reserved: owner) |
+| listMembers, getMember / assignMember, deactivateMember, reactivateMember | permission | `merchant.members.read` / `merchant.members.manage` (reserved: owner, D5′) |
+| listInvitations / createInvitation, revokeInvitation | permission | `merchant.invitations.read` / `merchant.invitations.manage` (reserved: owner, D5′) |
+| deactivateMerchant, reactivateMerchant | permission | `platform.merchants.lifecycle` (reserved: super admin) |
+| transferOwnership | permission | `platform.merchants.transfer_ownership` (reserved: super admin) |
+
+The new operations and their classes are in the frozen contracts below.
+
 #### Enforcement model
 
 - **Resolution.** `identity.session_authority(session)` returns audience, kind, merchant, role and branch state and the

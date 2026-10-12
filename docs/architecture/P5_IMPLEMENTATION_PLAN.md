@@ -1397,7 +1397,10 @@ row that arrived after the page was read is simply not in the page and is left f
 verified file; a successful run deletes exactly the rows in the file (ids and digest); **late-commit race (R38)** — a
 second connection holds a transaction that inserts an already-eligible (backdated) event and commits it **after**
 `purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
-delete (the test pauses the purge between the two statements): the late row is not deleted, is absent from the
+delete (the pause is concrete: in the throwaway test database the table owner installs a test-only `BEFORE DELETE`
+trigger that waits on a gate row the test connection holds locked, so the purge stops exactly after its verification,
+at its first delete, and continues when the test releases the gate — the same test-only technique as the injected
+failures of §8.1, never present outside tests): the late row is not deleted, is absent from the
 report, and is exported and deleted by the next run; a failure stopping a multi-page run after its first page leaves
 the later pages' rows in place and fully covered by the verified report; **purge locking (R40, R43)** — a second
 run started while the first is between pages fails at once with `purge_run_active`, and one started while a page

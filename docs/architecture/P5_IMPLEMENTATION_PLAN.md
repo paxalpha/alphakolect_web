@@ -285,7 +285,7 @@ rules that make that set finite and checkable:
 
 | # | Category | Mode |
 |---|---|---|
-| 0 | `audit.purge_run_lock` — maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40); never by a request path | `FOR NO KEY UPDATE NOWAIT` |
+| 0 | `audit.purge_reservation` — the purge's run-wide reservation row, maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40, R43); never by a request path | `FOR NO KEY UPDATE NOWAIT` |
 | 1 | `identity.platform_memberships` (actor and target, one helper call, sorted) | `FOR SHARE` for the actor; `FOR NO KEY UPDATE` for a target whose row or grants change |
 | 2 | `tenancy.merchants` | `FOR SHARE`; `FOR NO KEY UPDATE` when the merchant row changes (lifecycle, transfer, profile) |
 | 3 | `tenancy.merchant_memberships` — actor and targets together | `FOR NO KEY UPDATE` in writes; `FOR SHARE` in sensitive reads |
@@ -344,8 +344,9 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | branch / role / profile writers | 2: merchant / S (profile: NKU) → 3: actor / NKU → 7: {actor's role} / S, plus the edited role / NKU (one sorted call) → 8: edited branch / NKU | write |
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
-| `audit.purge_expired_events` (operator only; R40) | 0: run lock / NKU `NOWAIT` → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
-| `audit.clear_expired_request_metadata` (operator only; R40) | 0: run lock / NKU `NOWAIT` → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
+| `audit.reserve_purge_run`, `audit.release_purge_run` (operator only; R43) | 0: reservation / NKU `NOWAIT` | write the reservation |
+| `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
+| `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
 | `set_platform_grants` (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | 9: rewrite the target's grant rows |
@@ -1156,27 +1157,52 @@ The exception is:
    `platform.request_metadata_cleared` (#40, pattern A, actor `NULL`), with `p_as_of` and the numbers of session and
    token rows cleared — one writer per pair, as the coverage guard requires;
 7. **the operator command and its failure semantics (R36).** One run, in this order:
-   1. fix `p_as_of` once, at the start, and read **every** page of `purge_candidates` (ids, texts, page digests);
+   0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id`, or fails at once if another run
+      holds a live reservation — before anything is read, written or deleted;
+   1. with that `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests);
    2. **if the owner asked for a report:** write all pages to a new file at the path the operator names (never in the
       repository or on the server), flush it to disk (`fsync` of the file and its directory), read it back, and check
       that every page's rows reproduce that page's database digest; record the file's own SHA-256. Any failure here —
       unwritable path, full disk, interrupted process, mismatch — **ends the run before any deletion**; nothing is
       deleted and the run can simply be repeated;
-   3. only then, page by page, call `purge_expired_events(p_as_of, page ids, page digest)`, each in its own
+   3. only then, page by page, call `purge_expired_events(run_id, p_as_of, page ids, page digest)`, each in its own
       transaction with its own #38 event. If a call raises or its commit fails, that page deletes nothing and the run
       stops; pages already committed were deleted exactly as exported. **Invariant: every row ever deleted is a row of
       a verified report** (when one was requested), and the report covers every row of the run, deleted or not; a
       repeat run exports the remaining rows again;
-   4. after the last page, call `clear_expired_request_metadata(p_as_of)` (no export: these fields are not part of
+   4. after the last page, call `clear_expired_request_metadata(run_id, p_as_of)` (no export: these fields are not part of
       the report the owner asked for, and clearing destroys no row);
-   5. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
+   5. **release the reservation** with `release_purge_run(run_id)`, also when a step above failed (the command
+      always tries); if the process dies first, the reservation simply expires (below);
+   6. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
       file holds personal data until delivered: the written D9 policy states who holds it, how it reaches the owner and
       when it is destroyed.
 
-   **Purge lock footprint (R40) — inside the global order, and never waiting.** Every purge transaction
-   (`purge_expired_events`, `clear_expired_request_metadata`) first takes the one row of `audit.purge_run_lock`
-   `FOR NO KEY UPDATE NOWAIT` — category **0**, maintenance only, never touched by a request path — so a second
-   concurrent run fails at once (`lock_not_available`) and does nothing. Its other locks:
+   **Run-wide reservation (R43).** A purge run is several transactions (reservation, one per page, the clearing,
+   release), so a lock held by one transaction cannot reserve the whole run. The one row of `audit.purge_reservation`
+   (`run_id`, `p_as_of`, `reserved_at`, `renewed_at`) is the reservation instead, written in transactions of its own
+   — no advisory lock (they fail the lock-order guard):
+   - `reserve_purge_run(p_as_of)` takes the row `FOR NO KEY UPDATE NOWAIT`; if it holds a **live** reservation —
+     `renewed_at` within the lease, `audit.purge_lease()` = 15 minutes (`STABLE`, like `d9_retention`) — it
+     raises `purge_run_active` at once; otherwise (free, or expired after a crash) it writes a new `run_id` and the run's
+     `p_as_of`, and commits. A takeover of an expired reservation is recorded in the new run's first #38 or #40 event;
+   - `purge_expired_events` and `clear_expired_request_metadata` take `p_run_id` and, as their first step, take the
+     row `FOR NO KEY UPDATE NOWAIT` and raise — doing nothing — unless it holds **this** run's live reservation with
+     the same `p_as_of`; they then renew `renewed_at`. Pages are bounded (`p_limit`), so a live run renews well within
+     the lease;
+   - `release_purge_run(p_run_id)` frees the row if it still holds this run.
+
+   **What this guarantees.** A second run fails at once — with `purge_run_active` if the first run is between
+   transactions, with `lock_not_available` if the first run's page transaction holds the row — before it reads or
+   changes anything. A takeover can only happen **between** the old run's transactions (each holds the row until it
+   commits), and only after the lease has expired. If the old run was merely slow rather than dead, its next page
+   finds the reservation no longer its own and stops without deleting; everything it had deleted was in its verified
+   report. The page-level checks of R38 (every id present, eligible and matching the digest) remain a second line of
+   defence for any interleaving.
+
+   **Purge lock footprint (R40) — inside the global order, and never waiting.** Every purge transaction first takes
+   the reservation row `FOR NO KEY UPDATE NOWAIT` — category **0**, maintenance only, never touched by a request
+   path. Its other locks:
    - **audit rows (deletion by id):** a `DELETE` locks the rows it removes, but nothing else ever locks
      `audit.audit_events` rows — request paths only insert new rows, no foreign key references the table, `UPDATE`
      and every other `DELETE` are refused by the append-only trigger, and a second purge is excluded by the run
@@ -1205,7 +1231,8 @@ result under two different session time zones; redefining `audit.d9_retention()`
 (`CREATE OR REPLACE`, as a migration would) moves all four cutoffs together on the next call, with no catalog row
 changed; a scratch event entry with an override uses its override, not the function; the catalog test fails if a P5
 pair has an override; a `p_as_of` in the future is
-refused (by all three functions); the app role cannot execute any of the three functions or delete directly;
+refused (by every purge function that takes it); the app role cannot execute any purge function (`reserve_purge_run`,
+`purge_candidates`, `purge_expired_events`, `clear_expired_request_metadata`, `release_purge_run`) or delete directly;
 an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
 than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active
 (unrevoked, unexpired), revoked and absolutely expired sessions, revoked or expired less than two years ago, and
@@ -1221,11 +1248,16 @@ second connection holds a transaction that inserts an already-eligible (backdate
 `purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
 delete (the test pauses the purge between the two statements): the late row is not deleted, is absent from the
 report, and is exported and deleted by the next run; a failure stopping a multi-page run after its first page leaves
-the later pages' rows in place and fully covered by the verified report; **purge locking (R40)** — two purge runs
-started together: the second fails at once with `lock_not_available` and changes nothing; a request revoking an
+the later pages' rows in place and fully covered by the verified report; **purge locking (R40, R43)** — a second
+run started while the first is between pages fails at once with `purge_run_active`, and one started while a page
+transaction of the first holds the row fails at once with `lock_not_available`; either way it reads, exports and
+changes nothing; a run killed after its first page leaves a reservation that blocks new runs until the lease expires
+(the test redefines `audit.purge_lease()` to a short interval), after which a new run takes over and records the
+takeover; the old run, resumed, has its next page refused without deleting anything; a page called with a stale or
+foreign `run_id`, or another `p_as_of`, is refused; release frees the reservation; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
-classify all three functions (operator-only, outside every request path). **P5 still cannot close without the owner's
+classify all five purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates
@@ -1241,7 +1273,8 @@ when each migration is written.
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
-`audit.clear_expired_request_metadata`, `audit.d9_retention`, `util.set_authorization_containment`); the
+`audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.release_purge_run`, `audit.d9_retention`,
+`audit.purge_lease`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
@@ -1254,7 +1287,7 @@ app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Th
 | schema `identity` | `USAGE` | the field clearing of CF4 — [Fact] today only `alphakolect_app` has it (`20261003000200:7`) |
 | `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 and #40 events |
 | `audit.event_catalog` | `SELECT` | retention periods |
-| `audit.purge_run_lock` (one row, §8.6) | `SELECT`, `UPDATE` | the run lock (`FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
+| `audit.purge_reservation` (one row, §8.6) | `SELECT`, `UPDATE` | the run-wide reservation (R43; `FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
 | `identity.sessions` | `SELECT (id, revoked_at, absolute_expires_at)`, `UPDATE (created_ip, user_agent)` | CF4 clearing |
 | `identity.one_time_tokens` | `SELECT (id, created_at, consumed_at, expires_at)`, `UPDATE (requested_ip)` | CF4 clearing |
 
@@ -1528,7 +1561,7 @@ independent of the permission catalog); it is listed with them so it is complete
 ### P5.8 — Audit reads (and O9 list pagination)
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its three functions and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its five functions, the reservation and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor

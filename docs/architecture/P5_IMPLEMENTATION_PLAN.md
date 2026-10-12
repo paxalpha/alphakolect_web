@@ -235,7 +235,8 @@ P5 record says so, so that a later phase that opens any of these to a wider audi
 
 Catalog rules: identifiers are unique, lower-case, dot-separated; `scope ∈ {merchant, platform}`; `status ∈ {active,
 retired}` — a retired permission is never resolved and cannot be granted, and its existing grant rows remain (history)
-but are inert; seeding a new identifier grants it to no grantee; the catalog is read-only to the app role.
+but are inert; seeding a new identifier grants it to no grantee; the app role has no direct access to the catalog — it reads it
+through `tenancy.list_permission_catalog` and the resolver (owner decision B1, ADR-16 §3.5).
 
 ## 7. Enforcement design
 
@@ -347,7 +348,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | Operation | Footprint, in order (category: rows / mode) | Then |
 |---|---|---|
 | `update_membership` (assign, deactivate, reactivate; owner only, D5′) | 2: merchant / S → 3: {actor, target} / NKU → 7: assigned role / S (assign) → 8: assigned branch / S (assign) | write; 10: target's sessions (deactivate) |
-| `list_members`, member and catalog reads | none (authority from the per-request resolver; not a write, not a sensitive read) | read |
+| `list_members` and the B1 read functions (`read_profile`, `list_branches`, `list_roles`, `list_permission_catalog`, `list_invitations`) | none — each re-validates the session and checks its permission without locks (lock-free readers); not a write, not a sensitive read | read |
 | `issue_invitation` | 2: merchant / S → 3: actor / NKU → 4: open invitations for (merchant, email) / NKU (superseded) → 5: the email's setup tokens / NKU (identity found by unlocked lookup) → 6: identity / S → 7: invited role / S → 8: invited branch / S | contested inserts last (L3): identity (if new), invitation, setup token |
 | `revoke_invitation` | 2: merchant / S → 3: actor / NKU → 4: invitation / NKU | write |
 | `accept_invitation` (invitee, password checked by the API) | 2: merchant / S → 4: invitation / NKU → 6: identity / S → 7: role / S → 8: branch / S | `admit_invitation_locked`: membership insert (L3), invitation consumed, `auth.invitation_accepted` row |
@@ -1601,7 +1602,7 @@ independent of the permission catalog); it is listed with them so it is complete
 
 ### P5.1 — Catalog and protected grant storage
 
-- **Migrations:** `…_permission_catalog` (catalog table, seed §6, app `SELECT` only); `…_role_permissions`
+- **Migrations:** `…_permission_catalog` (catalog table, seed §6, no app grant — read through functions, B1); `…_role_permissions`
   (`(merchant_id, role_id, permission)` PK, composite FK to `tenancy.roles (merchant_id, id)`, FK to the catalog plus
   CHECK/trigger allowing only `scope = 'merchant' AND grantable AND status = 'active'`, RLS, **no app write grant**);
   `…_platform_membership_grants` (`(platform_membership_id, permission)` PK, FK to `identity.platform_memberships(id)`,
@@ -1695,6 +1696,13 @@ independent of the permission catalog); it is listed with them so it is complete
   (reserved platform permissions); **one enforcement migration** that creates the definer writers for branches, roles
   and merchant profile **and revokes the app's direct write grants on them in the same transaction** (§7.2); the app
   switches to the writers in the same commit; `bootstrap_super_admin` replaced to keep the account separation (§7.4).
+  **Owner decision B1 (2026-10-12):** the same migration creates the read functions `tenancy.read_profile`,
+  `list_branches`, `list_roles`, `list_permission_catalog` and `list_invitations` (session in, merchant from the
+  session, permission checked, explicit merchant predicate, no locks) and **revokes the app's direct `SELECT`** on
+  `tenancy.merchants`, `tenancy.branches`, `tenancy.roles`, `tenancy.invitations` and the permission catalog; the
+  repository switches to them in the same commit (ADR-16 §3.5). Tests: each refuses a session without the permission;
+  a direct `SELECT` of each table as `alphakolect_app` fails with `insufficient_privilege`; the mixed-version test
+  covers the previous version's direct reads.
   Privileged functions write their audit rows themselves (§8.5). The
   **containment switch** of §11.1 (table, operator function, event #39) and its reads in the resolver and every
   re-check, and its operator command `admin:containment` (`apps/api/scripts/`, migrator connection, as
@@ -1879,9 +1887,9 @@ independent of the permission catalog); it is listed with them so it is complete
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
   deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); it must document the
-  **read-authorization boundary** of ADR-16 §3.5 — which reads rely on the API's permission check alone, that tenant
-  separation in the database does not prove permission, that the invitation list exposes invitees' email addresses,
-  and the assumptions, tests and residual risk (project lead's decision, 2026-10-12); **operator runbooks** in
+  **read-authorization boundary** of ADR-16 §3.5 — after owner decision B1 every permission-gated read is checked in
+  the database as well; the threat model records that tenant separation alone does not prove permission, that the
+  invitation and member lists expose email addresses, and the tests and residual risk of the read functions; **operator runbooks** in
   `docs/operations/` for `audit:purge` (Part 2; requesting a report, running, recovering a stopped run, where to keep a report
   until delivery, listing and recording deliveries, recovering a missing report from a backup, recording a loss) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
   invocation and expected output; full gate twice;
@@ -2057,6 +2065,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Reviewer approval — **Part 1** (§12), first | "Part 1 is approved … This is approval of Part 1 only; it does not supply the owner's go-ahead or authorize P5.0 by itself." | The independent reviewer, 2026-10-12, on revision 22 (`5b51190`) | **Withdrawn** — in the next review (2026-10-12, on revision 23) the reviewer wrote "I have not approved Part 1 in this review": the approval had been recorded with a wrong date (2026-10-13), and P5.0 still put the retention design (Part 2) into ADR-16. Both corrected in revision 24 | §12, P5.0 |
 | Reviewer approval — **Part 1** (§12), current | "Part 1 of revision 25 (`e6b367d`) is approved. Part 2, including the retention design and purge, is not approved by this verdict." (preceded by: "I recommend approving Part 1 … I have no Part 1 design finding to return.") | The independent reviewer, 2026-10-12, on revision 25 (`e6b367d`) | **APPROVED** — Part 1 only, as defined in §12 | §12 |
 | Reviewer approval — **Part 2** (§12) | — | — | **Pending** — the retention design of §8.6 and P5.8 step (a); needed before P5.8 step (a) and before P5.10 closes | §8.6, P5.8 |
+| Owner decision **B1** (ADR-16 form) | "Add the database check now for these screens too." — every permission-gated read also checked in the database | Mayowa Edward Fadahunsi (owner), 2026-10-12 | **Decided** — a change to Part 1, built in P5.5; the reviewer's approval of ADR-16 must cover it | ADR-16 §3.5, P5.1, P5.5 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,

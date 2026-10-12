@@ -38,6 +38,7 @@ Conventions: **MUST** = invariant the implementation and tests enforce. **ADR-n*
 | ADR-13 | **This repository (`paxalpha/alphakolect_web`) is the reconstruction workspace.** The imported legacy application is quarantined, unchanged in layout, under **`legacy/current-system/`**; the new system is built beside it in `apps/` and `packages/` per §21. Governing documents live in `docs/`. Nothing deploys from this repository. (Owner decision, 2026-09-26; refines ADR-12 and supersedes the `legacy/app` / `legacy/ops` / `legacy/docs` split in §26.) | The repo already holds the clean-history import (ADR-12). Keeping the legacy layout intact keeps it runnable as a behavioural reference (its frontend imports root folders by relative path); a split would break it for no benefit. |
 | ADR-14 | **Identity & session decisions for P3** (owner-approved 2026-10-03; details in §3.3): email via an `EmailSender` port (outbox/provider in P12); signup creates only identity + merchant + owner membership; P3 audiences are platform super admin and merchant owner; the app role reaches `identity.*` only through `SECURITY DEFINER` functions; EdDSA JWT access tokens with `kid`, re-validated against the session on every request; cookies + CSRF for platform/merchant, bearer for agent/customer; mandatory platform TOTP with encrypted secrets and recovery codes; operator CLI bootstrap of the first super admin. | Resolves the P3 readiness decisions D1–D16 before implementation, so P3 is built once against fixed rules. |
 | ADR-15 | **Tenancy, memberships and tenant context for P4** (owner-approved 2026-10-09; details in §3.4): P4 is tenancy and isolation, P5 permissions and policies, P10 billing suspension; merchant staff and agents come online (platform staff in P5); one validated membership per session, chosen by an explicit selection step when several are eligible — never by the server guessing; membership, merchant status, role and branch re-read on every request; merchant lifecycle with platform-admin activation/deactivation; one optional branch per staff membership; merchant-defined roles as data only until P5; invitations only in their own table until accepted; atomic ownership transfer with exactly one owner enforced at commit; audience-checked refresh rotation; scoped repositories, RLS and composite keys on every tenant table. | Resolves the P4 design before implementation (E1–E7 and five follow-up decisions), so tenancy is built once against fixed rules and the tenant-isolation matrix has a precise target. |
+| ADR-16 | **Authorization, policies and audit for P5 — Part 1** (from the plan approved 2026-10-12; ADR text pending approval; details in §3.5): the database permission catalog is the only authority; effective permissions resolved per request, never cached; owner and super admin hold fixed sets, staff exactly their role, platform staff exactly their per-person grants, agents self only; role, member, invitation and audit-record management owner-only; every endpoint declares its authorization class and the router fails closed; every privileged write re-checked in its own database transaction under one global lock order; a closed audit catalog with atomic, best-effort and sensitive-read classes; ordinary reads authorized by the API alone within the tenant (stated with its residual risk). Part 2 (retention) is a later addendum. | Replaces the P4 interim owner checks (ADR-15 T9) with one authority shared by API and database; makes every security claim testable. |
 
 ---
 
@@ -252,6 +253,164 @@ has a cross-tenant test. Pinned `search_path`, `REVOKE ALL FROM PUBLIC`, EXECUTE
 
 Each command runs in **one database transaction** in the service: `set_config('app.merchant_id', …, true)`, the
 function call(s) and the **audit insert** — an audit row exists if and only if the change committed.
+
+### 3.5 Authorization, policies and audit — P5 Part 1 (ADR-16, draft for approval)
+
+**Status and scope.** This is the current specification of **P5 Part 1**, written in P5.0 from the plan whose Part 1
+the independent reviewer approved on 2026-10-12 (revision 25, `e6b367d`) and the owner authorized (G1, 2026-10-12).
+**This ADR text is a draft until the reviewer and the owner approve it** (P5.0's completion rule); once approved it is
+the authoritative specification for Part 1. It states the rules as they are — the reasoning, alternatives and superseded positions are in the P5 implementation plan
+(`docs/architecture/P5_IMPLEMENTATION_PLAN.md`, §16 revision log) and in the decision log at the end of this section.
+**Part 2** — the retention design (deletion of activity entries after two years, its reservation, reports, manifest and
+recovery) — is **not** part of this ADR and is **not** built until the reviewer approves it; it will be added as an
+addendum (ADR-16 Part 2). Where the plan's detailed tables (lock footprints, §7.2; event inventory, §8.1) are cited
+below, they are the implementation contract for Part 1 and must agree with this section; entries marked "(Part 2)"
+there are excluded.
+
+#### Decisions in force
+
+| # | Decision |
+|---|---|
+| A1 Authority source | The **database permission catalog** is the only source of permission identifiers, scope (`merchant`, `platform`) and grantability. The contracts package mirrors the identifiers as a TypeScript union for typing only; a test fails on any difference. |
+| A2 No cached authority | Effective permissions are resolved from the database on **every request** (with session validation, one round trip) and never cached or carried in tokens. A change applies from the next request. |
+| A3 Fixed sets | The **owner** holds every merchant permission and the **super admin** every platform permission, in code, not rows — a new permission reaches them automatically and no one else. |
+| A4 Grants | **Staff** hold exactly their role's permissions while membership, merchant and role are active (an archived role grants nothing). **Platform staff** hold exactly the grants on their platform membership (per person, no defaults). **Agents** hold no merchant permission (self only until P7/P8). |
+| A5 Reserved, owner-only | Never grantable: `merchant.roles.manage`, `merchant.members.manage`, `merchant.invitations.manage`, `merchant.audit.read` (owner only); `platform.merchants.lifecycle`, `platform.merchants.transfer_ownership`, `platform.staff.manage` (super admin only). Inviting, cancelling invitations, changing a member's role or branch and deactivating or reactivating members are **owner-only**; staff delegate nothing. |
+| A6 Write-time re-check | Every privileged write re-checks the actor's current authority **inside the database transaction that performs it**, under the locks of the lock model, before its first write. The API's early check never replaces it. |
+| A7 Declared, fail-closed | Every endpoint declares exactly one class — `public`, `capability`, `self` or `permission` — in its contract; the router refuses to start on a missing or invalid declaration. An error while resolving authority is a **500 `INTERNAL_ERROR`**, logged as the `authorization_resolution_failure` signal, never a 401/403 and never a recorded denial. |
+| A8 Response semantics | 401 invalid or absent session; 403 `WRONG_AUDIENCE`; **404** for another business's resource and for a forged id; 403 `FORBIDDEN` for a known resource of the caller's own business without permission. |
+| A9 Branch scope | Every `permission` endpoint declares a branch scope; every P5 endpoint is `merchant_wide` (business administration). A branch restriction does not narrow them, and P5 claims **no** end-to-end branch isolation — that needs branch-owned resources (P7/P8). The owner may restrict a staff member to one branch or give all branches. |
+| A10 Platform staff | Created by the super admin from an email with **no existing account** (a passwordless identity, a membership without grants, the generic account-setup email), then password and mandatory MFA. Deactivation revokes sessions and removes grants; reactivation restores the membership **with no grants**. A platform account can never join a business: invitation admission refuses an identity holding a platform membership, and the operator bootstrap refuses an identity holding a merchant membership. |
+| A11 Containment | An operator-only switch makes the resolver and every re-check ignore all merchant-staff or all platform-staff grants (owner and super-admin authority unaffected), for over-authorization incidents; set and cleared with an audited event. |
+
+#### Permission catalog
+
+| Identifier | Scope | Grantable | Holders |
+|---|---|---|---|
+| `merchant.profile.read` · `merchant.profile.update` | merchant | yes | owner; staff via role |
+| `merchant.branches.read` · `merchant.branches.manage` | merchant | yes | owner; staff via role |
+| `merchant.roles.read` | merchant | yes | owner; staff via role (includes the catalog and role permission sets) |
+| `merchant.roles.manage` | merchant | **no** | owner |
+| `merchant.members.read` | merchant | yes | owner; staff via role (exposes member emails) |
+| `merchant.members.manage` | merchant | **no** | owner |
+| `merchant.invitations.read` | merchant | yes | owner; staff via role (exposes invitee emails) |
+| `merchant.invitations.manage` | merchant | **no** | owner |
+| `merchant.audit.read` | merchant | **no** | owner |
+| `platform.merchants.read` · `platform.audit.read` | platform | yes | super admin; platform staff via grant |
+| `platform.merchants.lifecycle` · `platform.merchants.transfer_ownership` · `platform.staff.manage` | platform | **no** | super admin |
+
+A retired permission is never resolved or granted; its grant rows remain but are inert. A new identifier is granted to
+no grantee. The catalog is read-only to the app role.
+
+#### Enforcement model
+
+- **Resolution.** `identity.session_authority(session)` returns audience, kind, merchant, role and branch state and the
+  effective permission set; the router's policy middleware checks the declared permission (an early 403); the database
+  decides writes (A6).
+- **Lock model.** Row locks are `FOR SHARE` or `FOR NO KEY UPDATE`, never `FOR UPDATE`; keys are never updated and rows a
+  foreign key references are never deleted; contested inserts come last; triggers lock nothing; each function takes its
+  whole footprint first, by category then ascending id, through helpers; nested `…_locked` functions only re-assert
+  their caller's locks with `NOWAIT`. Global category order: (1) platform memberships, (2) merchants, (3) merchant
+  memberships, (4) invitations, (5) single-purpose identity rows, (6) identities and credentials, (7) roles,
+  (8) branches, (9) grant rows, (10) sessions. Authority is acquired **by category, not by row**. The per-operation
+  footprints are the plan's §7.2 table.
+- **Lock-order checker.** A static checker over every function, trigger and repository transaction is the proof
+  obligation for the order; it fails closed on anything outside the constructs it can analyse, and is itself
+  mutation-tested. **It is built first in P5.5. If it cannot reliably enforce the documented rules, work stops and the
+  limitation is reported to the reviewer and owner with an alternative — the checker and its guarantees are never
+  silently weakened.**
+- **Direct writes move behind functions.** Branch, role and profile writes become definer functions, and **one**
+  migration creates them and revokes the app's direct write grants together; an older application version can only be
+  denied, never bypass.
+
+#### Read authorization — the boundary, stated plainly
+
+Writes and **sensitive reads** are enforced in **both** layers: the API policy check, then the database (writes re-check
+authority in their transaction; sensitive reads are database functions that check authority, record the read and return
+the rows together). **Ordinary reads are not.** The database enforces only **tenant separation** (row-level security and
+explicit `merchant_id` predicates) for them, and **tenant separation does not prove that the caller holds the
+permission** — within a business, the permission is checked by the API alone.
+
+| Read | Permission enforced by | Database role |
+|---|---|---|
+| Business profile (`GET /v1/merchant/profile`) | **API only** | tenant separation |
+| Branches (`GET /v1/merchant/branches`, `…/{branchId}`) | **API only** | tenant separation |
+| Roles, role permission sets and the catalog (`GET /v1/merchant/roles`, `…/{roleId}`, `GET /v1/merchant/permissions`) | **API only** | tenant separation |
+| **Invitation list** (`GET /v1/merchant/invitations`) — **exposes invitees' email addresses** | **API only** | tenant separation |
+| Members (`GET /v1/merchant/members`, `…/{membershipId}`) — exposes member emails | API **and** database (`tenancy.list_members` checks the permission) | tenant separation |
+| Merchant and platform audit reads; platform merchant and member lists | API **and** database (designated sensitive-read functions) | tenant separation where tenant-scoped |
+
+**Assumptions:** the policy middleware is mounted from the endpoint registry and fails closed (A7); a route without a
+declaration cannot start. **Tests:** the registry-driven authorization matrix calls every endpoint as every actor
+(owner, staff with and without the permission, archived-role and branch-restricted staff, agent, platform staff with
+none, one or a revoked grant, anonymous, invalid session) and asserts the expected status and that no row changed;
+route-parity asserts the middleware on every `permission` endpoint. **Residual risk:** a defect in the API policy layer
+for one of the "API only" reads would expose that data to other people **of the same business** (never another
+business); the most sensitive case is the invitation list, which holds invitees' email addresses. This is accepted for
+P5 and must appear in the as-built threat model (P5.10). Moving these reads into database functions is a possible later
+hardening, not part of P5.
+
+#### Audit (Part 1)
+
+- **Catalog in the database.** `audit.event_catalog` holds every (identifier, outcome) pair with its class, writer
+  pattern and summary allowlist; a validation trigger refuses an unknown pair, field or over-long value on every insert.
+- **Classes.** **Atomic** — written in the transaction of the change, by a definer function (pattern A) or by
+  `mutateAudited` around an identity flow (pattern B); a failed audit insert rolls the change back. **Best effort** —
+  failures and denials, written by `recordBestEffort` in their own transaction; a failed insert never changes the
+  response. **Sensitive read** — written by the designated read function in the same transaction as the rows it returns;
+  a failed insert returns no data. One writer per pair, checked by the writer and coverage guards. Account setup is the
+  only flow combining patterns, through an explicit nested-writer table.
+- **Who sees the activity record.** The business activity record is **owner-only**, including refused attempts and
+  filtering by person. The IP address and user agent are visible to each business owner for their own business's
+  people (never the platform team's) and to the super admin — **never to platform staff**. The app role loses direct
+  `SELECT` on the activity table (every read goes through the audited functions); the reporting role loses the `ip` and
+  `user_agent` columns.
+- **Logs.** Application logs use an **allowlist**: request id (always server-generated), method and path without query
+  string; status code; database errors as structural fields only. No IP address, user agent or caller-controlled value
+  reaches a log line unchecked.
+- **Signals.** Until metrics exist (P15), failures are structured log signals: `authorization_resolution_failure`,
+  `audit_write_failure`, `audit_validation_failure`, `audit_denial_write_failure`.
+
+#### Availability consequence (accepted)
+
+Security-sensitive changes — including successful sign-ins, refresh, password and MFA changes — **commit together with
+their activity record or not at all** (owner decision E6/D10). So if the activity record cannot be written, those
+operations fail with a 500: the system fails closed rather than act without a record. **P15 must alert** on the
+`audit_write_failure` signal and on sign-in failures caused by audit unavailability (500s on the sign-in, refresh and
+MFA endpoints together with that signal).
+
+#### Frozen contracts of the new operations (Part 1)
+
+All additions are non-breaking (new operations, new optional query parameters, new response fields). Every list uses
+`{ items, nextCursor }`; a cursor is opaque, carries only a position and a digest of the request's filters, and a cursor
+reused with other filters is refused with **`400 INVALID_CURSOR`**. `limit` is optional, 1–100, default 50. Every new
+cookie-session `PUT`/`POST` inherits the existing CSRF check. Codes: `VALIDATION_ERROR` (400), `UNAUTHENTICATED` (401),
+`FORBIDDEN` / `WRONG_AUDIENCE` (403), `NOT_FOUND` (404), `INVALID_LIFECYCLE_TRANSITION` (409, existing) and the two new
+codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
+
+| Operation | Method and path | Authorization | Request | Response | Errors | Built in |
+|---|---|---|---|---|---|---|
+| `listPermissionCatalog` | `GET /v1/merchant/permissions` | `merchant.roles.read` | — | `PermissionCatalog { items: [{ permission, description, grantable }] }` (merchant scope, active) | 401, 403 | P5.6 |
+| `setRolePermissions` | `PUT /v1/merchant/roles/{roleId}/permissions` | `merchant.roles.manage` (owner) | `{ permissions: string[] }` — unique, grantable merchant identifiers; may be empty | 200 `Role` | 400 (unknown, reserved, platform or duplicate identifier), 401, 403, 404 | P5.6 |
+| (field) `Role.permissions` | every role response | — | — | `permissions: string[]`, sorted; an archived role keeps its set, inert | — | P5.6 |
+| (field) `CurrentMembership.permissions` | `GET /v1/merchant/membership` | `self` | — | effective merchant permissions, sorted | — | P5.4 |
+| (field) `Session.permissions` | `GET /v1/auth/session` | `self` | — | effective permissions of the session's audience (merchant or platform); `[]` for agents and for `mfa_enrollment` sessions | — | P5.7 |
+| `listPlatformMerchants` | `GET /v1/platform/merchants` | `platform.merchants.read` (sensitive read) | query `cursor?`, `limit?` | `PlatformMerchantList`, items `{ merchantId, name, status, createdAt }`, newest first | 400, 401, 403 | P5.7 |
+| `listPlatformMerchantMembers` | `GET /v1/platform/merchants/{merchantId}/members` | `platform.merchants.read` (sensitive read) | query `cursor?`, `limit?` | `PlatformMemberList`, items as `Member`, newest first | 400, 401, 403, 404 | P5.7 |
+| `listPlatformStaff` | `GET /v1/platform/staff` | `platform.staff.manage` | query `cursor?`, `limit?` | `PlatformStaffList`, items `PlatformStaffMember { platformMembershipId, email, role, status, permissions, createdAt, deactivatedAt }`, newest first | 400, 401, 403 | P5.7 |
+| `createPlatformStaff` | `POST /v1/platform/staff` | `platform.staff.manage` | `{ email, role: 'support' \| 'verification' \| 'finance' }` | 201 `PlatformStaffMember` (no grants) | 400, 401, 403, **409 `EMAIL_IN_USE`** | P5.7 |
+| `deactivatePlatformStaff` · `reactivatePlatformStaff` | `POST /v1/platform/staff/{platformMembershipId}/deactivate` · `…/reactivate` | `platform.staff.manage` | — | 200 `PlatformStaffMember` | 401, 403, 404 (not platform staff, the super admin included), 409 `INVALID_LIFECYCLE_TRANSITION` | P5.7 |
+| `setPlatformStaffPermissions` | `PUT /v1/platform/staff/{platformMembershipId}/permissions` | `platform.staff.manage` | `{ permissions: string[] }` — unique, grantable platform identifiers; may be empty | 200 `PlatformStaffMember` | 400, 401, 403, 404, 409 `INVALID_LIFECYCLE_TRANSITION` (deactivated) | P5.7 |
+| (params) `listMembers` | `GET /v1/merchant/members` | unchanged | query `cursor?`, `limit?` | `MemberList`, oldest first (unchanged order) | + 400 `INVALID_CURSOR` | P5.8 |
+| (params) `listInvitations` | `GET /v1/merchant/invitations` | unchanged | query `status?` (`open` default \| `all`), `cursor?`, `limit?` | `InvitationList`, newest first (unchanged order); `open` = pending and unexpired | + 400 `INVALID_CURSOR` | P5.8 |
+| `listMerchantAuditEvents` · `listPlatformAuditEvents` | `GET /v1/merchant/audit-events` · `GET /v1/platform/audit-events` | `merchant.audit.read` (owner) · `platform.audit.read` | required window `from`, `to`; filters (actor; platform also merchant, event identifier); `cursor?`, `limit?` | **frozen at P5.8 step 3**, after the measured O4 decision — page size and window bounds are not set here | — | P5.8 |
+
+#### Rollout
+
+Additive steps first (catalog and resolver change no access), then the API switch (unchanged results for existing
+actors, proven by the P4 matrix), then the single database enforcement migration; new capabilities start empty. Rollback
+is forward-only; an over-grant is contained with the switch (A11) and corrected forward; an application version older
+than the enforcement migration is never run.
 
 ---
 

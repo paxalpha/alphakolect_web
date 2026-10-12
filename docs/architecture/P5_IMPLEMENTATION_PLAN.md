@@ -1105,11 +1105,20 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   (`pino-std-serializers` `lib/req.js`) — and the redaction list (`apps/api/src/platform/logger.ts`, `REDACT_PATHS`)
   removes credentials only. So today every log line carries the IP address and user agent, readable by whoever reads
   the logs — which F3 forbids ("the AlphaKolect team cannot see this information"), and with no two-year limit.
-  [Plan, P5.8] `REDACT_PATHS` gains `req.remoteAddress`, `req.remotePort`, `req.headers["user-agent"]`,
-  `req.headers["x-forwarded-for"]`, `req.headers["x-real-ip"]` and `req.headers.forwarded`; the activity record keeps
-  these fields under the D9 rules, and a log line is still matched to its activity entry by the request id. The
-  leak sweep (`apps/api/test/identity/no-secrets-sweep.test.ts`) is extended to fail if a client IP address or user
-  agent appears in captured log output. Error tracking added later (Sentry, TARGET_ARCHITECTURE §28; P15) must send
+  A list of headers to remove can never be complete — a proxy or client can carry an address in any header (R49). So
+  [Plan, P5.8] the logs use an **allowlist**, not a redaction list: the `pino-http` request serializer writes only the
+  request id, method and URL path, and the response serializer only the status code — **no headers and no remote
+  address at all** (`REDACT_PATHS` stays, as defence in depth for credentials). [Fact] Errors are logged whole
+  (`apps/api/src/platform/http/error-handler.ts:27,33`), and a PostgreSQL error's `detail` can print a whole row
+  ("Failing row contains (…)") — for a failed session insert, its IP address and user agent. So the error serializer
+  keeps only structural fields of a database error — SQLSTATE `code`, `constraint`, `schema`, `table`, `column` and
+  the message — and drops `detail`, `where`, `hint` and any query text. The activity record keeps the IP address and
+  user agent under the D9 rules, and a log line is still matched to its activity entry by the request id. **Tests**
+  (the leak sweep, `apps/api/test/identity/no-secrets-sweep.test.ts`, extended): requests carrying a distinctive
+  address in `X-Forwarded-For` (with the configured trusted proxy), `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`,
+  `True-Client-IP` and an arbitrary custom header, and a distinctive `User-Agent`; and an injected database failure
+  whose `detail` would contain a session's IP address and user agent — none of these values appears in any captured
+  request, response or error log line. Error tracking added later (Sentry, TARGET_ARCHITECTURE §28; P15) must send
   no IP address or user agent either; recorded here as an obligation of P15.
 - **Copy before deletion:** before a clean-up, the owner may ask for a copy of the entries about to be deleted (the
   request is recorded in the database and enforced by every run until one delivers it, R44); it is

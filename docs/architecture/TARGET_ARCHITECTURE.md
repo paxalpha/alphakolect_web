@@ -715,7 +715,7 @@ Private object storage (S3-compatible); upload via **pre-signed PUT** with size/
 - PostgreSQL 16; **one Postgres schema per module** (`identity`, `tenancy`, `customers`, `savings`, `loans`, `investments`, `payments`, `ledger`, `billing`, `kyc`, `support`, `notifications`, `documents`, `audit`, `jobs`).
 - snake_case everywhere; UUIDv7 PKs; `timestamptz`; `bigint` minor units + `char(3)` currency; `CHECK`s for enums/amount > 0; composite tenant FKs; RLS on tenant tables.
 - **Prisma** schema = canonical definition; migrations generated, reviewed, and applied only by the release pipeline. Raw SQL migrations for RLS policies, ledger triggers, grants.
-- Separate DB roles: `app` (DML only, RLS enforced, no UPDATE/DELETE on ledger), `migrator`, `readonly` (reporting/support).
+- Separate DB roles, created by `packages/db/sql/bootstrap/roles.sql`: `alphakolect_app` (per-table grants only, `NOBYPASSRLS`, never a table owner; no UPDATE or DELETE on journal entries, journal lines or activity entries; identity tables only through database functions), `alphakolect_migrator` (owns the schema objects and applies migrations), `alphakolect_readonly` (reporting; from P5 it cannot read the activity record's `ip` and `user_agent` columns, ADR-16).
 - Backups: PITR (WAL archiving or managed Postgres), daily logical dump, **restore tested monthly**.
 
 ## 20. Background jobs

@@ -370,7 +370,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
 | `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_lost`, `audit.release_purge_run` (operator only; R43–R45, R52) | 0: reservation / NKU `NOWAIT` | write the reservation row and the report tables (no request path touches them); #41/#42 inserts (fresh key) |
-| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks |
+| `audit.purge_candidates` (operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
 | `audit.purge_expired_events` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 
@@ -1303,8 +1303,11 @@ The exception is:
    `delivery_note`, `lost_at`, `loss_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
    inserts an **open** request; "a report is pending", in this section, means a request is open. `confirm_purge_report(p_run_id, p_row_count, p_file_sha256, p_file_location)` inserts
    this run's report for the open request, after checking the run's live reservation and that the count equals the
-   rows `purge_candidates` returned to this run — each candidates page adds its row count and page digest to running
-   totals in the reservation row, reset by `reserve_purge_run`, so the database knows what it handed out. While a
+   rows `purge_candidates` returned to this run. **The manifest (R53):** every page `purge_candidates` hands out is
+   recorded in `audit.purge_run_pages` (`run_id`, `page_no`, the ordered event ids, the page digest) in the same
+   transaction that returns it, so the database knows exactly what it handed out — the ids are UUIDs, no personal
+   data, kept with the report. `confirm_purge_report` checks the count against the manifest, and `purge_expired_events`
+   refuses a page whose ids or digest differ from the manifest's page of the same number. While a
    request is open, `purge_expired_events` **raises and deletes nothing** unless a confirmed report of **this** run
    exists for it.
 
@@ -1326,11 +1329,14 @@ The exception is:
       names acceptable places — and keeps it there, unchanged, until its delivery is recorded;
    2. `audit:purge-reports` re-reads every undelivered report at its recorded path and states for each: present and
       matching, **missing**, or **altered** (hash differs);
-   3. **a missing or altered report is recovered exactly where possible:** restore a database backup taken before the
-      run's deletions into a scratch database (backups are kept as O10 decides), recompute the candidates with the
-      report's recorded `p_as_of` — audit rows are immutable, so the same rows give the same canonical text — rewrite the
-      file and check its SHA-256 against the confirmed one; if it matches, the report is recovered bit for bit and is
-      delivered as usual;
+   3. **a missing or altered report is recovered exactly where possible (R53):** restore a database backup taken before
+      the run's deletions into a scratch database (backups are kept as O10 decides) and rebuild the file **from the
+      manifest** — the same pages, the same ordered ids — not by re-running the selection, which could pick up an
+      eligible row that committed late, or miss one; audit rows are immutable, so the same ids give the same canonical
+      text. Every page digest and the file's SHA-256 are checked against the recorded ones; if they match, the report is
+      recovered bit for bit and is delivered as usual. Rows eligible for deletion are at least two years old, so any
+      backup taken before the deletion holds them; an id the backup lacks makes the rebuild fail its check, and step 4
+      applies;
    4. **if it cannot be recovered** (no backup old enough, or the regenerated hash differs), the operator records the
       loss with `record_report_lost(p_report_id, p_note)` — operator-only, an attestation whose note records that the
       owner was told, refused for a report already delivered — which writes `platform.purge_report_lost` (#43) and
@@ -1352,7 +1358,8 @@ The exception is:
      the index is the backstop. A request moves only from open to satisfied, never back.
    - `audit.purge_reports`: **at most one report per run** (`UNIQUE (run_id)`), linked at confirmation to the single
      open request; confirmed once and delivered once (a second confirmation or delivery is refused); never deleted.
-     These rows hold a path, a hash and counts — no personal data.
+     These rows hold a path, a hash and counts — no personal data. `audit.purge_run_pages` rows (the manifest, R53)
+     are written only by `purge_candidates`, never changed, and kept with their report.
    - **A run with nothing eligible** confirms no report and deletes nothing; an open request stays open for the next
      run that has rows to delete.
    - `util.authorization_containment` (§11.1) uses the same one-row key and is inserted by its migration.
@@ -1460,7 +1467,9 @@ only then may a run delete without a report; `record_report_delivery` with a fil
 #41 and #42 commit with their changes; **report durability (R52)** — a report file deleted after its run's first page
 is flagged **missing** by `audit:purge-reports`, and one edited is flagged **altered**; regenerated from a copy of the
 database taken before the run (the test keeps one) with the recorded `p_as_of`, the file matches the confirmed
-SHA-256 and is delivered; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
+SHA-256 and is delivered; **a late-committing eligible event present in that copy but absent from the original report
+is left out of the rebuild (it is not in the manifest) and the hashes still match (R53)**; a page whose ids differ from
+the manifest is refused by `purge_expired_events`; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
 can be satisfied; `record_report_lost` on a delivered report is refused; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
@@ -1492,7 +1501,7 @@ app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Pu
 `alphakolect_migrator` (§8.6 item 1) and run through the operator's migrator connection, so they need no grant
 beyond ownership — id defaults (`util.uuid_v7()`), the `identity` schema and the report tables included (R46).
 What is enumerated and tested is what **others** may not do: `alphakolect_app` and `alphakolect_readonly` have no
-`EXECUTE` on any purge function, no `DELETE` on `audit.audit_events`, and no privilege on the reservation and report
+`EXECUTE` on any purge function, no `DELETE` on `audit.audit_events`, and no privilege on the reservation, report and manifest
 tables. **Tests:** the purge runs end to end as the function owner through the migrator connection (export, deletion,
 field clearing, report confirmation and delivery, events #38, #40, #41, #42); each of the app and readonly roles is
 refused every purge function and every write to those tables with `insufficient_privilege`.

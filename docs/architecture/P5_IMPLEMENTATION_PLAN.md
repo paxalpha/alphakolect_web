@@ -1357,7 +1357,9 @@ The exception is:
      serialize, and if a request is already open it refuses with `report_request_open` and returns that request's id;
      the index is the backstop. A request moves only from open to satisfied, never back.
    - `audit.purge_reports`: **at most one report per run** (`UNIQUE (run_id)`), linked at confirmation to the single
-     open request; confirmed once and delivered once (a second confirmation or delivery is refused); never deleted.
+     open request; confirmed once; then it ends in **exactly one terminal state, once** (R54) — **delivered** or
+     **lost** — enforced by a `CHECK (delivered_at IS NULL OR lost_at IS NULL)` and by both functions, which refuse a
+     report that is already delivered or already lost; never deleted.
      These rows hold a path, a hash and counts — no personal data. `audit.purge_run_pages` rows (the manifest, R53)
      are written only by `purge_candidates`, never changed, and kept with their report.
    - **A run with nothing eligible** confirms no report and deletes nothing; an open request stays open for the next
@@ -1470,7 +1472,8 @@ database taken before the run (the test keeps one) with the recorded `p_as_of`, 
 SHA-256 and is delivered; **a late-committing eligible event present in that copy but absent from the original report
 is left out of the rebuild (it is not in the manifest) and the hashes still match (R53)**; a page whose ids differ from
 the manifest is refused by `purge_expired_events`; with no such copy, `record_report_lost` closes the obligation (#43), after which the request
-can be satisfied; `record_report_lost` on a delivered report is refused; a request revoking an
+can be satisfied; **terminal states (R54)** — a delivered report cannot be marked lost, a lost report cannot be
+delivered, neither can be recorded twice, and a direct update setting both columns fails the `CHECK`; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
 classify all ten purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's

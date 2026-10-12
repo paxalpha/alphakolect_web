@@ -740,7 +740,10 @@ P5 pair it is `NULL`, meaning "the D9 retention": the purge and the append-only 
 at run time as `COALESCE(retention_override, audit.d9_retention())` (§8.6, R41, R42), so `audit.d9_retention()` is
 the one runtime source for P5, not a value copied into rows. A later phase whose events need a different period
 (e.g. financial records in P6+) sets an override on its own entries by migration, instead of redesigning the purge;
-a catalog test fails if any P5 pair carries an override. Writer
+a catalog test fails if any P5 pair carries an override. **Catalog entries are never deleted** (rev 20): a pair that
+is no longer written is marked retired, so every stored event keeps an entry from which its retention is read; and an
+event whose pair has no entry at all — impossible after P5.3a's seed, defended anyway — uses `audit.d9_retention()`
+(the purge and the guard look the entry up with an outer join). Writer
 class and pattern stay enforced by the static writer guard and by `recordBestEffort`'s own class check. The **class** (atomic, best effort or sensitive
 read, §8.2) is declared per **(identifier, outcome)** pair — e.g. `auth.login`/`success` is atomic (a session is
 created) while `auth.login`/`failure` is best effort — together with a **summary allowlist** (field → type, bounded
@@ -1120,6 +1123,20 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   whose `detail` would contain a session's IP address and user agent — none of these values appears in any captured
   request, response or error log line. Error tracking added later (Sentry, TARGET_ARCHITECTURE §28; P15) must send
   no IP address or user agent either; recorded here as an obligation of P15.
+- **Direct database reads of the activity record (rev 20).** [Fact] P1 grants `alphakolect_app` `SELECT` on
+  `audit.audit_events` with a tenant read policy, and `alphakolect_readonly` `SELECT` on every audit table with a
+  policy over **all** rows (`20260927000200_privileges:36,39`, `20260927000400_row_level_security:72,77`) — so the
+  reporting role can read every IP address and user agent, which F3 forbids, and either role can read activity rows
+  without any read event, bypassing the sensitive-read design (§8.2a rule 7). [Fact] No app code reads the table: the
+  writer only inserts, without `RETURNING` (`apps/api/src/modules/audit/audit-log.ts:43`). [Plan, P5.8, in the
+  migration that adds the audit reads] **the app loses `SELECT`** on `audit.audit_events` and its read policy is
+  dropped (`INSERT` and its policy stay), so every read goes through the designated functions #33 and #34; **the
+  reporting role** keeps `SELECT` on every column **except** `ip` and `user_agent` (table-level `SELECT` replaced by
+  column grants) and is granted nothing on any table P5 adds. Tests: as `alphakolect_app`, a `SELECT` on
+  `audit.audit_events` fails with `insufficient_privilege` and every journey that writes events still works; as
+  `alphakolect_readonly`, selecting `ip` or `user_agent` fails and other columns succeed. [Assumption, confirmed at the
+  start of P5.8] test files that read the table (`apps/api/test/identity/*-api.test.ts` among them) do so through
+  the owner connection; any that use the app connection move to it.
 - **Copy before deletion:** before a clean-up, the owner may ask for a copy of the entries about to be deleted (the
   request is recorded in the database and enforced by every run until one delivers it, R44); it is
   handed over as a report (a file) and **the system keeps no copy** (F4, confirmed by the owner as CF2b on 2026-10-12:
@@ -1179,7 +1196,8 @@ The exception is:
    `util.reject_modification()` — the **same** function that protects the ledger's money tables
    (`journal_entries`, `journal_lines`, `20260927000300:119-146`). That function is **not changed**: the ledger keeps
    it exactly as it is. On `audit.audit_events` only, the two triggers are replaced by triggers calling a dedicated
-   function, `audit.audit_events_guard()` (runs as the caller; pinned `search_path` and `TimeZone`), which refuses
+   function, `audit.audit_events_guard()` (runs as the caller; pinned `search_path` and `TimeZone`; the old triggers are
+   dropped and the new ones created in **one** migration transaction, so the table is never unguarded), which refuses
    every `UPDATE` and `TRUNCATE`, and refuses a `DELETE` unless **both**: (a) the transaction-local setting
    `audit.purge_run_id` names the run that holds the **live** reservation (`purge_expired_events` sets it with
    `set_config(…, true)` after taking the reservation, so it ends with the transaction); and (b) the row is older than

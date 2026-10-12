@@ -27,8 +27,12 @@ const { auth } = await createTestApp();
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
 afterAll(() => owner.end());
 
-const ep = (e: Omit<EndpointContract, 'id' | 'path' | 'summary' | 'responses'> & { id: string }) =>
+// Secured synthetic endpoints: authentication is what they test, so each is declared 'self' (P5.3).
+const ep = (
+  e: Omit<EndpointContract, 'id' | 'path' | 'summary' | 'responses' | 'authorization'> & { id: string },
+) =>
   defineEndpoint({
+    authorization: { class: 'self' },
     ...e,
     path: `/v1/test/${e.id}`,
     summary: e.id,

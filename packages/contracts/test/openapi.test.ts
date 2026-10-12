@@ -18,6 +18,15 @@ describe('openapi/v1.json', () => {
     }
   });
 
+  it('publishes every operation’s authorization declaration as x-authorization (P5.3, additive)', () => {
+    const doc = buildDocument();
+    for (const e of Object.values(endpoints)) {
+      const op = doc.paths?.[e.path]?.[e.method] as Record<string, unknown> | undefined;
+      expect(op?.['x-authorization'], e.id).toEqual(e.authorization);
+      expect(['public', 'capability', 'self', 'permission'], e.id).toContain(e.authorization.class);
+    }
+  });
+
   it('is OpenAPI 3.1 and publishes the money and id formats', () => {
     const doc = buildDocument();
     expect(doc.openapi).toBe('3.1.0');

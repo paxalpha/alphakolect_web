@@ -48,6 +48,8 @@ function operation(e: EndpointContract): ZodOpenApiOperationObject {
     summary: e.summary,
     tags: [e.audience],
     'x-audience': e.audience,
+    // P5.3: the endpoint's authorization class (and permission, capability, branch scope) — additive.
+    'x-authorization': e.authorization,
     ...(e.sessionScope ? { 'x-session-scope': e.sessionScope } : {}),
     ...(security ? { security } : {}),
     ...(params || query || headers

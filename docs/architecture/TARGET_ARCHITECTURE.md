@@ -398,7 +398,9 @@ hardening, not part of P5.
   `user_agent` columns.
 - **Logs.** Application logs use an **allowlist**: request id (always server-generated), method and path without query
   string; status code; database errors as structural fields only. No IP address, user agent or caller-controlled value
-  reaches a log line unchecked.
+  reaches a log line unchecked. The same rule binds the deployment (P15): the reverse proxy
+  records no client IP address or user agent in its access logs, and error tracking sends neither (RESTRUCTURING_MAP,
+  obligations P5 passes to P15).
 - **Signals.** Until metrics exist (P15), failures are structured log signals: `authorization_resolution_failure`,
   `audit_write_failure`, `audit_validation_failure`, `audit_denial_write_failure`.
 

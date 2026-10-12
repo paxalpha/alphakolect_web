@@ -46,6 +46,7 @@ import {
 import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
 
 export * from './auth.js';
+export * from './permissions.js';
 export * from './primitives.js';
 export * from './registry.js';
 export * from './endpoints/auth.js';

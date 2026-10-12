@@ -1623,6 +1623,37 @@ independent of the permission catalog); it is listed with them so it is complete
   and extended by every later package; catalog guard covers `role_permissions` automatically;
   from-zero migration and no drift.
 - **Done when:** the database alone defines and protects permissions; no existing access changes.
+- **Built 2026-10-12 — awaiting review at the P5.1 gate.** Commits `aa7d8cf` (unrelated test fix, below), `a129f3a`
+  (migrations `20261013000200_permission_catalog`, `20261013000300_role_permissions`,
+  `20261013000400_platform_membership_grants`; Prisma models; storage tests), `fc6fa8b` (execute-grant inventory),
+  `acd73d7` (contracts `PERMISSIONS` and the API test against the catalog). **Gate (§9.3), local, on the tree of
+  `acd73d7`:** `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 61,
+  db 369, api 395, all passing; oasdiff 1.32.1 against `origin/main` (`5d8904b`): no changes (no endpoint or spec
+  change); gitleaks staged scan clean on every commit (full history at closure). Not CI. **Mutation checks**
+  (sabotaged, shown to fail, restored byte-identical): grant rule ignoring `grantable` (9 tests fail); app and readonly
+  granted SELECT on the three tables (3); grant and catalog triggers dropped (17); an extra app grant plus a hidden
+  function writing `role_permissions` (3). **No existing access changed:** the migrations only add objects, and the
+  inventory confirms every earlier function keeps its grants. **Judgement calls for the reviewer:**
+  (1) the catalog lives in `identity` — the plan names no schema; both grant tables reference it, and tenancy already
+  depends on identity, so no identity → tenancy dependency is created;
+  (2) the catalog is protected beyond §6 — identifier, scope and grantable never change, no delete or truncate, and
+  `retired` is final, so retired grant rows can never come back to life; CHECKs also require the first identifier
+  segment to equal the scope and limit identifiers to 100 characters;
+  (3) `alphakolect_readonly` gets no access to the three tables (the plan is silent; default-deny), so reporting
+  cannot see role permissions until a grant is decided;
+  (4) `created_at` on all three tables;
+  (5) `tenancy.role_permissions` carries RLS and an app `SELECT` policy although the app holds no privilege — the
+  tenant guards require it, and any later grant is tenant-scoped from the start (the RLS guard lists it as a tenant
+  table without app access);
+  (6) the inventory covers every module schema (the two `ledger` functions included), not only the four of §9.1, and
+  the no-writer check covers every function, not only app-executable ones, because an inner function can be reached
+  through a granted one;
+  (7) `PERMISSIONS` is compared with the catalog's **active** identifiers, so a retired permission leaves the
+  contracts when it is retired;
+  (8) `aa7d8cf` fixes a pre-existing, local-only failure unrelated to P5.1: the T14 tenant-scope guard's regex missed
+  CRLF line endings on this Windows checkout (CI checks out LF); the guard still fails when a function skips
+  `scopeOf(tx)` (sabotage-checked). **Not in P5.1, unchanged:** no function writes a grant table; the B1 read
+  functions and the revocation of direct `SELECT` stay in P5.5; Part 2 is not approved.
 
 ### P5.2 — Resolver and write-time contract
 
@@ -2124,6 +2155,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 29 | 2026-10-12 | **P5.1 built; awaiting review at its gate.** The permission catalog (`identity.permission_catalog`, the 16 permissions of §6, protected by a trigger), `tenancy.role_permissions` and `identity.platform_membership_grants` (only active, grantable permissions of the right scope; no app or readonly privilege; no writer), the Prisma models, the storage tests, the execute-grant inventory (R31) and the contracts `PERMISSIONS` list checked against the catalog (`a129f3a`, `fc6fa8b`, `acd73d7`), plus an unrelated CRLF fix to the T14 guard (`aa7d8cf`). Gate passed locally; evidence and eight judgement calls for review under P5.1. Next package (P5.2 ∥ P5.3 ∥ P5.3a) waits for the gate review. |
 | 28 | 2026-10-12 | **P5.0 complete.** The owner approved ADR-16 for Part 1 with decision B1 (`d4ac17e`) and answered the follow-up (`130fbda`: C1 accepted, C2 recovery targets, A3 confirmed); the independent reviewer approved the ADR-16 text as written, including B1, and confirmed that the approval covers §3.5 in full (lines 259–499 at `fac08e7`). Carried into the documents: B1 into P5.1 and P5.5 (`fce7f99`); the recovery targets into P15 obligation 5 (`3c05307`); the migration-naming rule into P5.1 (`d3b68d0`, critic review TA-26); the owner-approved note under BR-11.2 (`a3e801a`). Part 2 remains unapproved. Next package: P5.1. |
 | 27 | 2026-10-12 | **P5.0 work done; awaiting approval of the ADR-16 text.** TARGET_ARCHITECTURE gains ADR-16 (§0 row; §3.5, a draft for approval): the Part 1 specification without history, the route map of all 44 operations (checked against the registry), the frozen contracts of the new operations with error codes (audit-read contracts frozen at P5.8 step 3 by design), the read-authorization boundary with its residual risk, the availability consequence, the lock-order checker's stop rule, the incident procedure and the decision log with applying commits (`dd60c84`, `4ffab3c`, `e9e5690`, `e882e19`, `5a45569`, `53ba786`). RESTRUCTURING_MAP: the assigned-customer rule moved verbatim to P7/P8 (`402cc57`), the P5 definition and exit criteria (`1561f8e`), the obligations passed to P15 including the proxy access-log rule (`5ec80c9`). Plan: §1.1 lists all four P15 obligations (`82ad094`); P5.10's threat model must document the read boundary (`4c210fb`). No P5 code, migration or test written; Part 2 untouched. P5.0 completes when the reviewer and the owner approve the ADR-16 text (§10). |
 | 26 | 2026-10-12 | The independent reviewer approved Part 1 explicitly — "Part 1 of revision 25 (`e6b367d`) is approved. Part 2 … is not approved by this verdict." Recorded in §14; with the owner's G1 both §12 conditions are met and P5.0 may begin. Part 2 remains unapproved. No plan content changed. |

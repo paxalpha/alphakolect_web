@@ -1182,13 +1182,26 @@ functions a request path calls. **No app grant** for: operator and maintenance f
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
 app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **The purger role**
-(`alphakolect_audit_purger`, §8.6) is `NOLOGIN`, a member of no other role, and holds exactly: `DELETE` and `INSERT`
-on `audit.audit_events` (the insert only for its summary event), `SELECT` of `audit.event_catalog` (retention
-periods), `SELECT` on `audit.audit_events` (eligibility, `purge_candidates`), `USAGE` on the `audit` schema, and (CF4) `UPDATE (created_ip,
-user_agent)` on `identity.sessions` and `UPDATE (requested_ip)` on `identity.one_time_tokens` with `SELECT` of the
-columns its predicates read; its RLS policies allow `SELECT` and `DELETE` of rows older than
-the retention period and `INSERT` of the tenant-less `platform.audit_purged` event only. A test enumerates its privileges
-across every table, sequence, function and schema and fails on anything else.
+(`alphakolect_audit_purger`, §8.6) is `NOLOGIN`, a member of no other role, and holds **exactly** (R39):
+
+| Object | Privilege | Why |
+|---|---|---|
+| schema `audit` | `USAGE` | its own functions and tables |
+| schema `identity` | `USAGE` | the field clearing of CF4 — [Fact] today only `alphakolect_app` has it (`20261003000200:7`) |
+| `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 event |
+| `audit.event_catalog` | `SELECT` | retention periods |
+| `audit.purge_run_lock` (one row, §8.6) | `SELECT`, `UPDATE` | the run lock (`FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
+| `identity.sessions` | `SELECT (id, revoked_at, absolute_expires_at)`, `UPDATE (created_ip, user_agent)` | CF4 clearing |
+| `identity.one_time_tokens` | `SELECT (id, created_at, consumed_at, expires_at)`, `UPDATE (requested_ip)` | CF4 clearing |
+
+[Fact] No `identity` table has row-level security (RLS is enabled only on tenancy, ledger and audit tables,
+`20260927000400`, `20261003000100:276`, `20261009000300:71,78`, `20261012000100:84`), so the column grants
+above are the whole boundary there. On `audit.audit_events` its RLS policies allow `SELECT` and `DELETE` of rows
+older than their retention period and `INSERT` of the tenant-less `platform.audit_purged` event only. **Tests:** the
+purge succeeds end to end when its functions run as their owner, the purger (export, deletion, field clearing, #38);
+with any one of the grants above removed in a scratch copy of the role, the step that needs it fails with
+`insufficient_privilege`; and a test enumerates its privileges across every table, column, sequence, function and
+schema and fails on anything not in the table.
 
 ### 9.2 Guards that must keep passing
 

@@ -115,6 +115,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 
 11.1 **Money records are never deleted.** A mistake is corrected with a **visible reversing entry**, the way a bank does it. *(Q6d)*
 11.2 Records are kept **indefinitely**. Nothing is deleted automatically. *(Q10b)*
+*Note added on 12 October 2026, with the owner's approval:* The **activity record** (the log of sign-ins and of who did what) is the one exception to rule 11.2. Each entry is kept for **two years** and then deleted in full, including entries that already exist. The internet address and device details kept with sign-ins and links follow the same rule. Before entries are deleted, the owner may ask for a copy as a report; the system keeps no copy. Every other record, including all money records (rule 11.1), is still kept indefinitely. *(Owner decision D9, October 2026.)*
 11.3 **(please confirm)** If a customer asks for their data to be deleted, their **personal details** are removed, but the money records stay (with the name removed), so the business's books still add up. This balances rule 11.1 with rule 11.2. --> Yes, Approved.
 11.4 Every action that changes money or permissions records **who** did it and **when**.
 

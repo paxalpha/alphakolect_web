@@ -1977,8 +1977,8 @@ decision-maker, the date, the source, the selected option, the affected contract
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
 signed by Mayowa Edward Fadahunsi on 2026-10-12). **Still open:** O10–O12, the privacy questions of
-`docs/business/P5_OWNER_PRIVACY_QUESTIONS.md` (rev 19), needed only by the D9 written policy at P5.8 step (e). What remains is not a decision but two approvals: the reviewer's final verdict on the
-complete document, then the owner's final go-ahead (§12). O4 is decided at P5.8 step 2 on measured evidence, by
+`docs/business/P5_OWNER_PRIVACY_QUESTIONS.md` (rev 19), needed only by the D9 written policy at P5.8 step (e). Apart from them, what remains before P5.0 is two approvals: the reviewer's final verdict on
+the complete document, then the owner's final go-ahead (§12). O4 is decided at P5.8 step 2 on measured evidence, by
 design. P5.0 then moves this log into ADR-16, adding the applying commit of each entry.
 
 | # | Item | Proposed position |

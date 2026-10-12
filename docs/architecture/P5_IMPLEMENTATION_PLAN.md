@@ -1677,7 +1677,28 @@ independent of the permission catalog); it is listed with them so it is complete
   exist at this point (membership deactivation; role archive), in both orders, behaves per §7.2; forged session
   ids refused.
 - **Done when:** resolution is current, complete and isolated.
-- **Built 2026-10-12 — awaiting review at the P5.2 gate.** Commits `a68cece` (migrations
+- **Built 2026-10-12; gate approved 2026-10-12** (§14: "P5.2 is approved to close based on the evidence reported";
+  the eight judgement calls accepted, 2, 3, 6 and 7 with conditions answered here). **Gate follow-up `3baa6bf`:** the
+  resolver's identifiers are checked at the API boundary (condition of call 7): `knownPermissions` keeps the ones this
+  version knows and drops any other — possible only between a catalog migration and its release; it can only remove
+  access, and throwing would make every owner's request fail in that window (owners hold every merchant permission).
+  **Every revocation path that exists today conflicts with the re-check's authority locks** (calls 2 and 3), [Fact]:
+  member deactivation and role or branch reassignment (`update_membership`) lock the target membership `FOR UPDATE`;
+  role archive and rename are an `UPDATE` of the role row (`FOR NO KEY UPDATE`); merchant deactivation
+  (`set_merchant_status`) and ownership transfer lock the merchant `FOR UPDATE` — each conflicts with the `FOR SHARE`
+  the re-check holds on that row. The revocations still to come take the planned conflicting locks: role permission
+  edits the role `FOR NO KEY UPDATE` (P5.6), platform grant changes and staff deactivation the target platform
+  membership `FOR NO KEY UPDATE` (P5.7). Ending a session (logout, password change) changes no permission and takes no
+  authority lock: a write that passed its re-check while the session was valid stands. **Other answers:** the owner and
+  super admin hold only their own scope (a permission of the other scope is `forbidden`, tested); agents and
+  MFA-enrolment sessions hold nothing, and an enrolment session reaches only endpoints declaring
+  `sessionScope: 'mfa_enrollment'` (`403 MFA_ENROLLMENT_REQUIRED` otherwise, P3) — P5.3 classifies them `self` or
+  `capability`, never `permission`; a missing or ended session is 401 / `unauthenticated`, never a valid session with no
+  permissions; the role and branch state stay in the database layer — responses are built field by field and never
+  spread `AuthContext`; the containment switch is **not operational** until P5.5. **Obligations carried to P5.5**
+  (already its contract, §7.2): every privileged function takes its whole footprint, calls the re-check and writes in
+  **one** transaction; its own two-connection races against each revocation path (tests (a)–(k)) — the P5.2 races do
+  not stand in for them; the lock-order guard keeps the order deterministic. **Original evidence:** Commits `a68cece` (migrations
   `20261013000500_session_authority` — `identity.permissions_of`, the one permission rule, and the resolver
   `identity.session_authority` — and `20261013000600_assert_authority`; 22 database tests; inventory) and `daa95d6`
   (the API: `authenticate()` calls the resolver instead of `validate_session`, one round trip; `AuthContext.permissions`
@@ -2152,6 +2173,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Reviewer approval — **ADR-16 text** (P5.0 "Done when") | "I approve ADR-16 Part 1, including owner decision B1, for implementation. The database-side permission checks and the removal of direct app SELECTs are required technical controls. Part 2, including the two-year activity-record retention design, remains pending and is not approved by this verdict. The standby database, backups, alerts, and 5-minute / 1-hour recovery targets are P15 obligations, not missing P5 tests." | The independent reviewer, 2026-10-12 | **Approved as written** — the first verdict stated coverage of lines 259–416 (read to 430); the reviewer confirmed the same day: "Yes. I approve ADR-16 Part 1 **as written**, including B1 and the full §3.5 through the frozen contracts, error codes, rollout and decision log (lines 259–499 at `fac08e7`). I found no technical blocker in the previously uncovered portion." Part 2 remains unapproved | ADR-16 decision log; P5.0 |
 | Owner approval — dated note under BR-11.2 (`docs/business/P5_OWNER_RULE_11_2_NOTE.md`) | "Yes, add it as written." | Mayowa Edward Fadahunsi (owner), 2026-10-12 | **Applied** (`a3e801a`) — records D9 in the signed rules; separate from ADR-16; implies no Part 2 approval | BUSINESS_RULES 11.2; TARGET_ARCHITECTURE §16 |
 | Reviewer — **P5.1 completion gate** | "P5.1: approved to close, based on the evidence you've reported. Go ahead with the next package sequence: P5.2, P5.3 and P5.3a, following the approved plan and their individual completion gates." The eight judgement calls accepted (5, 6 and 8 subject to checks); CI has not run | The independent reviewer, 2026-10-12 | **Approved** — checks answered and effective privileges tested in `dfaf579`; each later package stops at its own gate | P5.1 |
+| Reviewer — **P5.2 completion gate** | "P5.2 is approved to close based on the evidence reported. Proceed with P5.3 and P5.3a according to the approved plan, with a separate completion gate for each package." Eight judgement calls accepted (2, 3, 6, 7 with conditions); P5.5 must test the real functions against concurrent revocation; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — boundary check added in `3baa6bf`; conditions answered under P5.2 | P5.2 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
@@ -2201,6 +2223,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 32 | 2026-10-12 | **P5.2 gate approved.** The reviewer approved P5.2 to close on the reported evidence and gave the go for P5.3 and P5.3a, each with its own gate. Follow-up `3baa6bf` checks the resolver's identifiers at the API boundary; the review's conditions are answered under P5.2 (every current revocation path conflicts with the re-check's locks; obligations carried to P5.5). Local runs only; CI has not run. |
 | 31 | 2026-10-12 | **P5.2 built; awaiting review at its gate.** The resolver (`identity.session_authority`, with `identity.permissions_of` as the one permission rule) and the nested write-time re-check (`tenancy.assert_authority`), 22 database tests including three-order revocation races, and the API wiring of `AuthContext.permissions` and `TenantContext.permissions` (`a68cece`, `daa95d6`). Gate passed locally; evidence and eight judgement calls under P5.2. P5.3 and P5.3a wait for the gate review. |
 | 30 | 2026-10-12 | **P5.1 gate approved.** The reviewer approved P5.1 to close on the reported evidence and gave the go for P5.2, P5.3 and P5.3a, each with its own gate. Follow-up `dfaf579` tests effective privileges (role membership, column privileges, PUBLIC) for the three tables and every function, as the review asked; the review's checks are answered under P5.1. Local runs only; CI has not run. |
 | 29 | 2026-10-12 | **P5.1 built; awaiting review at its gate.** The permission catalog (`identity.permission_catalog`, the 16 permissions of §6, protected by a trigger), `tenancy.role_permissions` and `identity.platform_membership_grants` (only active, grantable permissions of the right scope; no app or readonly privilege; no writer), the Prisma models, the storage tests, the execute-grant inventory (R31) and the contracts `PERMISSIONS` list checked against the catalog (`a129f3a`, `fc6fa8b`, `acd73d7`), plus an unrelated CRLF fix to the T14 guard (`aa7d8cf`). Gate passed locally; evidence and eight judgement calls for review under P5.1. Next package (P5.2 ∥ P5.3 ∥ P5.3a) waits for the gate review. |

@@ -284,6 +284,7 @@ rules that make that set finite and checkable:
 
 | # | Category | Mode |
 |---|---|---|
+| 0 | `audit.purge_run_lock` — maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40); never by a request path | `FOR NO KEY UPDATE NOWAIT` |
 | 1 | `identity.platform_memberships` (actor and target, one helper call, sorted) | `FOR SHARE` for the actor; `FOR NO KEY UPDATE` for a target whose row or grants change |
 | 2 | `tenancy.merchants` | `FOR SHARE`; `FOR NO KEY UPDATE` when the merchant row changes (lifecycle, transfer, profile) |
 | 3 | `tenancy.merchant_memberships` — actor and targets together | `FOR NO KEY UPDATE` in writes; `FOR SHARE` in sensitive reads |
@@ -342,6 +343,8 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | branch / role / profile writers | 2: merchant / S (profile: NKU) → 3: actor / NKU → 7: {actor's role} / S, plus the edited role / NKU (one sorted call) → 8: edited branch / NKU | write |
 | `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
 | `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
+| `audit.purge_expired_events` (operator only; R40) | 0: run lock / NKU `NOWAIT` → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
+| `audit.clear_expired_request_metadata` (operator only; R40) | 0: run lock / NKU `NOWAIT` → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
 | `set_platform_grants` (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | 9: rewrite the target's grant rows |
@@ -439,7 +442,7 @@ cycle — PostgreSQL aborts one transaction (no corruption, an avoidable failure
 **Lock-order guard ([Plan], P5.5) — what it covers, and how it is itself tested.** A database test reads every
 function and trigger body from the migrated catalog (`pg_get_functiondef`) and every repository transaction in
 `apps/api/src`, and for each privileged operation computes its **waiting footprint**: explicit `FOR …` clauses (not
-`NOWAIT`), `UPDATE`s and `DELETE`s (implicit row locks), contested inserts, and — recursively — the footprint of every
+`NOWAIT` or `SKIP LOCKED`, which never wait), `UPDATE`s and `DELETE`s (implicit row locks), contested inserts, and — recursively — the footprint of every
 function it calls. It fails if (1) any operation's footprint differs from the planned footprint in the table above, from
 the category order, or from the authority rule (category-level and row-level, as stated above); (2) `FOR UPDATE`, a key update or a `DELETE` of a referenced table appears anywhere (L1/L2);
 (3) a contested insert is followed by any further lock (L3); (4) a trigger function locks anything (L4); (5) a
@@ -771,7 +774,8 @@ and the catalog assigns each atomic pair to exactly one:
     'invitation_link' | 'account_setup', kind }`. The `p_identity_id` argument of `accept_invitation` is only
     compared with the invitation, never written as the actor. The password check of the invitation-link path remains
     in the API (T11), as in P4;
-  - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38, the containment switch #39): actor
+  - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38 and its field clearing #40, the
+    containment switch #39): actor
     `NULL`, as for the bootstrap today.
 
   In every pattern-A function, `request_id`, `ip` and `user_agent` are passed in as **request context**: they are
@@ -844,6 +848,7 @@ once per audience.
 | 37 | `platform.staff_reactivated` *new* (O8(b), rev 12; numbered after the sensitive reads so existing numbers stay stable) | success | A | P5.7 staff function | P5.7 tests |
 | 38 | `platform.audit_purged` *new* (D9, rev 12) | success | A | `audit.purge_expired_events` (operator only, §8.6) | P5.8 tests |
 | 39 | `platform.authorization_containment_set` *new* (R30, rev 13) | success | A | `util.set_authorization_containment` (operator only, §11.1) | P5.5 tests |
+| 40 | `platform.request_metadata_cleared` *new* (R40, rev 16) | success | A | `audit.clear_expired_request_metadata` (operator only, §8.6) | P5.8 tests |
 
 **Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
 
@@ -893,7 +898,7 @@ Error logs carry the event identifier, request id and reason only — never summ
 ### 8.2 Failure classes
 
 This table defines what each class **means**. It is not an event list: **§8.1's inventory is the exhaustive authority**
-for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#39, sensitive read #33–#36, and every
+for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#40, sensitive read #33–#36, and every
 best-effort pair), and the coverage guard compares the catalog with that inventory alone. The examples below are
 illustrative.
 
@@ -1105,25 +1110,30 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
 3. the append-only trigger is changed to allow a `DELETE` **only** when `current_user` is that role **and** the row is
    older than its pair's retention period in the event catalog (two years for every P5 pair), so even a defect in the purge
    function cannot delete a younger row; `UPDATE` stays forbidden for everyone;
-4. `purge_expired_events`, in the same transaction as its deletion, clears (CF4) — an `UPDATE` of non-key columns, outside every request path — exactly
-   these, with `cutoff = p_as_of − 2 years` (R37):
-   - `identity.sessions`: `created_ip` and `user_agent` set to `NULL` where the session has **ended** — revoked
-     (`revoked_at IS NOT NULL`) or past its absolute expiry (`absolute_expires_at <= p_as_of`) — **and** it ended before
-     the cutoff: `COALESCE(revoked_at, absolute_expires_at) < cutoff` (a revoked session ends at `revoked_at`, which
-     the session-revocation CHECK pairs with `revoke_reason`; an unrevoked one at `absolute_expires_at`). An active
-     session — unrevoked with `absolute_expires_at > p_as_of` — never qualifies, whatever its age;
+4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_as_of)`, run once per
+   purge run after the deletion pages, in its own transaction with its own event (#40), clears (CF4) — an `UPDATE` of
+   non-key columns, outside every request path — exactly these, **tokens first, then sessions** (lock categories 5
+   then 10), each row selected `FOR NO KEY UPDATE SKIP LOCKED` and then updated by id, so a row a request transaction
+   holds is skipped and cleared by the next run (R40), with `cutoff = p_as_of − 2 years` (R37):
    - `identity.one_time_tokens`: `requested_ip` set to `NULL` where the link was sent before the cutoff
      (`created_at < cutoff`, the owner's "two years after a link was sent", CF4) **and** the token can no longer be used —
      consumed (`consumed_at IS NOT NULL`) or expired (`expires_at <= p_as_of`). A still-valid token never qualifies;
      [Fact] token lifetimes are capped at 24 hours by the live `issue_one_time_token`
      (`20261004000200_account_setup_tokens`: verification and account setup 24 h, reset 30 min), so this is a
      safeguard, not a common case;
+   - `identity.sessions`: `created_ip` and `user_agent` set to `NULL` where the session has **ended** — revoked
+     (`revoked_at IS NOT NULL`) or past its absolute expiry (`absolute_expires_at <= p_as_of`) — **and** it ended before
+     the cutoff: `COALESCE(revoked_at, absolute_expires_at) < cutoff` (a revoked session ends at `revoked_at`, which
+     the session-revocation CHECK pairs with `revoke_reason`; an unrevoked one at `absolute_expires_at`). An active
+     session — unrevoked with `absolute_expires_at > p_as_of` — never qualifies, whatever its age;
    - no other column and no other table is touched;
 5. `EXECUTE` is granted to the operator role only (`alphakolect_migrator`), **never** to `alphakolect_app` — no
    request path can delete audit rows;
-6. each run writes one atomic event, `platform.audit_purged` (#38, pattern A, actor `NULL` as for the operator
-   bootstrap #15), one per page, with `p_as_of`, the page digest, whether an export was made, the number of rows
-   deleted per pair and the number of session and token fields cleared, in the same transaction as the deletion;
+6. each deletion page writes one atomic event, `platform.audit_purged` (#38, pattern A, actor `NULL` as for the
+   operator bootstrap #15), with `p_as_of`, the page digest, whether an export was made and the number of rows
+   deleted per pair, in the same transaction as the deletion; the field clearing writes its own atomic event,
+   `platform.request_metadata_cleared` (#40, pattern A, actor `NULL`), with `p_as_of` and the numbers of session and
+   token rows cleared — one writer per pair, as the coverage guard requires;
 7. **the operator command and its failure semantics (R36).** One run, in this order:
    1. fix `p_as_of` once, at the start, and read **every** page of `purge_candidates` (ids, texts, page digests);
    2. **if the owner asked for a report:** write all pages to a new file at the path the operator names (never in the
@@ -1136,9 +1146,32 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
       stops; pages already committed were deleted exactly as exported. **Invariant: every row ever deleted is a row of
       a verified report** (when one was requested), and the report covers every row of the run, deleted or not; a
       repeat run exports the remaining rows again;
-   4. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
+   4. after the last page, call `clear_expired_request_metadata(p_as_of)` (no export: these fields are not part of
+      the report the owner asked for, and clearing destroys no row);
+   5. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
       file holds personal data until delivered: the written D9 policy states who holds it, how it reaches the owner and
       when it is destroyed.
+
+   **Purge lock footprint (R40) — inside the global order, and never waiting.** Every purge transaction
+   (`purge_expired_events`, `clear_expired_request_metadata`) first takes the one row of `audit.purge_run_lock`
+   `FOR NO KEY UPDATE NOWAIT` — category **0**, maintenance only, never touched by a request path — so a second
+   concurrent run fails at once (`lock_not_available`) and does nothing. Its other locks:
+   - **audit rows (deletion by id):** a `DELETE` locks the rows it removes, but nothing else ever locks
+     `audit.audit_events` rows — request paths only insert new rows, no foreign key references the table, `UPDATE`
+     and every other `DELETE` are refused by the append-only trigger, and a second purge is excluded by the run
+     lock — so these deletes cannot wait;
+   - **category 5, then category 10 (field clearing):** `SKIP LOCKED`, so they cannot wait either. [Fact] Request
+     paths never lock an eligible token (consumption and supersession touch only unconsumed, unexpired tokens:
+     `20261003000200:80-89`, `20261004000200:43-45`), but they **can** lock an eligible session: revocations update
+     `… WHERE revoked_at IS NULL`, which includes sessions past their absolute expiry
+     (`20261003000200:124`, `20261003000300:159,171`, `20261011000200:111`, `20261011000300:94`) — those rows are
+     skipped and cleared by a later run.
+
+   A transaction that never waits cannot be part of a deadlock; request transactions may wait briefly for a purge
+   that holds a row, which is a one-way wait. The lock-order guard checks both purge functions against their
+   planned-footprint rows (§7.2) like any other operation — no exemption — and verifies the facts this relies on: no
+   function other than the purge locks, updates or deletes `audit.audit_events` rows, and no foreign key references
+   the table.
 
    A report can therefore never be lost to a deletion: deletion requires a verified report when one was requested, and
    it deletes only rows, identified by id, that the report contains. Until a job runner exists (P12) the command is run by hand; the D9
@@ -1160,7 +1193,10 @@ second connection holds a transaction that inserts an already-eligible (backdate
 `purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
 delete (the test pauses the purge between the two statements): the late row is not deleted, is absent from the
 report, and is exported and deleted by the next run; a failure stopping a multi-page run after its first page leaves
-the later pages' rows in place and fully covered by the verified report; the lock-order and writer guards
+the later pages' rows in place and fully covered by the verified report; **purge locking (R40)** — two purge runs
+started together: the second fails at once with `lock_not_available` and changes nothing; a request revoking an
+expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
+`40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
 classify both functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
@@ -1177,7 +1213,7 @@ when each migration is written.
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`, `audit.purge_candidates`, `audit.purge_expired_events`,
-`util.set_authorization_containment`); the
+`audit.clear_expired_request_metadata`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
@@ -1188,7 +1224,7 @@ app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Th
 |---|---|---|
 | schema `audit` | `USAGE` | its own functions and tables |
 | schema `identity` | `USAGE` | the field clearing of CF4 — [Fact] today only `alphakolect_app` has it (`20261003000200:7`) |
-| `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 event |
+| `audit.audit_events` | `SELECT`, `DELETE`, `INSERT` | eligibility and export; deletion by id; its #38 and #40 events |
 | `audit.event_catalog` | `SELECT` | retention periods |
 | `audit.purge_run_lock` (one row, §8.6) | `SELECT`, `UPDATE` | the run lock (`FOR NO KEY UPDATE NOWAIT` needs `UPDATE`) |
 | `identity.sessions` | `SELECT (id, revoked_at, absolute_expires_at)`, `UPDATE (created_ip, user_agent)` | CF4 clearing |
@@ -1197,8 +1233,9 @@ app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Th
 [Fact] No `identity` table has row-level security (RLS is enabled only on tenancy, ledger and audit tables,
 `20260927000400`, `20261003000100:276`, `20261009000300:71,78`, `20261012000100:84`), so the column grants
 above are the whole boundary there. On `audit.audit_events` its RLS policies allow `SELECT` and `DELETE` of rows
-older than their retention period and `INSERT` of the tenant-less `platform.audit_purged` event only. **Tests:** the
-purge succeeds end to end when its functions run as their owner, the purger (export, deletion, field clearing, #38);
+older than their retention period and `INSERT` of the tenant-less `platform.audit_purged` and
+`platform.request_metadata_cleared` events only. **Tests:** the
+purge succeeds end to end when its functions run as their owner, the purger (export, deletion, field clearing, #38 and #40);
 with any one of the grants above removed in a scratch copy of the role, the step that needs it fails with
 `insufficient_privilege`; and a test enumerates its privileges across every table, column, sequence, function and
 schema and fails on anything not in the table.
@@ -1312,7 +1349,7 @@ independent of the permission catalog); it is listed with them so it is complete
   template-built identifier anywhere else fails the writer guard. The coverage guard
   accepts exactly these pairs from exactly those call sites through a **closed transitional list** in the guard; P5.5
   empties the list and deletes it, and from then on the guard fails if it exists. No other pair may use it. New pairs
-  (#21, #30–#39, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
+  (#21, #30–#40, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
   that writer and its tests.
 - **Tests:** every row of the §8.1 entry-point table for each entry point (unknown identifier, known event of another
   class — atomic and sensitive-read events through `recordBestEffort` — invalid outcome, disallowed and over-length
@@ -1463,7 +1500,7 @@ independent of the permission catalog); it is listed with them so it is complete
 ### P5.8 — Audit reads (and O9 list pagination)
 
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38) — both functions and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its three functions and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor

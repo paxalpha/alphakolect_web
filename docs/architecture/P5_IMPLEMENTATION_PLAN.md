@@ -1274,7 +1274,26 @@ The exception is:
    undelivered report (id, run, request, count, SHA-256, recorded path) straight from the database, so a report whose
    run stopped after confirming — even after deleting some pages — is found and delivered from there; nothing
    depends on the operator having kept the command's output. Each request and each delivery writes an atomic event
-   (#42 `platform.purge_report_requested`, #41 `platform.purge_report_delivered`). So the guarantee no longer depends on timing:
+   (#42 `platform.purge_report_requested`, #41 `platform.purge_report_delivered`).
+
+   **State rules, enforced by the database (rev 20; R47).** Every table here has a fixed shape and fixed transitions:
+   - `audit.purge_reservation` holds **exactly one row** — key `id boolean PRIMARY KEY DEFAULT true CHECK (id)`,
+     inserted by its migration, never deleted; a second row is impossible.
+   - `audit.purge_report_requests`: **at most one open request** (R47) — a partial unique index on `((true)) WHERE
+     satisfied_at IS NULL`. `request_purge_report` first takes the reservation row `NOWAIT`, so concurrent requests
+     serialize, and if a request is already open it refuses with `report_request_open` and returns that request's id;
+     the index is the backstop. A request moves only from open to satisfied, never back.
+   - `audit.purge_reports`: **at most one report per run** (`UNIQUE (run_id)`), linked at confirmation to the single
+     open request; confirmed once and delivered once (a second confirmation or delivery is refused); never deleted.
+     These rows hold a path, a hash and counts — no personal data.
+   - **A run with nothing eligible** confirms no report and deletes nothing; an open request stays open for the next
+     run that has rows to delete.
+   - `util.authorization_containment` (§11.1) uses the same one-row key and is inserted by its migration.
+
+   Tests: two concurrent `request_purge_report` calls create exactly one request (the other is refused or gets
+   `lock_not_available`); a request while one is open returns `report_request_open` with its id; a second confirmation
+   for the same run and a second delivery of the same report are refused; a run with no eligible rows leaves the
+   request open and writes no report; inserting a second row into either one-row table fails. So the guarantee no longer depends on timing:
    - a run that **takes over** an expired reservation inherits the pending request and cannot delete anything until it
      has exported, verified and confirmed **its own** report — the stalled run's partial file never authorizes a
      deletion, and that run is refused at its next database call;

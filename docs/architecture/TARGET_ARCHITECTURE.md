@@ -412,6 +412,38 @@ actors, proven by the P4 matrix), then the single database enforcement migration
 is forward-only; an over-grant is contained with the switch (A11) and corrected forward; an application version older
 than the enforcement migration is never run.
 
+#### Decision log (moved from the P5 plan §14 in P5.0)
+
+Every decision behind this section, with who made it, when, the source and the commit that applied it. The owner is
+Mayowa Edward Fadahunsi; his answers were written on the forms in `docs/business/` and relayed by Olamide Fadahunsi
+(project lead); the owner confirmed and signed them on the confirmation form (CF1, 2026-10-12). Entries about the
+retention **design** take effect with the Part 2 addendum; the decisions themselves are recorded here.
+
+| Item | Decision | Decision-maker, date | Source | Applied in |
+|---|---|---|---|---|
+| D1 | Assigned-customer authorization for agents moves to P7/P8 | owner, 2026-10-11 | `P5_AUDIT_REPORT.md` §22.4 | `890e59a` |
+| D4 | Platform grants per person, no defaults; merchant lifecycle, ownership transfer and platform staff management super-admin only | owner, 2026-10-11 | `P5_AUDIT_REPORT.md` §22.4 | `890e59a` |
+| D5′ | Role editing owner-only (D5); inviting, cancelling invitations, changing a member's role or branch and (de)activating members owner-only — supersedes D5's staff-delegation clause; the owner may give one branch or all | owner, 2026-10-11/12 | questions A1; follow-up F1a–b | `8f15ceb`, `00724ec`; plan `8b17657` |
+| D8′ | The business activity record is owner-only, always — supersedes D8 (grantable) | owner, 2026-10-12 | questions A2a; follow-up F2 | `8f15ceb`, `00724ec`; plan `8b17657` |
+| D2, D3, D6, D7, D10, D11, D12 | Permissions per phase; read/manage per area; archived roles grant nothing; fail closed for branch restriction; security changes atomic with their record, sign-in failures best effort; actor from the validated session; write-time re-check | owner, confirmed 2026-10-11 | questions E1–E4, E6–E8 | `8f15ceb`; plan `8b17657` |
+| O3 | The activity record shows every event of the owner's business, including refused attempts, filterable by person | owner, 2026-10-12 | questions A2b–c; follow-up F2 | plan `8b17657` |
+| O6 | Successes of forgot-password and resend-verification are best effort | owner, 2026-10-11 | relayed in review of plan rev 7 | plan `331a9d4` |
+| O7 | Branch ceiling for delegation — resolved by D5′ (no staff delegation) | — | follow-up F1 | plan `8b17657` |
+| O8 | (a) Platform staff only from an email without an account; (b) reactivation restores the membership with no grants | owner, 2026-10-11 | questions B1, B2 | `8f15ceb`; plan `8b17657` |
+| O9 | Members and invitations lists paginated in P5 | owner, 2026-10-11 | questions C1 | `8f15ceb`; plan `8b17657` |
+| CF3 | Platform and business accounts kept apart both ways | owner, 2026-10-12 | confirmation CF3 | `fa5a22f`; plan `8b17657` |
+| CF5 | Business owners never see the platform team's IP address or device | owner, 2026-10-12 | confirmation CF5 | `fa5a22f`; plan `8b17657` |
+| D9 — purpose and visibility | IP address and user agent kept to investigate break-ins and settle disputes; visible to each business owner for their own business's people and to the super admin; never to platform staff | owner, 2026-10-11/12 | questions D1–D2; follow-up F3 | `8f15ceb`, `00724ec`; plan `8b17657` |
+| D9 — retention | Every activity entry kept two years, then deleted in full, existing entries included; a copy of entries due for deletion on request, no copy kept; the same two-year rule for IP and device details kept with sign-ins and links (CF4) — **implemented by Part 2** | owner, 2026-10-11/12 | questions D3–D5; follow-up F4; confirmation CF2, CF4 | `fa5a22f`; plan `8b17657` |
+| CF1 | All earlier answers confirmed and signed | owner, 2026-10-12 | confirmation CF1 | `fa5a22f` |
+| O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` — **open by design** |
+| O10–O12 | Backup retention, the report copy's handling, a privacy notice | — | `P5_OWNER_PRIVACY_QUESTIONS.md` | `4b4ece9` — **open**, needed at P5.8 step (e) |
+| Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk; atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
+| Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |
+| Owner go-ahead G1 | "yes, start now with Part 1." | owner, 2026-10-12 | `P5_OWNER_GO_AHEAD.md` | `951b909`; plan `c533e58` |
+| Reviewer — Part 2 | — | — | — | **pending** |
+| ADR-16 text | Approval of this section as written for Part 1 (P5.0's completion rule) | — | — | **pending** |
+
 ---
 
 ## 4. Multi-tenancy model

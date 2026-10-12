@@ -1738,7 +1738,10 @@ independent of the permission catalog); it is listed with them so it is complete
   counts, limitations, deviations); the owner-approved D9 written policy (§8.6) in place; the **as-built P5
   threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
   design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
-  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); full gate twice;
+  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); **operator runbooks** in
+  `docs/operations/` for `audit:purge` (requesting a report, running, recovering a stopped run, listing and recording
+  deliveries) and `admin:containment` (when to set and lift it; the §11.1 procedure), each command shown with its exact
+  invocation and expected output; full gate twice;
   gitleaks over full history; the three review documents are already committed on this branch as planning records —
   whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
 - **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.

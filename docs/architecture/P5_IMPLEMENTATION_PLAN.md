@@ -1745,6 +1745,45 @@ independent of the permission catalog); it is listed with them so it is complete
   query parameters: valid values reach the handler typed, invalid or unknown ones are refused with 400 before any
   handler or database call, and a contract without `query` still receives none; oasdiff non-breaking.
 - **Done when:** declarations are complete and machine-checked.
+- **Built 2026-10-12 — awaiting review at the P5.3 gate.** Commits `8adec6f` (the required `authorization` field in
+  the registry; the 44 declarations of the frozen route map, every permission endpoint `merchant_wide`; the additive
+  OpenAPI extension `x-authorization`; the router's startup refusal) and `277d389` (query-parameter validation, the
+  validator mounted in front of every endpoint). No migration; nothing is enforced from the declarations yet (P5.4).
+  **Tests:** the 44 declarations equal the frozen map; twelve kinds of invalid declaration are each named and refused;
+  `buildV1Router` itself refuses an invalid entry of the real registry; `x-authorization` equals every contract's
+  declaration; query parameters: typed values and defaults reach the handler, six invalid cases (out of range, wrong
+  type, outside the enum, repeated, empty, unknown) are refused with 400 before the handler, an unknown parameter is
+  named without its value, a contract without `query` receives none; route parity expects the validator on every
+  endpoint. **Gate (§9.3), local, on the tree of `277d389`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 400, api 420, all passing; oasdiff 1.32.1 against `origin/main`:
+  no breaking changes (the spec only gains `x-authorization`, no line removed); gitleaks clean per commit; the first
+  commit was tested on its own (typecheck, lint, contracts 62, api 412). Not CI. **Mutation checks** (restored
+  byte-identical): the router's startup check removed; one endpoint reclassified; the unknown-parameter check removed;
+  an undeclared query passed through; the audience-versus-permission check removed — each fails the tests.
+  **Judgement calls for the reviewer:**
+  (1) **the route-parity assertion for the authorization middleware moves to P5.4.** This package's test list asks
+  that route parity assert "the authorization middleware is mounted for every `permission` endpoint and only there",
+  but that middleware (`authorize`) and its mounting are P5.4's code (§10 P5.4: "router mounts it from the
+  registry"). Mounting an enforcing middleware now would pre-empt the handlers' audited owner checks before P5.3a and
+  P5.4's equivalence oracle; mounting a placeholder would be fail-open by construction. P5.3 delivers the declarations
+  and the startup refusal; P5.4 mounts the middleware and adds that parity assertion;
+  (2) the validator now runs in front of **every** endpoint (a uniform rule), not only those with a body or path
+  parameters;
+  (3) "refused with 400 before any handler or database call": for secured endpoints authentication — one database
+  call, the resolver — still runs before validation, by design (an unauthenticated caller learns nothing from
+  validation errors); validation precedes every handler and every handler's database call;
+  (4) for a contract **without** `query`, parameters in the URL are dropped (the handler receives none), not refused —
+  refusing would break clients that send, for example, cache-busting parameters to today's endpoints; a contract
+  **with** `query` refuses unknown ones;
+  (5) the startup check is stricter than listed: public and capability endpoints must have the public audience and no
+  session; self and permission endpoints must have a session and a non-public audience; a permission must belong to
+  the endpoint's audience; a permission endpoint never admits an MFA-enrolment session; no field foreign to the class;
+  (6) platform permission endpoints declare `merchant_wide` (read: "not narrowed by a branch restriction"), as every
+  permission endpoint must declare a branch scope (§7.6);
+  (7) a `branch` scope is refused at startup throughout P5, since no resolver for a resource's branch exists until
+  branch-owned resources (P7/P8);
+  (8) capability endpoints keep the public audience and no `security`: the capability (credentials, token or
+  challenge) is checked by the handler, as in P3.
 
 ### P5.3a — Audit foundation (moved ahead of P5.4 in rev 10)
 
@@ -2223,6 +2262,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 33 | 2026-10-12 | **P5.3 built; awaiting review at its gate.** Every endpoint declares its authorization (the frozen route map, published as `x-authorization`), the router refuses to start on a missing or invalid declaration, and query parameters are validated from the contract with unknown ones refused (`8adec6f`, `277d389`). Gate passed locally; evidence and eight judgement calls under P5.3 — notably, the route-parity assertion for the authorization middleware moves to P5.4, where that middleware is built. P5.3a waits for the gate review. |
 | 32 | 2026-10-12 | **P5.2 gate approved.** The reviewer approved P5.2 to close on the reported evidence and gave the go for P5.3 and P5.3a, each with its own gate. Follow-up `3baa6bf` checks the resolver's identifiers at the API boundary; the review's conditions are answered under P5.2 (every current revocation path conflicts with the re-check's locks; obligations carried to P5.5). Local runs only; CI has not run. |
 | 31 | 2026-10-12 | **P5.2 built; awaiting review at its gate.** The resolver (`identity.session_authority`, with `identity.permissions_of` as the one permission rule) and the nested write-time re-check (`tenancy.assert_authority`), 22 database tests including three-order revocation races, and the API wiring of `AuthContext.permissions` and `TenantContext.permissions` (`a68cece`, `daa95d6`). Gate passed locally; evidence and eight judgement calls under P5.2. P5.3 and P5.3a wait for the gate review. |
 | 30 | 2026-10-12 | **P5.1 gate approved.** The reviewer approved P5.1 to close on the reported evidence and gave the go for P5.2, P5.3 and P5.3a, each with its own gate. Follow-up `dfaf579` tests effective privileges (role membership, column privileges, PUBLIC) for the three tables and every function, as the review asked; the review's checks are answered under P5.1. Local runs only; CI has not run. |

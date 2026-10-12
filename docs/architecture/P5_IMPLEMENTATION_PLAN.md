@@ -1119,7 +1119,7 @@ The exception is:
      eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its canonical text
      (`to_jsonb(row)::text`), and a SHA-256 digest the database computes over those texts joined by newlines in that
      order — the exact bytes the report file contains for that page, so the digest can be recomputed from the file;
-   - `audit.purge_expired_events(p_as_of, p_ids, p_expected_digest)` — **deletes by identity, never by predicate
+   - `audit.purge_expired_events(p_run_id, p_as_of, p_ids, p_expected_digest)` — **deletes by identity, never by predicate
      (R38).** It takes the exact ids of one page as exported and verified, re-reads **those** rows, and raises —
      deleting nothing — unless every id exists, every row is still eligible as of `p_as_of`, and the digest of their
      canonical texts equals `p_expected_digest`; then it deletes `WHERE id = ANY(p_ids)` and raises unless the
@@ -1135,7 +1135,7 @@ The exception is:
    older than its pair's retention, `COALESCE(retention_override, audit.d9_retention())` (R41, R42), so even
    a defect in the purge
    function cannot delete a younger row; `UPDATE` stays forbidden for everyone;
-4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_as_of)`, run once per
+4. a third operator-only function owned by the purger, `audit.clear_expired_request_metadata(p_run_id, p_as_of)`, run once per
    purge run after the deletion pages, in its own transaction with its own event (#40), clears (CF4) — an `UPDATE` of
    non-key columns, outside every request path — exactly these, **tokens first, then sessions** (lock categories 5
    then 10), each row selected `FOR NO KEY UPDATE SKIP LOCKED` and then updated by id, so a row a request transaction

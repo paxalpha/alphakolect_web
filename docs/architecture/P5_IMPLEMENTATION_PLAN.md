@@ -1086,14 +1086,20 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
    `occurred_at < p_as_of − its pair's retention period`. Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
-   - `audit.purge_candidates(p_as_of)` — read-only: returns the eligible rows in `id` order, each as its canonical
-     text (`to_jsonb(row)::text`), their count, and a SHA-256 digest the database computes over those texts joined
-     by newlines in that order — the exact bytes the report file contains, so the digest can be recomputed from the
-     file;
-   - `audit.purge_expired_events(p_as_of, p_expected_count, p_expected_digest)` — recomputes count and digest over
-     the rows eligible as of `p_as_of`, and **deletes nothing** (raises) unless both equal the expected values; then
-     deletes exactly those rows. Without a requested export the operator command passes the values it has just read
-     from `purge_candidates`, so the same check guards every run. `purge_candidates` writes no event of its own: it is
+   - `audit.purge_candidates(p_as_of, p_after_id, p_limit)` — read-only, paged by `id`: returns up to `p_limit`
+     eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its canonical text
+     (`to_jsonb(row)::text`), and a SHA-256 digest the database computes over those texts joined by newlines in that
+     order — the exact bytes the report file contains for that page, so the digest can be recomputed from the file;
+   - `audit.purge_expired_events(p_as_of, p_ids, p_expected_digest)` — **deletes by identity, never by predicate
+     (R38).** It takes the exact ids of one page as exported and verified, re-reads **those** rows, and raises —
+     deleting nothing — unless every id exists, every row is still eligible as of `p_as_of`, and the digest of their
+     canonical texts equals `p_expected_digest`; then it deletes `WHERE id = ANY(p_ids)` and raises unless the
+     number deleted equals the number of ids. Audit rows are immutable (append-only), so rows identified by id cannot
+     change between the check and the delete. An eligible row that commits **after** the page was read — possible,
+     because `occurred_at` is its transaction's **start** time, so a long transaction can commit an already-old event
+     late — is not in `p_ids` and is therefore never deleted by this run: it stays for the next run, which exports it
+     first. Without a requested export the operator command passes the ids and digest it has just read from
+     `purge_candidates`, so the same check guards every run. `purge_candidates` writes no event of its own: it is
      reachable only by the operator role, which as the table owner can already read the table, and each run's export
      is recorded in its #38 event;
 3. the append-only trigger is changed to allow a `DELETE` **only** when `current_user` is that role **and** the row is
@@ -1116,25 +1122,26 @@ append-only for every role (grant and trigger, `20260927000300:142-147`). The ex
 5. `EXECUTE` is granted to the operator role only (`alphakolect_migrator`), **never** to `alphakolect_app` — no
    request path can delete audit rows;
 6. each run writes one atomic event, `platform.audit_purged` (#38, pattern A, actor `NULL` as for the operator
-   bootstrap #15), with `p_as_of`, the digest, whether an export was made, the number of rows deleted per pair and the
-   number of session and token fields cleared, in the same transaction as the deletion;
+   bootstrap #15), one per page, with `p_as_of`, the page digest, whether an export was made, the number of rows
+   deleted per pair and the number of session and token fields cleared, in the same transaction as the deletion;
 7. **the operator command and its failure semantics (R36).** One run, in this order:
-   1. call `purge_candidates(p_as_of)` (`p_as_of` fixed once, at the start);
-   2. **if the owner asked for a report:** write the rows to a new file at the path the operator names (never in the
+   1. fix `p_as_of` once, at the start, and read **every** page of `purge_candidates` (ids, texts, page digests);
+   2. **if the owner asked for a report:** write all pages to a new file at the path the operator names (never in the
       repository or on the server), flush it to disk (`fsync` of the file and its directory), read it back, and check
-      that it holds exactly the returned count and that its rows reproduce the database's digest; record the file's own
-      SHA-256. Any failure here — unwritable path, full disk, interrupted process, mismatch — **ends the run before
-      any deletion**; nothing is deleted and the run can simply be repeated;
-   3. only then call `purge_expired_events(p_as_of, count, digest)` in its own transaction. If it raises (the
-      eligible set changed, a summary-event failure, any error) or the commit fails, **nothing is deleted** and the
-      verified file remains, harmlessly, for a repeat run. If it commits, the deleted rows are exactly the rows in the
-      verified file;
+      that every page's rows reproduce that page's database digest; record the file's own SHA-256. Any failure here —
+      unwritable path, full disk, interrupted process, mismatch — **ends the run before any deletion**; nothing is
+      deleted and the run can simply be repeated;
+   3. only then, page by page, call `purge_expired_events(p_as_of, page ids, page digest)`, each in its own
+      transaction with its own #38 event. If a call raises or its commit fails, that page deletes nothing and the run
+      stops; pages already committed were deleted exactly as exported. **Invariant: every row ever deleted is a row of
+      a verified report** (when one was requested), and the report covers every row of the run, deleted or not; a
+      repeat run exports the remaining rows again;
    4. the command prints the file path, its SHA-256 and the counts for the owner's delivery; it keeps nothing. The
       file holds personal data until delivered: the written D9 policy states who holds it, how it reaches the owner and
       when it is destroyed.
 
    A report can therefore never be lost to a deletion: deletion requires a verified report when one was requested, and
-   it deletes only the rows that report contains. Until a job runner exists (P12) the command is run by hand; the D9
+   it deletes only rows, identified by id, that the report contains. Until a job runner exists (P12) the command is run by hand; the D9
    written policy states how often.
 
 Tests: rows younger than their retention period always survive, whatever `p_as_of`; a `p_as_of` in the future is
@@ -1148,7 +1155,12 @@ failure of its insert rolls the deletion back; **export failure semantics (R36)*
 simulation, a process killed between the export and the deletion, and a read-back mismatch each leave every row in
 place; an eligible set changed between `purge_candidates` and `purge_expired_events` (a backdated row inserted by
 the test) makes the purge raise and delete nothing; a failure injected on #38 rolls the deletion back and leaves the
-verified file; a successful run deletes exactly the rows in the file (count and digest); the lock-order and writer guards
+verified file; a successful run deletes exactly the rows in the file (ids and digest); **late-commit race (R38)** — a
+second connection holds a transaction that inserts an already-eligible (backdated) event and commits it **after**
+`purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
+delete (the test pauses the purge between the two statements): the late row is not deleted, is absent from the
+report, and is exported and deleted by the next run; a failure stopping a multi-page run after its first page leaves
+the later pages' rows in place and fully covered by the verified report; the lock-order and writer guards
 classify both functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 

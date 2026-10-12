@@ -1975,8 +1975,9 @@ decision-maker, the date, the source, the selected option, the affected contract
 | CF5 | Platform actors' IP/user agent hidden from business owners (§8.5) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Show your team's action, but not your team's internet address or device." | §8.5; P5.8 |
 | Implementation approval (§12) | Conditional go-ahead line on the confirmation form | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Not yet given** — the owner wrote: "yes, build it, but wait for my final go-ahead after the reviewer approves the plan" | §12 |
 
-**Every owner decision is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`, signed by Mayowa Edward
-Fadahunsi on 2026-10-12). What remains is not a decision but two approvals: the reviewer's final verdict on the
+**Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
+signed by Mayowa Edward Fadahunsi on 2026-10-12). **Still open:** O10–O12, the privacy questions of
+`docs/business/P5_OWNER_PRIVACY_QUESTIONS.md` (rev 19), needed only by the D9 written policy at P5.8 step (e). What remains is not a decision but two approvals: the reviewer's final verdict on the
 complete document, then the owner's final go-ahead (§12). O4 is decided at P5.8 step 2 on measured evidence, by
 design. P5.0 then moves this log into ADR-16, adding the applying commit of each entry.
 

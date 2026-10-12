@@ -58,6 +58,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.revoke_session(uuid, text)': APP,
   'identity.rotate_refresh_token(text, text, integer, text[])': APP,
   'identity.selection_choices(text)': APP,
+  'identity.session_authority(uuid)': APP, // P5.2: the per-request resolver
   'identity.signup_merchant_owner(text, text, text)': APP,
   'identity.take_mfa_challenge_attempt(text)': APP,
   'identity.take_selection(text, uuid)': APP,
@@ -72,6 +73,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.eligible_memberships(uuid, text)': OWNER_ONLY,
   'identity.protect_permission_catalog()': OWNER_ONLY,
   'identity.session_limits(text, text)': OWNER_ONLY,
+  'identity.permissions_of(text, text, text, uuid, uuid, uuid)': OWNER_ONLY, // P5.2: inner, the one permission rule
   // tenancy
   'tenancy.accept_invitation(text, uuid)': APP,
   'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer)': APP,
@@ -81,6 +83,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean)': APP,
   'tenancy.update_membership(uuid, uuid, text, uuid, uuid)': APP,
   'tenancy.admit_invitation(uuid, uuid)': OWNER_ONLY,
+  'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
   // ledger (P1 invariants: trigger and its check, never called by the app)
   'ledger.assert_entry_balanced(uuid)': OWNER_ONLY,

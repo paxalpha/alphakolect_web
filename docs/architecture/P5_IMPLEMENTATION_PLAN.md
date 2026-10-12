@@ -1098,7 +1098,8 @@ calendar rule gives the natural answer — a cutoff computed on 29 February 2028
 The exception is:
 
 1. a dedicated `NOLOGIN` role, `alphakolect_audit_purger`, is the only role with `DELETE` on the table;
-2. two functions, both owned by that role (`SECURITY DEFINER`, pinned `search_path`), operator-only, define
+2. two functions, both owned by that role (`SECURITY DEFINER`, pinned `search_path` and `TimeZone`, R41),
+   operator-only, define
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
    `occurred_at < p_as_of − its pair's retention period`. Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
@@ -1180,7 +1181,7 @@ The exception is:
      skipped and cleared by a later run.
 
    A transaction that never waits cannot be part of a deadlock; request transactions may wait briefly for a purge
-   that holds a row, which is a one-way wait. The lock-order guard checks both purge functions against their
+   that holds a row, which is a one-way wait. The lock-order guard checks both locking purge functions (`purge_candidates` takes no lock) against their
    planned-footprint rows (§7.2) like any other operation — no exemption — and verifies the facts this relies on: no
    function other than the purge locks, updates or deletes `audit.audit_events` rows, and no foreign key references
    the table.
@@ -1194,7 +1195,7 @@ audit deletion, the trigger's age check, session clearing and token clearing ali
 not eligible and one microsecond earlier is; `p_as_of` on 29 February 2028 gives the cutoff 28 February 2026; the same
 result under two different session time zones; changing `audit.d9_retention()` in a scratch copy moves all four
 together; a `p_as_of` in the future is
-refused; the app role cannot execute either function or delete directly;
+refused (by all three functions); the app role cannot execute any of the three functions or delete directly;
 an `UPDATE` of `audit.audit_events` refused for every role including the purger, and a `DELETE` by any role other
 than the purger (the table owner included) refused; **eligibility (R37)** — old and recent sessions, active
 (unrevoked, unexpired), revoked and absolutely expired sessions, revoked or expired less than two years ago, and
@@ -1202,8 +1203,9 @@ consumed, expired and still-valid tokens (a still-valid token backdated in the t
 eligible rows change, every other column and row is unchanged; the summary event commits with the deletion and a
 failure of its insert rolls the deletion back; **export failure semantics (R36)** — an unwritable path, a disk-full
 simulation, a process killed between the export and the deletion, and a read-back mismatch each leave every row in
-place; an eligible set changed between `purge_candidates` and `purge_expired_events` (a backdated row inserted by
-the test) makes the purge raise and delete nothing; a failure injected on #38 rolls the deletion back and leaves the
+place; **page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
+`p_as_of`, or a digest that does not match makes `purge_expired_events` raise and delete nothing, while an eligible
+row that arrived after the page was read is simply not in the page and is left for the next run; a failure injected on #38 rolls the deletion back and leaves the
 verified file; a successful run deletes exactly the rows in the file (ids and digest); **late-commit race (R38)** — a
 second connection holds a transaction that inserts an already-eligible (backdated) event and commits it **after**
 `purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
@@ -1213,7 +1215,7 @@ the later pages' rows in place and fully covered by the verified report; **purge
 started together: the second fails at once with `lock_not_available` and changes nothing; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
-classify both functions (operator-only, outside every request path). **P5 still cannot close without the owner's
+classify all three functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates

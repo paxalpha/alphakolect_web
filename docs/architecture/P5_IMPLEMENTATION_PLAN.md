@@ -1404,7 +1404,11 @@ schema and fails on anything not in the table.
 `pnpm format:check` · `pnpm lint` · `pnpm typecheck` · `pnpm build` · `pnpm --filter @alphakolect/contracts
 openapi:check` · `pnpm test` · CI-mode oasdiff 1.32.1 against `origin/main` (0 errors) · gitleaks staged scan per
 commit and full history at closure. Results are recorded with the commit they ran on; local runs are never reported
-as CI.
+as CI. **Test budget ([Assumption], confirmed at the start of P5.5).** P4 hit out-of-memory failures in test setup
+(RESTRUCTURING_MAP, P4.8 incident), and P5 adds many two-connection suites repeated 50 times. If they do not fit
+`pnpm test` within the machine's memory and a reasonable time, they move to a separate script (`test:concurrency`)
+that is **part of the gate** for every package that touches locking — never skipped, never run with fewer repetitions
+without a recorded decision — and the change is noted in the package's evidence.
 
 ### 9.4 Signals — what "metric" and "counted" mean in P5
 

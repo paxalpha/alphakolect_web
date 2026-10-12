@@ -1941,6 +1941,23 @@ audit report, the review handoff, the evidence pack, owner questionnaires and th
 committed to this branch as they are written (R23); they change no behaviour. Nothing is pushed or merged without the
 owner, in either case.
 
+**Staged approval — a proposal for the reviewer and the owner (rev 22).** Since revision 16 every review finding has
+concerned §8.6 — mostly the **retention design** (the purge, its reservation, reports, manifest and their tests) — and
+the review-process wording of §14. The changes made outside §8.6 since then came from the author's own sweeps (error
+codes in P5.0, the platform-grants key in P5.1, the §9.4 signals used by P5.3a and P5.4, the containment command in
+P5.5, rate limits, runbooks, the test budget) and have each been through the reviewer's full-document reviews of
+revisions 19–21 without a finding. The reviewer may therefore approve the plan in **two parts**:
+
+- **Part 1** — everything except the retention design: §1–§8.5, §8.6 up to (not including) "Retention design", §9–§16,
+  and every package except P5.8 step (a). This is all that P5.0–P5.7 and P5.8 steps (b)–(e) depend on.
+- **Part 2** — the retention design of §8.6 and P5.8 step (a), which builds it.
+
+With Part 1 approved and the owner's go-ahead, **P5.0 may begin**; P5.8 step (a) cannot begin until Part 2 is approved,
+and P5.10 cannot close without it. The order of the packages already puts the retention work last (P5.8), so a later
+Part 2 delays nothing before it. Whether Part 1's approval is enough for his go-ahead is the **owner's** decision (his
+confirmation form asks to wait for the reviewer's approval of "the plan"). Each approval is recorded in §14 with name,
+date and the part it covers. If the reviewer prefers a single approval, this paragraph has no effect.
+
 ## 13. P5 exit criteria (proposed for RESTRUCTURING_MAP)
 
 1. Every endpoint declares one authorization class; the router refuses undeclared endpoints.

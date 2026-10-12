@@ -144,11 +144,11 @@ session for privileged operations; **D12** privileged writes re-check current au
    **Failure versus denial:** an error while resolving or evaluating authority (database or network failure, an
    unexpected resolver result) is an **operational error**: the request ends with **500 `INTERNAL_ERROR`** through the
    existing error handler ([Fact] unknown errors are logged server-side and answered `500 INTERNAL_ERROR` with nothing
-   revealed — `apps/api/src/platform/http/error-handler.ts`), is logged with the request id and counted
-   (`authorization_resolution_failure`), and is **never** reported as 401/403 and **never** recorded as a denial
+   revealed — `apps/api/src/platform/http/error-handler.ts`), is logged with the request id as the
+   `authorization_resolution_failure` signal (§9.4), and is **never** reported as 401/403 and **never** recorded as a denial
    (`authz.denied` is written only for a resolved refusal, §8.2a rules 5–6). Genuine outcomes keep their codes: an
    invalid or absent session 401, a resolved missing permission 403, another tenant's resource 404. Tests inject a
-   resolver failure and assert: no handler runs, the status is 500 with `INTERNAL_ERROR`, the metric and error log are
+   resolver failure and assert: no handler runs, the status is 500 with `INTERNAL_ERROR`, the signal line (§9.4) is
    emitted, and no denial event is written.
 8. **Unchanged response semantics:** 401 invalid/absent session; 403 `WRONG_AUDIENCE`; 404 for another tenant's
    resource (and for a forged id); 403 `FORBIDDEN` for a known own-tenant resource without permission (T15).
@@ -758,8 +758,8 @@ be resolved, still has one deterministic outcome:
 |---|---|---|---|
 | Unknown identifier | error ⇒ transaction rolls back ⇒ 500 | error ⇒ no data ⇒ 500 | **error thrown (500)** — an unknown identifier is never treated as best effort |
 | Known event of another class | error ⇒ rollback ⇒ 500 | error ⇒ no data ⇒ 500 | **error thrown (500)** — an atomic or sensitive-read event can never be downgraded |
-| Disallowed outcome or summary field | error ⇒ rollback ⇒ 500 | error ⇒ no data ⇒ 500 | not stored; response unchanged; error log + metric |
-| Storage failure (insert fails) | rollback ⇒ 500 | no data ⇒ 500 | not stored; response unchanged; error log + `audit_write_failure` metric |
+| Disallowed outcome or summary field | error ⇒ rollback ⇒ 500 | error ⇒ no data ⇒ 500 | not stored; response unchanged; `audit_validation_failure` signal (§9.4) |
+| Storage failure (insert fails) | rollback ⇒ 500 | no data ⇒ 500 | not stored; response unchanged; `audit_write_failure` signal (§9.4) |
 
 **`recordBestEffort` accepts only identifiers that the catalog lists as best effort.** Anything else — an unknown
 identifier (for example a misspelled atomic event) or a known atomic/sensitive-read event — is a programming error and
@@ -915,7 +915,7 @@ illustrative.
 | Class | Typical events (illustrative — see §8.1) | Written | Audit failure ⇒ |
 |---|---|---|---|
 | **Atomic** | changes to roles, permissions, grants, memberships, invitations, merchant lifecycle and ownership, branches and the profile; identity security changes (sign-up, verification, sign-in success, refresh and reuse revocation, logout, password change/reset/setup, MFA enrolment and verification) | same transaction as the change | change rolls back; request fails 500 |
-| **Best effort** | every failure and denial outcome of the above; the link-issuing successes of forgot-password and resend-verification (O6); refusals by the policy middleware (`authz.denied`) | own transaction | original response preserved; error logged with event id and request id; counter for alerting |
+| **Best effort** | every failure and denial outcome of the above; the link-issuing successes of forgot-password and resend-verification (O6); refusals by the policy middleware (`authz.denied`) | own transaction | original response preserved; a §9.4 signal with event id and request id (alerting wired in P15) |
 | **Sensitive read** | the four designated reads (§8.1 #33–#36) | before data is returned, same transaction as the read | read refused (500); no data returned |
 
 ### 8.2a Execution contract for privileged operations (definer functions)
@@ -940,7 +940,7 @@ and raise exceptions only for malformed input (`…membership_management:52`). P
    the now-empty transaction, then calls
    `recordBestEffort(denial event)` in a **separate** transaction with the actor from the request's validated
    `AuthContext` — including the actor's session merchant, so a refusal inside a business appears in that business's
-   activity record (§8.5) — then answers 401/403/404/409 as today. A failure of that best-effort insert is logged and counted;
+   activity record (§8.5) — then answers 401/403/404/409 as today. A failure of that best-effort insert emits the `audit_denial_write_failure` signal (§9.4);
    the response is unchanged (§8.1 table). The denial event is never written in the aborted or the mutation's
    transaction, so no mutation can be committed by recording a denial.
 6. **Early denials** (the router's policy middleware, before any database call) follow rule 5.
@@ -1385,6 +1385,18 @@ openapi:check` · `pnpm test` · CI-mode oasdiff 1.32.1 against `origin/main` (0
 commit and full history at closure. Results are recorded with the commit they ran on; local runs are never reported
 as CI.
 
+### 9.4 Signals — what "metric" and "counted" mean in P5
+
+[Fact] The API has no metrics library or exporter today; its observability is structured pino logs with redaction
+(`apps/api/src/platform/logger.ts`), and metrics and alerting are planned with deployment (TARGET_ARCHITECTURE §28;
+RESTRUCTURING_MAP P15). So wherever this plan says a failure is **counted** or emits a **metric**, P5 delivers a
+**signal**: one structured log line at `error` level with a stable `signal` field, the event identifier where there
+is one, and the request id — never summary values, tokens or personal data. The signals are a closed list:
+`authorization_resolution_failure` (§4 invariant 7), `audit_write_failure` (a best-effort insert failed),
+`audit_validation_failure` (a best-effort event refused by the catalog), and `audit_denial_write_failure` (§8.2a
+rule 5). Tests assert the exact line for each (P5.3a, P5.4). Alerting on them is wired when the metrics stack is
+built (P15); P5 does not add a metrics library.
+
 ## 10. Work packages
 
 Dependencies: P5.0 → P5.1 → (P5.2 ∥ P5.3 ∥ P5.3a) → P5.4 → P5.5 → P5.6 → (P5.7 ∥ P5.8) → P5.9 → P5.10. P5.7 and
@@ -1484,7 +1496,7 @@ independent of the permission catalog); it is listed with them so it is complete
   that writer and its tests.
 - **Tests:** every row of the §8.1 entry-point table for each entry point (unknown identifier, known event of another
   class — atomic and sensitive-read events through `recordBestEffort` — invalid outcome, disallowed and over-length
-  summary field, storage failure), asserting the stored rows, the metric and the HTTP status of the request in hand;
+  summary field, storage failure), asserting the stored rows, the §9.4 signal line and the HTTP status of the request in hand;
   per atomic identity pair the co-commit and injected-rollback test of the coverage guard; the A7 paths keep their
   status when the best-effort insert fails; the writer-guard mutation tests (§8.1); the coverage guard in both
   directions over the pairs that exist at this point; secrets never stored (leak sweep); P4 member/invitation atomicity

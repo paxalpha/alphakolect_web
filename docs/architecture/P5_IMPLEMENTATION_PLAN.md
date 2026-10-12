@@ -65,6 +65,7 @@ is not in P5 and says where it goes instead.
 | `P5_AUDIT_REPORT.md` §22.4 | owner decisions D1, D4, D5, D9 | §3; D9: §8.6, P5.10, §13 item 9 |
 | Found in planning (§7.2, §8.1) | latent P4 deadlock (re-invite during account setup); no acceptance event on the setup path | §7.2 footprints, P5.5 test (h); #14, P5.5 |
 | Legacy system (§15) | per-staff audit view | O4 actor filter; P5.8 |
+| D9 decisions (§8.6), passed forward | backups must not keep deleted entries longer than the owner's backup retention; error tracking must send no IP address or user agent | **not P5** — P15 obligations, recorded here and in the P5 record; the retention itself is O10 |
 
 **Constraints for every package:**
 
@@ -1440,7 +1441,8 @@ independent of the permission catalog); it is listed with them so it is complete
   route-parity test asserts it for each new operation.
 - **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
   owner; **O7 resolved** (by D5′, §7.6); **O8 decided**
-  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; **O9 decided** (members and
+  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; O10–O12 (privacy questions) are
+  needed only by P5.8 step (e) and do not block P5.0; **O9 decided** (members and
   invitations pagination) so that P5.8's scope is fixed; **O3 decided** (owner-only, D8′; R28). **Neither audit-read contract is
   frozen in P5.0** (R24): their shared bounds are O4, which depends on a query-plan validation (§8.5) that needs
   representative data, so both are frozen together in P5.8 step 3. P5.8 cannot implement an audit-read endpoint whose
@@ -1682,7 +1684,8 @@ independent of the permission catalog); it is listed with them so it is complete
   migration (purger role and grants, reservation table, the eight functions, trigger change), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
   (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
-  (e) the **D9 written policy**, drafted from the decisions and from the purge and logs as built, and handed to the owner.
+  (e) the **D9 written policy**, drafted from the decisions (including O10–O12) and from the purge and logs as built, and
+  handed to the owner.
 - **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
   `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
   recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page
@@ -1857,6 +1860,9 @@ decision-maker, the date, the source, the selected option, the affected contract
 | O8(a) | B1: "Refuse. Ask them for a different email address, so their platform account is completely separate from any business account." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §7.4; P5.7 |
 | O8(b) | B2: "Switch the same account back on, with no permissions. You then give them only what they need again." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §7.4, §7.2 footprints, §8.1 #37; P5.7 |
 | O9 | C1: "Now, as part of this stage." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §1.1; P5.8 |
+| O10 | Backup retention (D9: deleted entries survive in earlier backups; `P5_OWNER_PRIVACY_QUESTIONS.md` P1) | proposal: 35 days, so a deleted entry leaves every backup about five weeks after deletion. **Owner decision required before the D9 written policy is drafted (P5.8 step e)**; it does not block P5.0. Applied by P15 (backups are built there) |
+| O11 | Handling of the pre-deletion report copy (P2a–c) | proposal: handed to the owner directly; the operator deletes their copy once the owner confirms receipt; the owner keeps it at their own discretion. **Owner decision required before the D9 written policy (P5.8 step e)**; it does not block P5.0 |
+| O12 | Telling users their IP address and device details are recorded and who sees them (P3) | proposal: yes — a short privacy notice at sign-up and invitation, written and shown in P13 (web). **Owner decision required before the D9 written policy (P5.8 step e)**; it does not block P5.0 |
 | O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself is decided at P5.8 step 2 on the spike's evidence | §8.5; P5.8 |
 | O3 | A2a–c, F2: "Only the owner, always. The owner cannot give this to any staff member." A2b: refused attempts shown to the owner only. A2c: the owner can see one person's actions | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §6, §8.5; P5.8 |
 | O7, D5 → D5′ | A1 and F1a: inviting staff or agents and cancelling invitations, changing a staff member's role or branch, and switching a staff member or agent off or on are owner-only ("All 3"); F1b: "The owner may choose one branch or all branches." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D5's staff-delegation clause; O7 no longer arises | §3, §4, §5, §6, §7.3, §7.6; P5.5, P5.6, P5.9 |

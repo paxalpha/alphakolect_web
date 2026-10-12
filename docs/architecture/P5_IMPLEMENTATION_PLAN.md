@@ -1496,7 +1496,8 @@ independent of the permission catalog); it is listed with them so it is complete
   switches to the writers in the same commit; `bootstrap_super_admin` replaced to keep the account separation (§7.4).
   Privileged functions write their audit rows themselves (§8.5). The
   **containment switch** of §11.1 (table, operator function, event #39) and its reads in the resolver and every
-  re-check — before P5.6 makes the first grant possible.
+  re-check, and its operator command `admin:containment` (`apps/api/scripts/`, migrator connection, as
+  `admin:bootstrap`) — before P5.6 makes the first grant possible.
 - **Tests:** direct calls with/without authority; every member and invitation write by a staff member refused, even
   for a staff member holding every grantable permission (fixture), and seeding `members.manage` or `invitations.manage`
   into a role refused by the grant table's CHECK (reserved); owner untouchable; archived role refused; forged actor fields impossible (no parameter exists); rollback
@@ -1615,6 +1616,18 @@ independent of the permission catalog); it is listed with them so it is complete
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
   tests. The audit foundation is P5.3a.
+- **Operator commands — where they live ([Fact] the existing pattern).** `admin:bootstrap` is an operator script,
+  `apps/api/scripts/bootstrap-super-admin.ts`, run with `pnpm --filter @alphakolect/api admin:bootstrap`, using the
+  migrator connection (`DATABASE_MIGRATOR_URL`) because the app role cannot call operator functions, with its logic in
+  `apps/api/src/modules/identity/bootstrap.ts`, and printing outcomes but never secrets. The purge follows it:
+  `apps/api/scripts/audit-purge.ts` (`audit:purge`, with `--report <path>` to write a pending report, and
+  `audit:purge-request-report` to record the owner's request) and its logic in `apps/api/src/modules/audit/purge.ts`,
+  tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
+  follows it too (`admin:containment`, built in P5.5).
+- **Order inside P5.8 (implementability).** (a) The **retention purge** first — it does not depend on O4: the
+  migration (purger role and grants, reservation table, the eight functions, trigger change), the operator command and
+  every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
+  (d) the **D9 written policy**, drafted from the decisions and from the purge as built, and handed to the owner.
 - **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
   `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
   recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page

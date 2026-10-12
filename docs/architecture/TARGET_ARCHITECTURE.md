@@ -523,8 +523,8 @@ request → authenticate (session) → resolve Actor {identity, audience, member
 
 | Module | Owns (tables) | Key operations | Depends on |
 |---|---|---|---|
-| **identity** | identities, credentials, sessions, reset/verify tokens, mfa | signup, login, refresh, logout, verify email, reset password, MFA | audit, notifications |
-| **tenancy** | merchants, branches, merchant_memberships, roles, permissions | create merchant, manage branches/staff/agents/roles, activate/deactivate | identity, billing (status), audit |
+| **identity** | identities, credentials, sessions, reset/verify tokens, mfa, platform memberships and their per-person grants (ADR-16) | signup, login, refresh, logout, verify email, reset password, MFA | audit, notifications |
+| **tenancy** | merchants, branches, merchant_memberships, roles and role permissions (the permission catalog itself: ADR-16 §3.5) | create merchant, manage branches/staff/agents/roles, activate/deactivate | identity, billing (status), audit |
 | **customers** | customers, customer_profiles, assignments (agent↔customer) | onboard, assign agent/package, update, anonymise (BR-11.3) | tenancy, payments (VA), savings |
 | **savings** | packages, package_fee_rules, enrolments, cycles, collections, remittances, withdrawals, target_goals | record collection (cash/live), remit, approve/reject, withdraw, cycle rollover | ledger, payments, customers |
 | **loans** | loan_products?, applications, loans, schedules, repayments | apply, approve, disburse, repay, write-off/reverse | ledger, payments, customers, documents |

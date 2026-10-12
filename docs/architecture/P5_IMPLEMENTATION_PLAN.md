@@ -1677,6 +1677,40 @@ independent of the permission catalog); it is listed with them so it is complete
   exist at this point (membership deactivation; role archive), in both orders, behaves per §7.2; forged session
   ids refused.
 - **Done when:** resolution is current, complete and isolated.
+- **Built 2026-10-12 — awaiting review at the P5.2 gate.** Commits `a68cece` (migrations
+  `20261013000500_session_authority` — `identity.permissions_of`, the one permission rule, and the resolver
+  `identity.session_authority` — and `20261013000600_assert_authority`; 22 database tests; inventory) and `daa95d6`
+  (the API: `authenticate()` calls the resolver instead of `validate_session`, one round trip; `AuthContext.permissions`
+  and `TenantContext.permissions`, frozen; nothing reads them yet — P5.4; `requireOwner` unchanged). **Every listed
+  test:** owner = all merchant permissions; super admin = all platform; staff = role set; archived role ⇒ none;
+  deactivated membership or merchant, ended or forged session ⇒ no row (401); platform staff = grants only; no grant
+  leaks to another membership, of the same identity or another person; a removed grant or archived role applies to the
+  next call and the next request (no cache); the re-check followed by a write against membership deactivation and role
+  archive, each in three orders (revocation committed first ⇒ refused, nothing written; re-check first ⇒ the revocation
+  waits until the write commits; revocation in progress ⇒ the writer waits, then is refused). Also: retired
+  permissions resolved for no one; a reserved grant row that bypassed the trigger is still never resolved; agents and
+  MFA-enrolment sessions hold nothing; a branch restriction narrows nothing (§7.6); the re-check raises on an unknown
+  identifier and never waits. **Gate (§9.3), local, on the tree of `daa95d6`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass; `pnpm test` — contracts 61, db 400, api 396, all passing; oasdiff 1.32.1 against
+  `origin/main`: no changes; gitleaks clean per commit. Not CI. **Mutation checks** (restored byte-identical): role
+  status ignored, enrolment scope ignored, reserved filter removed, a re-check that waits, a re-check without locks —
+  each fails the tests. **Judgement calls for the reviewer:**
+  (1) `assert_authority` is a **nested** function (L6): it does not acquire the authority locks, it re-asserts them
+  `NOWAIT` and requires its caller to hold its whole footprint first (§7.2 "after acquiring its locks"; the one sorted
+  acquisition per category, L5) — so it is owner-only and P5.5's functions call it; the races therefore emulate that
+  caller on the owner connection, since no privileged function uses it before P5.5;
+  (2) it re-asserts every authority row `FOR SHARE` — the weakest mode that still conflicts with every revocation's
+  lock — so it never upgrades a lock the caller took `FOR SHARE` (sensitive reads hold the actor's row `FOR SHARE`);
+  the caller's `FOR NO KEY UPDATE` on the actor's membership in writes is unaffected;
+  (3) it reads the staff actor's role from the membership row it has just locked, so the role cannot change between
+  the lookup and the lock;
+  (4) outcomes: `unauthenticated` when the session no longer validates (401), `forbidden` when it validates without
+  the permission or the permission is of the other scope (403), `ok`; an unknown identifier raises `22023`;
+  (5) the resolver applies `grantable` and `active` itself, in addition to the storage trigger (defence in depth);
+  (6) the resolver also returns role and branch state; the API keeps only the permissions for now;
+  (7) the API types the database's identifiers as the contracts' `Permission` without filtering — the
+  contracts-versus-catalog test is the guard;
+  (8) the containment switch (§11.1) is not read yet; it is built, and added to `permissions_of`, in P5.5.
 
 ### P5.3 — Registry authorization metadata
 
@@ -2167,6 +2201,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 31 | 2026-10-12 | **P5.2 built; awaiting review at its gate.** The resolver (`identity.session_authority`, with `identity.permissions_of` as the one permission rule) and the nested write-time re-check (`tenancy.assert_authority`), 22 database tests including three-order revocation races, and the API wiring of `AuthContext.permissions` and `TenantContext.permissions` (`a68cece`, `daa95d6`). Gate passed locally; evidence and eight judgement calls under P5.2. P5.3 and P5.3a wait for the gate review. |
 | 30 | 2026-10-12 | **P5.1 gate approved.** The reviewer approved P5.1 to close on the reported evidence and gave the go for P5.2, P5.3 and P5.3a, each with its own gate. Follow-up `dfaf579` tests effective privileges (role membership, column privileges, PUBLIC) for the three tables and every function, as the review asked; the review's checks are answered under P5.1. Local runs only; CI has not run. |
 | 29 | 2026-10-12 | **P5.1 built; awaiting review at its gate.** The permission catalog (`identity.permission_catalog`, the 16 permissions of §6, protected by a trigger), `tenancy.role_permissions` and `identity.platform_membership_grants` (only active, grantable permissions of the right scope; no app or readonly privilege; no writer), the Prisma models, the storage tests, the execute-grant inventory (R31) and the contracts `PERMISSIONS` list checked against the catalog (`a129f3a`, `fc6fa8b`, `acd73d7`), plus an unrelated CRLF fix to the T14 guard (`aa7d8cf`). Gate passed locally; evidence and eight judgement calls for review under P5.1. Next package (P5.2 ∥ P5.3 ∥ P5.3a) waits for the gate review. |
 | 28 | 2026-10-12 | **P5.0 complete.** The owner approved ADR-16 for Part 1 with decision B1 (`d4ac17e`) and answered the follow-up (`130fbda`: C1 accepted, C2 recovery targets, A3 confirmed); the independent reviewer approved the ADR-16 text as written, including B1, and confirmed that the approval covers §3.5 in full (lines 259–499 at `fac08e7`). Carried into the documents: B1 into P5.1 and P5.5 (`fce7f99`); the recovery targets into P15 obligation 5 (`3c05307`); the migration-naming rule into P5.1 (`d3b68d0`, critic review TA-26); the owner-approved note under BR-11.2 (`a3e801a`). Part 2 remains unapproved. Next package: P5.1. |

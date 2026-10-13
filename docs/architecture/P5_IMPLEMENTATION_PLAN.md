@@ -314,7 +314,12 @@ and **re-check** what the lookup found (still unconsumed, unexpired, same identi
 helpers (working names `identity.lock_platform_memberships`, `tenancy.lock_memberships`, `tenancy.lock_roles`,
 `tenancy.lock_branches`, each taking a sorted, de-duplicated id array and a per-row mode) that issue one statement per
 row, so the order never depends on a query plan. Transactions run at `READ COMMITTED`; after locking, a function
-re-reads what it checks.
+re-reads what it checks. **Built at P5.5 step 1** (`afe7499`, migration `20261013000900_lock_helpers`): seven
+helpers — one per category that a planned footprint acquires several rows of: `identity.lock_platform_memberships`
+(1), `tenancy.lock_merchants` (2), `tenancy.lock_memberships` (3), `tenancy.lock_invitations` (4),
+`identity.lock_one_time_tokens` (5), `tenancy.lock_roles` (7), `tenancy.lock_branches` (8). Each takes the ids to
+lock `FOR SHARE` and the ids to lock `FOR NO KEY UPDATE` and **sorts and de-duplicates their union itself** (a row in
+both is taken in the stronger mode), so the order cannot depend on a caller remembering to sort.
 
 **Planned lock footprints (the contract P5.5–P5.8 implement; [Plan]).** Rev 13: the member, invitation and
 merchant-audit-read footprints no longer lock the actor's role — it served only the superseded delegation ceiling, and
@@ -364,7 +369,8 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | `tenancy.platform_list_merchants` (#35) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
 | `tenancy.platform_list_merchant_members` (#36) | 1: actor / S | read event insert, then the rows (one `SELECT` over memberships and identities, no row locks) |
 | `audit.read_merchant_events` (#33) | 3: actor (the owner, D8′) / S | read event insert, then the rows (one `SELECT`, no row locks) |
-| identity flows: `reset_password`, `verify_email` | 5 → 6 (→ 10 reset) | — |
+| identity flow: `reset_password` | 5 → 6 → 10 | — |
+| identity flow: `verify_email` — **proposed at P5.5 step 1, for the gate review** (it also activates the owner's pending merchants, BR-2.2, which the row "5 → 6" omitted) | unlocked lookup of the token and of the merchants the identity owns that are pending verification → 2: those merchants / NKU (one sorted call) → 5: token / NKU → 6: identity / NKU | write (activation, verification) |
 | `change_password` | 6 → 10 | — |
 | `rotate_refresh_token` | 5 → 10 | — |
 | selection, MFA verify / enrolment | 5 → 6 (credential rows) | session insert (fresh key) |
@@ -443,11 +449,13 @@ finds three **different kinds** of finding; "eight functions" and "three violati
 | Kind (guard check) | Functions at `5d8904b` | Required P5.5 change |
 |---|---|---|
 | **L1 lock mode** (check 2: `FOR UPDATE` anywhere) — **8 functions, 10 clauses** | P3: `consume_one_time_token` (`20261003000200:85`, category 5), `rotate_refresh_token` (`20261013000100:38,43`, categories 5 then 10 — order already conforms), `take_selection` (`20261009000200:117`, category 5); P4: `set_merchant_status` (`20261009000100:118`, category 2), `update_membership` (`20261011000200:71`, category 3), `transfer_ownership` (`20261011000300:47,56`, categories 2 and 3), `admit_invitation` (`20261012000100:113`, category 4), `revoke_invitation` (`20261012000100:271`, category 4) | every clause becomes `FOR NO KEY UPDATE`; for the three P3 functions this is the **only** change |
-| **Category order** (check 1: order) — **3 functions** | `set_merchant_status` (6 at `:116` before 2 at `:118`); `issue_invitation` (2 → 7 → 8 → 6 at `20261012000100:215` → 5 via `issue_one_time_token` → 4); `complete_account_setup` (5 → 6 → 2 …, via `admit_invitation`) | reordered to the planned footprints; only `set_merchant_status` is in both rows |
-| **Planned footprint and authority** (check 1: footprint) — **8 functions** | the five P4 privileged functions with no actor authority lock (`update_membership` — which also locks the target only —, `issue_invitation`, `revoke_invitation`, `set_merchant_status`, `transfer_ownership`); `admit_invitation` and `complete_account_setup` (not yet the `…_locked` / whole-footprint structure of L5–L6); `bootstrap_super_admin` (no identity lock, rev 14) | each rewritten to its planned-footprint row |
+| **Category order** (check 1: order) — **4 functions** (amended at P5.5 step 1: `verify_email` added) | `set_merchant_status` (6 at `:116` before 2 at `:118`); `issue_invitation` (2 → 7 → 8 → 6 at `20261012000100:215` → 5 via `issue_one_time_token` → 4); `complete_account_setup` (5 → 6 → 2 …, via `admit_invitation`); `verify_email` (5 → 6 → **2**: it activates the owner's pending merchant after verifying the identity, `20261003000200`) | reordered to the planned footprints; `set_merchant_status` and `verify_email` are in both rows. **`verify_email` is a latent deadlock once `set_merchant_status` is reordered** (2 → 6 there, 6 → 2 here: verifying an owner's email while a super admin deactivates that merchant) — so step 2 reorders both |
+| **Planned footprint and authority** (check 1: footprint) — **9 functions** (amended at P5.5 step 1: `verify_email` added) | the five P4 privileged functions with no actor authority lock (`update_membership` — which also locks the target only —, `issue_invitation`, `revoke_invitation`, `set_merchant_status`, `transfer_ownership`); `admit_invitation` and `complete_account_setup` (not yet the `…_locked` / whole-footprint structure of L5–L6); `bootstrap_super_admin` (no identity lock, rev 14); `verify_email` (waits for category 2, outside its row) | each rewritten to its planned-footprint row |
+| **L3** (check 3: a wait after a contested insert) — **2 functions** (added at P5.5 step 1) | `issue_invitation` (the invitee's identity inserted `ON CONFLICT DO NOTHING`, then locked `FOR SHARE`, then the setup tokens and the open invitation written); `complete_account_setup` (a second invitation's merchant locked after the first admission's membership insert) | both rewritten to their planned footprints (contested inserts last) |
 
 The baseline control runs the guard against the P4 definitions (kept as fixtures) and must report **exactly the
-entries of this table — no more, no fewer**. The tests of P5.5 then prove that every function in it, and every new
+entries of this table — no more, no fewer** (as built: 25 entries — 10 L1 clauses, 4 order, 9 footprint, 2 L3 —
+`packages/db/test/support/lock-plan.ts` `BASELINE`). The tests of P5.5 then prove that every function in it, and every new
 function, satisfies L1–L6 and its planned footprint.
 
 **Latent deadlock found by this inventory** ([Probable] by analysis; test (h) confirms or refutes it before the fix):
@@ -2059,6 +2067,52 @@ independent of the permission catalog); it is listed with them so it is complete
   recorded. The 10 s idle-in-transaction timeout is a production safeguard and stays. The budget is checked again
   when P5.6 and P5.7 add their suites; if `packages/db` passes five minutes, or a gate run fails for memory, the
   suites move to `test:concurrency`, which is then part of the gate.
+- **Progress — step 1 built 2026-10-13 (the P5.5 gate is not reached; local, not CI).** Commits `afe7499` (the seven
+  lock helpers), `73d3e89` (the SQL guard in report mode, the 5d8904b fixture, the baseline control and the self-tests),
+  `708730e` (approved writes per function, R22), `f6c5ecc` (the repository-transaction classes, R17, R22, R27). **What
+  the guard is:** the SQL side (`packages/db/test/support/lock-analysis.ts`, `lock-plan.ts`, `lock-order-guard.test.ts`)
+  reads every function of the four schemas from the catalog and computes its waiting footprint recursively (calls,
+  triggers); every function has a class (operation with a planned token sequence, identity flow, other identity
+  function, helper, `…_locked`, nested check, reader, trigger, standalone, retired) and declared approved writes; the
+  repository side (`apps/api/test/support/transaction-classes.ts`, `test/locks/transaction-classes.test.ts`) follows
+  every `db.transaction` / `withTenant` body through the compiler and classifies it T1–T5. **Fixture provenance:** the
+  45 functions of a database built from 5d8904b's 21 migrations alone, verified identical to the same functions at
+  HEAD. **Report mode holds:** the live functions report exactly the 25 baseline entries (every P5 function and helper
+  conforms); 9 transactions are tolerated (settings writes: step 4; member, invitation, lifecycle and transfer flows on
+  `recordWithin`: steps 3, 7) and one nested-writer entry (`admit_invitation_locked`: step 5); the other 22
+  transactions classify (T2 identity flows, T3 reads, T5 the best-effort insert). **Gate on the tree of `f6c5ecc`:**
+  `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 475, api 597,
+  all passing, 108 s wall; the spec is unchanged since `a39b2c7`. **Proven by sabotage** (restored byte-identical): a
+  helper switched to `FOR UPDATE` and one reversed; a tolerated SQL entry removed, a non-occurring one added, a
+  baseline entry removed; a direct write slipped into the real password-change transaction, a tolerated transaction
+  removed, a classified one tolerated — each fails. **Judgement calls for the gate review:**
+  (1) **finding — `verify_email` locks out of order:** it activates the owner's pending merchant (category 2) after the
+  token (5) and the identity (6). Today `set_merchant_status` also goes 6 → 2, so nothing deadlocks; once step 2
+  reorders it to the planned 2 → 6, email verification and merchant deactivation would deadlock. Proposed footprint
+  (§7.2 table, marked proposed): lock the identity's pending owned merchants first, then the token, then the
+  identity — behaviour unchanged. Step 2 implements it unless the review decides otherwise;
+  (2) **finding — two L3 violations** the plan's table did not list: `issue_invitation` locks and writes after its
+  contested identity insert, and `complete_account_setup` locks the next invitation's merchant after the first
+  membership insert; both are already corrected by their planned footprints. The reconciliation table is amended to
+  the 25 entries the guard reports;
+  (3) **seven helpers, not four**, each sorting its ids itself (above);
+  (4) **analysis bounds, stated in the analyser:** order is textual (every branch counts; a loop body counts twice); a
+  write to a table whose rows the function already holds `FOR NO KEY UPDATE` is a write to held rows (table-level —
+  the two-connection tests are the adversarial evidence that the rows written are the rows held); a direct locking
+  statement must pin one row by its key, otherwise it is a multi-row acquisition that needs a helper; a unique key is
+  contested unless one of its columns holds fresh values (a uuid_v7 id or a hash), and the contested keys of the tables
+  written in scope are asserted as a list; the authority lock is the acquisition whose ids come from the membership
+  read from `validate_session` or `session_authority`;
+  (5) **approved writes (R22) are declared per function** and checked through every nested call and trigger, so the
+  transaction classifier can refuse a definer that reaches an unapproved write;
+  (6) the guard's SQL side lives in `packages/db` (the database tests run one file at a time, so its self-tests install
+  scratch functions and tables); the transaction side lives in `apps/api` (it needs the compiler and the API source)
+  and imports the analysis through `@alphakolect/db/lock-analysis` and `/lock-plan`; its scratch definers are analysed
+  as definitions and never installed, because the API's test database is shared by parallel files and the P5.3a
+  writer guard scans every schema;
+  (7) T4 has nothing to classify before P5.7; the classifier recognises the other four classes;
+  (8) the plan's `list_members`-style lock-free readers are classified as readers and verified to lock and write
+  nothing anywhere in their footprint.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2452,6 +2506,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 41 | 2026-10-13 | **P5.5 step 1 built** (`afe7499`, `73d3e89`, `708730e`, `f6c5ecc`): the seven lock helpers and the lock-order guard in report mode — SQL footprints with the baseline control against the 5d8904b fixture, approved writes (R22), and the repository-transaction classes (R17, R27). Findings: `verify_email` locks the merchant after the identity (a latent deadlock once `set_merchant_status` is reordered; footprint proposed in §7.2 for the gate review); two L3 violations the table did not list. §7.2's reconciliation amended to the 25 entries the guard reports. Gate passed locally (contracts 62, db 475, api 597). Step 2 next. |
 | 40 | 2026-10-13 | **P5.5 test budget confirmed (§9.3).** Measured before any P5.5 code: 100 two-connection races in 14.1 s (P5.5's 400 ≈ 56 s, in the sequential `packages/db` suite); a full `pnpm test` in 109 s wall; memory peaked at 916 MB for the test processes with the machine at 94–98% commit. The reviewer's P5.3a dropped connection was Postgres's 10 s idle-in-transaction termination at 00:08:09 UTC during that run — a test process stalled under memory pressure, not an application defect (no transaction takes a second pool connection). The suites stay in `pnpm test`, 50 runs each; gate runs one at a time; re-checked at P5.6 and P5.7. |
 | 39 | 2026-10-13 | **P5.5 go; the guard condition's timing decided.** The project lead: the P5.4 guard condition need not close before P5.5; it stays a P5.6 precondition and is now a hard gate — staff grants cannot be enabled until the broader guard and its mutation tests pass (P5.6's first commit; checked at the P5.6 gate). P5.5 proceeds under its own gate, starting with the §9.3 test-budget check. |
 | 38 | 2026-10-13 | **P5.4 gate approved.** Judgement calls 1–12 accepted; the API-only check on profile, branch and role writes until P5.5 is an acknowledged boundary, not database protection. Call 13 becomes a P5.6 precondition: strengthen the source guard against indirect authority lookups before staff grants exist. The intermittent invitation-revoke failure stays with P5.5's test-budget check. The reviewer re-ran the policy, isolation-matrix and route-parity suites serially (115 passed). Local runs only; CI has not run. P5.5 is next, on the go-ahead. |

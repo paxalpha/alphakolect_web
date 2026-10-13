@@ -2175,6 +2175,62 @@ independent of the permission catalog); it is listed with them so it is complete
   instant; (3) `update_membership` locks a target only if it is a member of the caller's business (an unlocked lookup
   first), so no request locks another business's row; (4) the lifecycle service no longer sets `app.merchant_id` (it
   wrote the audit row through RLS; the function now does, as table owner) and left the T14 setter list.
+- **Progress — step 4 built 2026-10-13 (local, not CI).** Commits `bb53c29` (the repository-transaction
+  classifier counts privileged operations per statement: a statement folded from a constant map runs one of its values,
+  so a branch-or-role write is one operation, not two), `b555f1f` (migration `20261013001200_enforcement` and the
+  API switch), `2591c5d` (the enforcement and mixed-version tests), `95214bf` (races (b) staff half and (i)).
+  **The boundary, one migration in one transaction:** five writers — `update_profile`
+  (`merchant.profile.update`), `create_branch` and `update_branch` (`merchant.branches.manage`), `create_role` and
+  `update_role` (`merchant.roles.manage`, not grantable) — on the plan's footprint row (the merchant S, the profile
+  writer NKU; the actor NKU; the actor's role and the edited role in one sorted call; the edited branch NKU; the contested
+  insert last), each asking `tenancy.assert_authority` and then writing its own pattern-A row with the actor from the
+  session; six lock-free read functions — the five of B1 and `read_own_membership` (judgement 1); `EXECUTE` on the
+  eleven to the app; then `REVOKE ALL` on `tenancy.merchants`, `branches`, `roles` and `invitations` from the app,
+  column privileges included (the permission catalog has had no app grant since P5.1; the reporting role is unchanged).
+  The repository reaches those four tables only through the functions; `recordWithin` left the settings service, and
+  the transitional list holds `auth.invitation_accepted` only (step 7). **The guards:** all five planned footprints
+  met; the contested keys gain the two one-active-name indexes (the label now marks an expression column); the
+  settings transactions classify T1, leaving `InvitationService.accept` as the only tolerated transaction; the writer
+  inventory names the SQL writers. **Tests:** `enforcement.test.ts` (35) — no table or column privilege on the four
+  tables and a direct read or write refused in any tenant context; each reader returns only the session's business and
+  needs its own permission (a staff member reads exactly what the role grants; agent, unknown and revoked sessions read
+  nothing); each owner write records one row with the session's actor and the request context (the user agent cut to
+  512); a staff member without the permission is refused every write with nothing changed and no row, one granted
+  `merchant.branches.manage` writes branches as themselves, and roles stay the owner's even for a role holding every
+  grantable permission; `forbidden` before `not_found`; the named unique violation; the acting member's row, a staff
+  actor's role, the business row, the edited branch and role each held (a lock timeout, not a NOWAIT failure); no actor
+  parameter. `mixed-version.test.ts` (23) — the previous version's 11 statements over the four tables
+  (`fixtures/repository-sql-4319177.json`, extracted from `4319177` with constants folded) each fail with
+  `insufficient_privilege` as the app with the tenant set as that version set it, and succeed as the table owner with
+  the same values (the control: the refusal is the privilege alone). The rollback of each settings change when its
+  in-function audit insert fails is proved end to end by the API coverage tests (`failAuditInsert`). Existing tests
+  that relied on the app's direct access now assert its absence: the four tables join `tenancy.role_permissions` on
+  the row-level-security test's no-app-access list, the table rules (names, archiving) run as the table owner, P5.2's
+  role-archive race archives through `update_role`, the API repository test uses real sessions. Races (b) staff half
+  (a staff branch write against the owner deactivating that member: the write made when it ran first, refused by its
+  re-check when the deactivation did) and (i) (account setup admitting two invitations of two businesses against a
+  member operation in one and an archive of the invited role in the other: admitted there only if setup reached the
+  role first): 50 staged runs each, no deadlock. **Gate on `95214bf`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass (`openapi/v1.json` unchanged); `pnpm test` — contracts 62, db 551, api 598, all
+  passing; 390 s wall, against 124 s at step 3, with the machine under memory pressure (0.5 GB of 7.7 GB free; db
+  196 s, API 157 s of which 94 s collecting files) — the db suite's own addition is about 21 s of races and 10 s of new
+  tests. `bb53c29` alone was checked against the previous schema and code (the classifier suite, 15 passing).
+  **Sabotage:** seven migration mutations — `create_branch` without the actor lock (also failing the lock-order
+  guard), asking the read permission, `list_branches` without its permission check, `list_invitations` without the
+  business predicate, `update_role` writing another action, the revocation left out, only branches revoked — and one
+  race mutation (`update_branch` without the actor lock) each fail their tests. **Judgement calls:** (1)
+  `read_own_membership` is a self read without a permission: `GET /v1/merchant/membership`, its agent twin and the
+  business name in invitation emails read the caller's own business, which P4 let every member read; it is not among
+  B1's five, and is added because those reads lose `SELECT` on merchants; (2) a reader returns no rows, not an error,
+  without the permission — the middleware decided first, so this happens only when a permission is withdrawn between the
+  two checks: an empty list (as `list_members` since P4.5), a 404 for one item, P4's 401 for the profile; (3) a
+  settings write refused by the database alone is answered 403 with the middleware's message and recorded best effort
+  as that write's denial (`{reason: 'forbidden'}`); `not_found` is a 404 without an event, as in P4; (4)
+  `list_invitations` stays unpaginated, as in P4 (O9); (5) the writers find the edited branch or role with an unlocked
+  lookup restricted to the caller's business before locking it, so no request locks another business's row (as
+  step 3 (3)); (6) P4's "cannot switch row security off" test for branches and roles was removed — without a privilege
+  the app's query fails before row security applies; the catalog guard still requires RLS and an app policy on those
+  tables for any later grant.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2568,6 +2624,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 44 | 2026-10-13 | **P5.5 step 4 built** (`bb53c29`, `b555f1f`, `2591c5d`, `95214bf`): the enforcement boundary — five settings writers on their planned footprints writing their own audit rows, six read functions (B1's five and the self read `read_own_membership`), and the app's direct access to merchants, branches, roles and invitations revoked in the same migration; the mixed-version test (the 11 statements of `4319177`, each `insufficient_privilege`); races (b) staff half and (i) pass 50 staged runs each. Gate passed locally (db 551, api 598). |
 | 43 | 2026-10-13 | **P5.5 step 3 built** (`88eff08`, `50bcdc8`, `843c102`, `1302ec8`): authority from the resolver in the five privileged operations and `list_members`; each success writes its own audit row (pattern A; eight pairs off the transitional list); the SQL authority guard holds 22 data rules and tolerates nothing; the actor's own row is shown held; races (a), (b), (d), (f), (g), (j) pass 50 staged runs each. Gate passed locally (db 496, api 597). |
 | 42 | 2026-10-13 | **P5.5 step 2 built** (`8cdf7c6`): every FOR UPDATE is FOR NO KEY UPDATE; set_merchant_status, transfer_ownership, issue_invitation, verify_email, complete_account_setup and accept_invitation take their footprints; admission waits for nothing (`admit_invitation_locked`, L6). The §7.2 latent deadlock is confirmed — test (h) deadlocked on its first run against P4, none in 50 after. Guard: no L1, order or L3 finding left; six footprints tolerated until steps 3 and 5. Gate passed locally (db 477, api 597). |
 | 41 | 2026-10-13 | **P5.5 step 1 built** (`afe7499`, `73d3e89`, `708730e`, `f6c5ecc`): the seven lock helpers and the lock-order guard in report mode — SQL footprints with the baseline control against the 5d8904b fixture, approved writes (R22), and the repository-transaction classes (R17, R27). Findings: `verify_email` locks the merchant after the identity (a latent deadlock once `set_merchant_status` is reordered; footprint proposed in §7.2 for the gate review); two L3 violations the table did not list. §7.2's reconciliation amended to the 25 entries the guard reports. Gate passed locally (contracts 62, db 475, api 597). Step 2 next. |

@@ -7,8 +7,10 @@ import {
   type Permission,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
+import type { Logger } from 'pino';
 import type { AccessTokens, SessionAudience } from '../../modules/identity/access-tokens.js';
 import type { IdentityRepository } from '../../modules/identity/repository.js';
+import { authorizationResolutionFailure } from '../authorization.js';
 import { AppError } from '../errors.js';
 
 // Authentication for secured endpoints (TARGET_ARCHITECTURE §3.2, ADR-14 D6, D7). Mounted automatically by the
@@ -28,6 +30,8 @@ export type AuthContext = Readonly<{
   /** A staff member's role and branch restriction (null branch = all branches); null for everyone else. */
   roleId: string | null;
   branchId: string | null;
+  /** The restricting branch's state (active | archived); null when there is no restriction. Decides branch scope. */
+  branchStatus: string | null;
   /**
    * Effective permissions (P5.2, ADR-16): resolved by the database on this request (identity.session_authority),
    * never cached, never from claims. The early policy check uses them; the database still decides every write.
@@ -52,6 +56,9 @@ export type AuthDeps = {
   /** Origins allowed to make cookie-authenticated state changes (CSRF defence). Empty = none. */
   webOrigins: ReadonlySet<string>;
 };
+
+/** The middleware also reports a failure to resolve authority (§9.4 authorization_resolution_failure). */
+export type AuthenticateDeps = AuthDeps & { logger: Pick<Logger, 'error'> };
 
 const KNOWN_PERMISSIONS: ReadonlySet<string> = new Set(PERMISSIONS);
 
@@ -126,7 +133,7 @@ function presentedCredential(req: Request, endpoint: EndpointContract) {
   return null; // includes tokens sent in the query string or body: never read, never accepted
 }
 
-export function authenticate(endpoint: EndpointContract, deps: AuthDeps): RequestHandler {
+export function authenticate(endpoint: EndpointContract, deps: AuthenticateDeps): RequestHandler {
   return async function authenticateRequest(req, _res, next) {
     try {
       const credential = presentedCredential(req, endpoint);
@@ -146,8 +153,15 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
       }
 
       // Claims are hints: the session, identity and membership are re-validated on every request (§3.2), and the
-      // effective permissions resolved with them in the same round trip (P5.2, ADR-16 §3.5).
-      const session = await deps.identity.sessionAuthority(claims.sid);
+      // effective permissions resolved with them in the same round trip (P5.2, ADR-16 §3.5). A failure here is a
+      // failure to resolve authority: 500 through the error handler, with its signal (P5.4, §9.4) — never a 401/403.
+      let session: Awaited<ReturnType<IdentityRepository['sessionAuthority']>>;
+      try {
+        session = await deps.identity.sessionAuthority(claims.sid);
+      } catch (err) {
+        authorizationResolutionFailure(deps.logger, req.id);
+        throw err;
+      }
       if (
         !session ||
         session.identity_id !== claims.sub ||
@@ -175,6 +189,7 @@ export function authenticate(endpoint: EndpointContract, deps: AuthDeps): Reques
         kind: session.kind,
         roleId: session.role_id,
         branchId: session.branch_id,
+        branchStatus: session.branch_status,
         permissions: knownPermissions(session.permissions),
         transport: credential.transport,
       });

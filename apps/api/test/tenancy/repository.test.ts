@@ -41,6 +41,7 @@ async function merchant(name: string): Promise<TenantContext> {
     kind: 'owner',
     roleId: null,
     branchId: null,
+    branchStatus: null,
     permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')),
   });
 }

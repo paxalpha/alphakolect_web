@@ -41,7 +41,7 @@ async function person({ verified = true } = {}) {
   return { email: address, identityId: rows[0].id as string };
 }
 
-type Case = { pair: string; run: (rid: string) => Promise<request.Response> };
+type Case = { pair: string; name?: string; run: (rid: string) => Promise<request.Response> };
 const staffOf = async () => {
   const b = await fx.business();
   return { b, staff: await fx.member(b, 'staff') };
@@ -173,22 +173,30 @@ const CASES: Case[] = [
         email: (await person({ verified: false })).email,
       }),
   },
-  // tenancy refusals (denied) and failures
+  // the policy middleware's refusals (P5.4): a merchant permission and a platform one
   {
-    pair: 'merchant.profile_updated/denied',
+    pair: 'authz.denied/denied',
+    name: 'authz.denied/denied (staff, merchant permission)',
     run: async (rid) =>
       asStaff((await staffOf()).staff.token, 'patch', '/v1/merchant/profile', rid, { name: 'Not Mine Ltd' }),
   },
   {
-    pair: 'merchant.branch_created/denied',
-    run: async (rid) =>
-      asStaff((await staffOf()).staff.token, 'post', '/v1/merchant/branches', rid, { name: 'Not Mine' }),
+    pair: 'authz.denied/denied',
+    name: 'authz.denied/denied (platform support, platform permission)',
+    run: async (rid) => {
+      const [b, support] = [await fx.business(), await fx.platformAdmin('support')];
+      return asStaff(support.token, 'post', `/v1/platform/merchants/${b.merchantId}/deactivate`, rid, {
+        reason: 'not allowed',
+      });
+    },
   },
+  // tenancy refusals the database decides (denied) and failures
   {
     pair: 'merchant.member_deactivated/denied',
     run: async (rid) => {
-      const { b, staff } = await staffOf();
-      return asStaff(staff.token, 'post', `/v1/merchant/members/${b.owner.membershipId}/deactivate`, rid);
+      // The owner's own membership changes only by an ownership transfer (owner_protected).
+      const b = await fx.business();
+      return asStaff(b.owner.token, 'post', `/v1/merchant/members/${b.owner.membershipId}/deactivate`, rid);
     },
   },
   {
@@ -201,14 +209,6 @@ const CASES: Case[] = [
       );
       return asStaff(b.owner.token, 'post', `/v1/merchant/members/${staff.membershipId}/deactivate`, rid);
     },
-  },
-  {
-    pair: 'merchant.invitation_issued/denied',
-    run: async (rid) =>
-      asStaff((await staffOf()).staff.token, 'post', '/v1/merchant/invitations', rid, {
-        email: uniqueEmail('x'),
-        kind: 'agent',
-      }),
   },
   {
     pair: 'merchant.invitation_issued/failure',
@@ -230,16 +230,7 @@ const CASES: Case[] = [
         rid,
       ),
   },
-  // platform refusals and failures
-  {
-    pair: 'platform.merchant_deactivated/denied',
-    run: async (rid) => {
-      const [b, support] = [await fx.business(), await fx.platformAdmin('support')];
-      return asStaff(support.token, 'post', `/v1/platform/merchants/${b.merchantId}/deactivate`, rid, {
-        reason: 'not allowed',
-      });
-    },
-  },
+  // platform failures
   {
     pair: 'platform.merchant_reactivated/failure',
     run: async (rid) => {
@@ -260,7 +251,7 @@ const CASES: Case[] = [
   },
 ];
 
-describe.each(CASES)('$pair', ({ pair, run }) => {
+describe.each(CASES.map((c) => ({ ...c, name: c.name ?? c.pair })))('$name', ({ pair, run }) => {
   const [action, outcome] = pair.split('/') as [string, string];
   const ofPair = (rows: Line[]) => rows.filter((r) => r.action === action && r.outcome === outcome);
 

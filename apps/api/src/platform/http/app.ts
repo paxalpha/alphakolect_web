@@ -26,6 +26,7 @@ import {
   platformMerchantHandlers,
 } from '../../modules/tenancy/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
+import { authorize } from '../authorization.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { Mailer, type EmailSender } from '../email.js';
@@ -137,7 +138,11 @@ export function createApp({
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).
   app.use(
     API_PREFIX,
-    buildV1Router(handlers, (endpoint) => authenticate(endpoint, auth)),
+    buildV1Router(
+      handlers,
+      (endpoint) => authenticate(endpoint, { ...auth, logger }),
+      (endpoint) => authorize(endpoint, { audit, logger }),
+    ),
   );
 
   app.use(notFoundHandler);

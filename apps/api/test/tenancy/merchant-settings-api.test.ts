@@ -321,24 +321,36 @@ describe.each([
 
 describe('who may manage (T9) and who may call at all', () => {
   const management = [
-    ['get', '/v1/merchant/profile'],
-    ['patch', '/v1/merchant/profile', { name: 'Staff Rename' }],
-    ['get', '/v1/merchant/branches'],
-    ['post', '/v1/merchant/branches', { name: 'Staff Branch' }],
-    ['get', '/v1/merchant/roles'],
-    ['post', '/v1/merchant/roles', { name: 'Staff Role' }],
+    ['get', '/v1/merchant/profile', undefined, 'getMerchantProfile', 'merchant.profile.read'],
+    [
+      'patch',
+      '/v1/merchant/profile',
+      { name: 'Staff Rename' },
+      'updateMerchantProfile',
+      'merchant.profile.update',
+    ],
+    ['get', '/v1/merchant/branches', undefined, 'listBranches', 'merchant.branches.read'],
+    ['post', '/v1/merchant/branches', { name: 'Staff Branch' }, 'createBranch', 'merchant.branches.manage'],
+    ['get', '/v1/merchant/roles', undefined, 'listRoles', 'merchant.roles.read'],
+    ['post', '/v1/merchant/roles', { name: 'Staff Role' }, 'createRole', 'merchant.roles.manage'],
   ] as const;
 
-  it('staff: 403 FORBIDDEN on every management endpoint; refused changes audited as denied', async () => {
+  it('staff: 403 FORBIDDEN on every management endpoint; every refusal recorded as authz.denied', async () => {
     const staff = await member(a.merchantId, 'staff');
-    for (const [method, path, body] of management) {
+    for (const [method, path, body, operation, permission] of management) {
       const res = await call(staff.token, method, path, body);
       expectError(res, 403, 'FORBIDDEN');
-      if (method !== 'get') {
-        expect(await auditFor(res)).toMatchObject([
-          { outcome: 'denied', merchant_id: a.merchantId, summary: { reason: 'not_owner', kind: 'staff' } },
-        ]);
-      }
+      // P5.4: the policy middleware refuses before the handler — reads too, which P4 did not record.
+      expect(await auditFor(res)).toMatchObject([
+        {
+          action: 'authz.denied',
+          outcome: 'denied',
+          merchant_id: a.merchantId,
+          target_type: null,
+          target_id: null,
+          summary: { operation, permission },
+        },
+      ]);
     }
     const branch = (await call(a.token, 'post', '/v1/merchant/branches', { name: 'Staff target' })).body
       .branchId;

@@ -73,7 +73,7 @@ const app = express();
 app.use(express.json());
 app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
 for (const e of Object.values(E)) {
-  app[e.method](e.path, authenticate(e, auth), (req, res) => {
+  app[e.method](e.path, authenticate(e, { ...auth, logger: pino({ level: 'silent' }) }), (req, res) => {
     res.json(req.auth);
   });
 }

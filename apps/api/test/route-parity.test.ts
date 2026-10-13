@@ -62,7 +62,7 @@ describe('Express routes and the contract registry are identical', () => {
     expect(expressRoutes).toEqual(contractRoutes);
   });
 
-  it('mounts authentication in front of every secured endpoint (and only there), then input validation in front of every endpoint', () => {
+  it('mounts authentication in front of every secured endpoint (and only there), then input validation in front of every endpoint, then authorization on every permission endpoint (and only there)', () => {
     const v1 = appStack.find(isRouter)!;
     // Keyed by method and path: one path may carry several endpoints (e.g. GET and PATCH /merchant/profile).
     const byRoute = new Map(
@@ -75,6 +75,7 @@ describe('Express routes and the contract registry are identical', () => {
           ]),
         ),
     );
+    let authorized = 0;
     for (const e of Object.values(endpoints) as EndpointContract[]) {
       const chain = byRoute.get(`${e.method} ${toExpressPath(e.path)}`);
       const secured = (e.security?.length ?? 0) > 0;
@@ -82,8 +83,16 @@ describe('Express routes and the contract registry are identical', () => {
         ...(secured ? ['authenticateRequest'] : []),
         // P5.3: every endpoint — path parameters, query parameters (none unless declared) and body.
         'validateRequestInput',
+        // P5.4: the policy middleware, on every permission endpoint and only there (moved here from P5.3).
+        ...(e.authorization.class === 'permission' ? ['authorizeRequest'] : []),
       ];
       expect(chain?.slice(0, -1), `${e.id} middleware chain`).toEqual(expected);
+      if (chain?.includes('authorizeRequest')) authorized += 1;
     }
+    // Sanity: the check is looking at real permission endpoints (every P4 owner-only operation).
+    expect(authorized).toBe(
+      Object.values(endpoints).filter((e) => e.authorization.class === 'permission').length,
+    );
+    expect(authorized).toBeGreaterThanOrEqual(20);
   });
 });

@@ -17,6 +17,7 @@ import { validateRequest } from './validate.js';
 //
 // P5.3: every endpoint declares exactly one authorization class (P5 plan §5). The router checks every declaration
 // before it mounts anything and refuses to start on a missing or invalid one, so no endpoint is public by omission.
+// P5.4: every `permission` endpoint — and only those — gets the authorization middleware, after validation.
 
 export type Handlers = { [K in EndpointId]: RequestHandler };
 
@@ -98,15 +99,18 @@ export function assertAuthorizationDeclared(registry: Record<string, EndpointCon
 export function buildV1Router(
   handlers: Handlers,
   authenticateFor: (endpoint: EndpointContract) => RequestHandler,
+  authorizeFor: (endpoint: EndpointContract) => RequestHandler,
 ): Router {
   assertAuthorizationDeclared(endpoints);
   const router = Router();
   for (const id of Object.keys(endpoints) as EndpointId[]) {
     const endpoint: EndpointContract = endpoints[id];
-    // Authentication first: an unauthenticated caller learns nothing from validation errors.
+    // Authentication first: an unauthenticated caller learns nothing from validation errors. Authorization after
+    // validation, as P4's in-handler checks were, so every answer stays the same (P5.4: zero behaviour change).
     const chain = [
       ...(endpoint.security?.length ? [authenticateFor(endpoint)] : []),
       validateRequest(endpoint),
+      ...(endpoint.authorization.class === 'permission' ? [authorizeFor(endpoint)] : []),
       handlers[id],
     ];
     router[endpoint.method](toExpressPath(endpoint.path), ...chain);

@@ -21,10 +21,12 @@ export type TenantContext = Readonly<{
   sessionId: string;
   audience: 'merchant' | 'agent';
   kind: MembershipKind;
-  /** Staff only: their merchant-defined role (data only until P5). */
+  /** Staff only: their merchant-defined role, whose grants are their permissions (ADR-16). */
   roleId: string | null;
   /** Staff only: the one branch they are restricted to; null = all branches (ADR-15 T7). */
   branchId: string | null;
+  /** The restricting branch's state (active | archived); null when unrestricted. */
+  branchStatus: string | null;
   /** Effective permissions from this request's resolver (P5.2, ADR-16); the database still decides every write. */
   permissions: readonly Permission[];
 }>;
@@ -53,6 +55,7 @@ export function tenantContextOf(auth: AuthContext | undefined): TenantContext {
     kind: auth.kind as MembershipKind,
     roleId: auth.roleId,
     branchId: auth.branchId,
+    branchStatus: auth.branchStatus,
     permissions: auth.permissions,
   });
 }

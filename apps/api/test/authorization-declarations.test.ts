@@ -179,9 +179,8 @@ describe('an invalid declaration is refused (fail closed at startup)', () => {
     health.authorization = undefined;
     try {
       const noHandlers = {} as Handlers;
-      expect(() => buildV1Router(noHandlers, () => (_req, _res, next) => next())).toThrow(
-        /getHealth: no authorization declared/,
-      );
+      const pass = () => (_req: unknown, _res: unknown, next: () => void) => next();
+      expect(() => buildV1Router(noHandlers, pass, pass)).toThrow(/getHealth: no authorization declared/);
     } finally {
       health.authorization = original;
     }

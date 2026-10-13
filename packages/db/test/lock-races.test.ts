@@ -15,13 +15,15 @@ const DEADLOCK = '40P01';
 let x: pg.Client; // stages a race by holding one row
 let t1: pg.Client;
 let t2: pg.Client;
+let t3: pg.Client;
 let watcher: pg.Client;
 let owner: pg.Client;
 /** Backend ids, read once: a busy connection cannot answer a query until its blocked statement ends. */
-const pid = { t1: 0, t2: 0 };
+const pid = { t1: 0, t2: 0, t3: 0 };
 beforeAll(async () => {
-  [x, t1, t2, watcher, owner] = await Promise.all([
+  [x, t1, t2, t3, watcher, owner] = await Promise.all([
     connectAs('migrator'),
+    connectAs('app'),
     connectAs('app'),
     connectAs('app'),
     connectAs('migrator'),
@@ -29,9 +31,10 @@ beforeAll(async () => {
   ]);
   pid.t1 = await pidOf(t1);
   pid.t2 = await pidOf(t2);
+  pid.t3 = await pidOf(t3);
 });
 afterAll(async () => {
-  await Promise.all([x, t1, t2, watcher, owner].map((c) => c.end()));
+  await Promise.all([x, t1, t2, t3, watcher, owner].map((c) => c.end()));
 });
 
 const hash = () => createHash('sha256').update(randomBytes(32)).digest('hex');
@@ -103,6 +106,7 @@ async function business({ verified = true } = {}) {
     ownerIdentityId: s.identity_id as string,
     // A business pending verification has no active membership to sign in with.
     ownerSession: verified ? await session(s.identity_id, 'merchant', o.id) : '',
+    ownerMembershipId: o.id as string,
     verification,
   };
 }
@@ -236,6 +240,320 @@ describe('email verification while a super admin deactivates the business (§7.2
       expect(deactivate.rows![0]!.outcome).toBe('ok');
       expect(verify.rows![0]!.id).toBe(ownerIdentityId);
       expect(status).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+// ── P5.5 step 3: the privileged operations under their authority locks ──────────────────────────────────────────────
+
+type Racer = { c: pg.Client; pid: number; run: () => Promise<pg.QueryResult> };
+/**
+ * x holds one row FOR UPDATE; each racer starts in turn and must be waiting for a lock (on that row or behind an earlier
+ * racer) before the next starts; then x releases, and every racer's transaction ends as soon as its statement does.
+ */
+async function staged(hold: { table: string; id: string }, racers: Racer[]): Promise<Settled[]> {
+  await x.query('BEGIN');
+  await x.query(`SELECT 1 FROM ${hold.table} WHERE id = $1 FOR UPDATE`, [hold.id]);
+  const pending: Promise<Settled>[] = [];
+  for (const r of racers) {
+    await r.c.query('BEGIN');
+    pending.push(inTransaction(r.c, r.run()));
+    await waitsForALock(r.pid);
+  }
+  await x.query('ROLLBACK');
+  return Promise.all(pending);
+}
+const outcomes = (settled: Settled[]) =>
+  settled.map((s) => (s.code ? `error ${s.code}` : String(s.rows![0]!.outcome)));
+
+/** A staff member (verified, with a password) holding the given role. */
+async function staff(b: Awaited<ReturnType<typeof business>>, roleId: string) {
+  const {
+    rows: [i],
+  } = await owner.query(
+    `INSERT INTO identity.identities (email, email_verified_at, password_hash) VALUES ($1, now(), $2) RETURNING id`,
+    [email('staff'), ARGON],
+  );
+  const {
+    rows: [m],
+  } = await owner.query(
+    `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id) VALUES ($1, $2, 'staff', $3) RETURNING id`,
+    [b.merchantId, i.id, roleId],
+  );
+  return { identityId: i.id as string, membershipId: m.id as string };
+}
+async function role(merchantId: string) {
+  return (
+    await owner.query(`INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+      merchantId,
+      `Race role ${randomBytes(3).toString('hex')}`,
+    ])
+  ).rows[0].id as string;
+}
+const membershipState = async (id: string) =>
+  (await owner.query(`SELECT kind, status FROM tenancy.merchant_memberships WHERE id = $1`, [id]))
+    .rows[0] as {
+    kind: string;
+    status: string;
+  };
+const merchantStatus = async (id: string) =>
+  (await owner.query(`SELECT status FROM tenancy.merchants WHERE id = $1`, [id])).rows[0].status as string;
+
+const updateMembership = (
+  c: pg.Client,
+  sessionId: string,
+  target: string,
+  action: string,
+  roleId: string | null,
+) =>
+  c.query(`SELECT * FROM tenancy.update_membership($1, $2, $3, $4, NULL)`, [
+    sessionId,
+    target,
+    action,
+    roleId,
+  ]);
+const setStatus = (c: pg.Client, sessionId: string, merchantId: string, action: string) =>
+  c.query(`SELECT * FROM tenancy.set_merchant_status($1, $2, $3, 'race')`, [sessionId, merchantId, action]);
+const transfer = (c: pg.Client, sessionId: string, merchantId: string, newOwner: string, roleId: string) =>
+  c.query(`SELECT * FROM tenancy.transfer_ownership($1, $2, $3, $4, false)`, [
+    sessionId,
+    merchantId,
+    newOwner,
+    roleId,
+  ]);
+
+describe('(b) two of the owner’s sessions act on two members at once, in both orders (§7.2)', () => {
+  it(`never deadlocks: ${RUNS} staged runs, both changes made`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await role(b.merchantId);
+      const [a, z] = [await staff(b, roleId), await staff(b, roleId)];
+      const second = await session(b.ownerIdentityId, 'merchant', b.ownerMembershipId);
+      // Even runs: deactivate A while reassigning Z; odd runs: the reverse.
+      const [first, other] = i % 2 ? [z, a] : [a, z];
+      const results = await staged({ table: 'tenancy.merchant_memberships', id: b.ownerMembershipId }, [
+        {
+          c: t1,
+          pid: pid.t1,
+          run: () => updateMembership(t1, b.ownerSession, first.membershipId, 'deactivate', null),
+        },
+        { c: t2, pid: pid.t2, run: () => updateMembership(t2, second, other.membershipId, 'assign', roleId) },
+      ]);
+      expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+      expect((await membershipState(first.membershipId)).status).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+describe('(a), (d) an ownership transfer against the outgoing owner’s member change, in both orders (§7.2)', () => {
+  let admin: Awaited<ReturnType<typeof superAdmin>>;
+  beforeAll(async () => {
+    admin = await superAdmin();
+  });
+
+  it(`never deadlocks: ${RUNS} staged runs; the change is made when it ran first, refused when the transfer did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await role(b.merchantId);
+      const target = await staff(b, roleId);
+      const successor = await staff(b, roleId);
+      const change = {
+        c: t1,
+        pid: pid.t1,
+        run: () => updateMembership(t1, b.ownerSession, target.membershipId, 'deactivate', null),
+      };
+      const handOver = {
+        c: t2,
+        pid: pid.t2,
+        run: () => transfer(t2, admin.session, b.merchantId, successor.membershipId, roleId),
+      };
+      if (i % 2 === 0) {
+        // The owner's change first: it holds the merchant (S) and waits for its target; the transfer waits for it.
+        const results = await staged({ table: 'tenancy.merchant_memberships', id: target.membershipId }, [
+          change,
+          handOver,
+        ]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+        expect((await membershipState(target.membershipId)).status).toBe('deactivated');
+      } else {
+        // The transfer first: it holds the merchant (NKU) and waits for the successor's identity; the change waits for
+        // it, then its re-check finds the former owner without the permission — refused, nothing changed.
+        const results = await staged({ table: 'identity.identities', id: successor.identityId }, [
+          handOver,
+          change,
+        ]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+        expect((await membershipState(target.membershipId)).status).toBe('active');
+      }
+      expect((await membershipState(successor.membershipId)).kind).toBe('owner');
+    }
+  }, 600_000);
+});
+
+describe('(f) a merchant deactivation against an ownership transfer and against an invitation issue (§7.2)', () => {
+  let admin: Awaited<ReturnType<typeof superAdmin>>;
+  beforeAll(async () => {
+    admin = await superAdmin();
+  });
+
+  it(`deactivation and transfer: never deadlocks, ${RUNS} staged runs in both orders, both succeed`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await role(b.merchantId);
+      const successor = await staff(b, roleId);
+      const deactivate = {
+        c: t1,
+        pid: pid.t1,
+        run: () => setStatus(t1, admin.session, b.merchantId, 'deactivate'),
+      };
+      const handOver = {
+        c: t2,
+        pid: pid.t2,
+        run: () => transfer(t2, admin.session, b.merchantId, successor.membershipId, roleId),
+      };
+      const results =
+        i % 2 === 0
+          ? await staged({ table: 'identity.identities', id: b.ownerIdentityId }, [deactivate, handOver])
+          : await staged({ table: 'identity.identities', id: successor.identityId }, [handOver, deactivate]);
+      expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+      expect(await merchantStatus(b.merchantId)).toBe('deactivated');
+    }
+  }, 600_000);
+
+  it(`deactivation and invitation issue: never deadlocks, ${RUNS} staged runs; an issue after the deactivation is refused`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const deactivate = {
+        c: t1,
+        pid: pid.t1,
+        run: () => setStatus(t1, admin.session, b.merchantId, 'deactivate'),
+      };
+      const invite = { c: t2, pid: pid.t2, run: () => issue(t2, b.ownerSession, email('race-invitee')) };
+      if (i % 2 === 0) {
+        // The issue first: it holds the merchant (S) and waits for the owner's own membership.
+        const results = await staged({ table: 'tenancy.merchant_memberships', id: b.ownerMembershipId }, [
+          invite,
+          deactivate,
+        ]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+      } else {
+        // The deactivation first: the issue's re-check finds the business deactivated — refused.
+        const results = await staged({ table: 'identity.identities', id: b.ownerIdentityId }, [
+          deactivate,
+          invite,
+        ]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+      }
+      expect(await merchantStatus(b.merchantId)).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+describe('(g) account setup admitting an invitation against a merchant deactivation (§7.2)', () => {
+  let admin: Awaited<ReturnType<typeof superAdmin>>;
+  beforeAll(async () => {
+    admin = await superAdmin();
+  });
+
+  it(`never deadlocks: ${RUNS} staged runs; admitted when setup ran first, not admitted when the deactivation did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const setupHash = hash();
+      const address = email('race-newcomer');
+      const {
+        rows: [issued],
+      } = await t1.query(
+        `SELECT * FROM tenancy.issue_invitation($1, $2, 'agent', NULL, NULL, $3, $4, 86400)`,
+        [b.ownerSession, address, hash(), setupHash],
+      );
+      const setup = {
+        c: t1,
+        pid: pid.t1,
+        run: () => t1.query(`SELECT identity.complete_account_setup($1, $2) AS outcome`, [setupHash, ARGON]),
+      };
+      const deactivate = {
+        c: t2,
+        pid: pid.t2,
+        run: () => setStatus(t2, admin.session, b.merchantId, 'deactivate'),
+      };
+      const results =
+        i % 2 === 0
+          ? await staged({ table: 'tenancy.invitations', id: issued.invitation_id }, [setup, deactivate])
+          : await staged({ table: 'identity.identities', id: b.ownerIdentityId }, [deactivate, setup]);
+      expect(
+        results.map((r) => r.code),
+        `run ${i}`,
+      ).toEqual([null, null]);
+      const {
+        rows: [person],
+      } = await owner.query(`SELECT id FROM identity.identities WHERE email = $1`, [address]);
+      const { rowCount } = await owner.query(
+        `SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = $1 AND identity_id = $2`,
+        [b.merchantId, person.id],
+      );
+      expect(rowCount, `run ${i}: admitted`).toBe(i % 2 === 0 ? 1 : 0);
+      expect(await merchantStatus(b.merchantId)).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+describe('(j) acceptance of an invitation against its revocation and its re-issue (§7.2)', () => {
+  it(`never deadlocks: ${RUNS} staged runs; exactly one of acceptance and withdrawal takes effect`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      // An existing account (verified, with a password): invited by link.
+      const {
+        rows: [person],
+      } = await owner.query(
+        `INSERT INTO identity.identities (email, email_verified_at, password_hash) VALUES ($1, now(), $2) RETURNING id, email`,
+        [email('race-member'), ARGON],
+      );
+      const token = hash();
+      const {
+        rows: [issued],
+      } = await t1.query(
+        `SELECT * FROM tenancy.issue_invitation($1, $2, 'agent', NULL, NULL, $3, $4, 86400)`,
+        [b.ownerSession, person.email, token, hash()],
+      );
+      const second = await session(b.ownerIdentityId, 'merchant', b.ownerMembershipId);
+      const results = await staged({ table: 'tenancy.invitations', id: issued.invitation_id }, [
+        {
+          c: t1,
+          pid: pid.t1,
+          run: () => t1.query(`SELECT * FROM tenancy.accept_invitation($1, $2)`, [token, person.id]),
+        },
+        {
+          c: t2,
+          pid: pid.t2,
+          run: () =>
+            t2.query(`SELECT * FROM tenancy.revoke_invitation($1, $2)`, [
+              b.ownerSession,
+              issued.invitation_id,
+            ]),
+        },
+        { c: t3, pid: pid.t3, run: () => issue(t3, second, person.email) },
+      ]);
+      const [accepted, revoked, reissued] = outcomes(results);
+      expect(
+        [accepted, revoked, reissued].filter((o) => o.startsWith('error')),
+        `run ${i}: ${[accepted, revoked, reissued].join(', ')}`,
+      ).toEqual([]);
+      const { rowCount: members } = await owner.query(
+        `SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = $1 AND identity_id = $2`,
+        [b.merchantId, person.id],
+      );
+      const {
+        rows: [first],
+      } = await owner.query(`SELECT accepted_at, revoked_at FROM tenancy.invitations WHERE id = $1`, [
+        issued.invitation_id,
+      ]);
+      // Exactly one of acceptance and withdrawal took effect on that invitation; a membership exists iff it was accepted.
+      expect([first.accepted_at, first.revoked_at].filter(Boolean)).toHaveLength(1);
+      expect(members).toBe(first.accepted_at ? 1 : 0);
+      if (accepted === 'ok') {
+        expect(revoked).toBe('invalid_transition');
+        expect(reissued).toBe('already_member');
+      }
     }
   }, 600_000);
 });

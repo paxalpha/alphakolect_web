@@ -77,6 +77,9 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.protect_permission_catalog()': OWNER_ONLY,
   'identity.session_limits(text, text)': OWNER_ONLY,
   'identity.permissions_of(text, text, text, uuid, uuid, uuid)': OWNER_ONLY, // P5.2: inner, the one permission rule
+  // P5.5 step 1: the lock helpers (§7.2 L5) — called only by definer functions
+  'identity.lock_one_time_tokens(uuid[], uuid[])': OWNER_ONLY,
+  'identity.lock_platform_memberships(uuid[], uuid[])': OWNER_ONLY,
   // tenancy
   'tenancy.accept_invitation(text, uuid)': APP,
   'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer)': APP,
@@ -88,6 +91,11 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.admit_invitation(uuid, uuid)': OWNER_ONLY,
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
+  'tenancy.lock_branches(uuid[], uuid[])': OWNER_ONLY,
+  'tenancy.lock_invitations(uuid[], uuid[])': OWNER_ONLY,
+  'tenancy.lock_memberships(uuid[], uuid[])': OWNER_ONLY,
+  'tenancy.lock_merchants(uuid[], uuid[])': OWNER_ONLY,
+  'tenancy.lock_roles(uuid[], uuid[])': OWNER_ONLY,
   // ledger (P1 invariants: trigger and its check, never called by the app)
   'ledger.assert_entry_balanced(uuid)': OWNER_ONLY,
   'ledger.check_entry_balanced_trigger()': OWNER_ONLY,

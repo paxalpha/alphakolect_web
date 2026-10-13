@@ -8,6 +8,12 @@
     ".": "./src/index.ts",
     "./testing": {
       "@alphakolect/source": "./test/support/setup-db.ts"
+    },
+    "./lock-analysis": {
+      "@alphakolect/source": "./test/support/lock-analysis.ts"
+    },
+    "./lock-plan": {
+      "@alphakolect/source": "./test/support/lock-plan.ts"
     }
   },
   "scripts": {

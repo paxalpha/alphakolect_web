@@ -216,3 +216,39 @@ export const BASELINE: readonly string[] = [
  * until it is empty and the tolerance mechanism is deleted.
  */
 export const TOLERATED: readonly string[] = [...BASELINE];
+
+/**
+ * The nested-writer table (R27): the one T2 flow allowed to reach pattern-A audit inserts inside its definer call.
+ * Account setup's transaction (PasswordService.completeSetup) calls identity.complete_account_setup, which admits each
+ * pending invitation through tenancy.admit_invitation_locked, writing one #14 per admission (0..n per transaction).
+ * Read by the repository-transaction classifier (apps/api/test/locks), the writer guard and the coverage guard.
+ */
+export const NESTED_WRITERS: readonly { flow: string; fn: string; pair: string }[] = [
+  {
+    flow: 'PasswordService.completeSetup',
+    fn: 'tenancy.admit_invitation_locked',
+    pair: 'auth.invitation_accepted/success',
+  },
+];
+
+/**
+ * Report mode for repository transactions (R34, R17): these match no class until the P5.5 step that rewrites them —
+ * the settings writes (direct writes, step 4) and the member, invitation, lifecycle and transfer flows (written with
+ * recordWithin until their functions write their own audit rows, steps 3 and 7). The list only shrinks.
+ */
+export const TRANSACTIONS_TOLERATED: readonly string[] = [
+  'MerchantSettingsService.rename',
+  'MerchantSettingsService.create',
+  'MerchantSettingsService.update',
+  'MembershipService.change',
+  'InvitationService.create',
+  'InvitationService.revoke',
+  'InvitationService.accept',
+  'MerchantLifecycleService.change',
+  'MerchantLifecycleService.transferOwnership',
+];
+
+/** Nested-writer entries whose function does not exist yet (step 5 creates tenancy.admit_invitation_locked). */
+export const NESTED_WRITERS_TOLERATED: readonly string[] = [
+  'PasswordService.completeSetup → tenancy.admit_invitation_locked',
+];

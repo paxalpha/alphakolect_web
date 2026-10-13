@@ -558,3 +558,180 @@ describe('(j) acceptance of an invitation against its revocation and its re-issu
     }
   }, 600_000);
 });
+
+// ── P5.5 step 4: the branch and role writers ───────────────────────────────────────────────────────────────────────
+
+/** A role of `b` holding `permissions` — granted as the table owner (a fixture; no app path grants before P5.6). */
+async function grantedRole(merchantId: string, permissions: string[]) {
+  const roleId = await role(merchantId);
+  await owner.query(
+    `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) SELECT $1, $2, unnest($3::text[])`,
+    [merchantId, roleId, permissions],
+  );
+  return roleId;
+}
+async function branch(merchantId: string) {
+  return (
+    await owner.query(`INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+      merchantId,
+      `Race branch ${randomBytes(3).toString('hex')}`,
+    ])
+  ).rows[0].id as string;
+}
+const updateBranch = (c: pg.Client, sessionId: string, branchId: string, name: string) =>
+  c.query(`SELECT * FROM tenancy.update_branch($1, $2, $3, NULL)`, [sessionId, branchId, name]);
+const updateRole = (c: pg.Client, sessionId: string, roleId: string, status: string) =>
+  c.query(`SELECT * FROM tenancy.update_role($1, $2, NULL, $3)`, [sessionId, roleId, status]);
+const branchName = async (id: string) =>
+  (await owner.query(`SELECT name FROM tenancy.branches WHERE id = $1`, [id])).rows[0].name as string;
+
+describe('(b) a staff member’s branch write against the owner deactivating that staff member, in both orders (§7.2)', () => {
+  it(`never deadlocks: ${RUNS} staged runs; the write is made when it ran first, refused when the deactivation did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await grantedRole(b.merchantId, ['merchant.branches.manage']);
+      const member = await staff(b, roleId);
+      const staffSession = await session(member.identityId, 'merchant', member.membershipId);
+      const branchId = await branch(b.merchantId);
+      const name = `Renamed ${i}`;
+      const write = { c: t1, pid: pid.t1, run: () => updateBranch(t1, staffSession, branchId, name) };
+      const deactivate = {
+        c: t2,
+        pid: pid.t2,
+        run: () => updateMembership(t2, b.ownerSession, member.membershipId, 'deactivate', null),
+      };
+      if (i % 2 === 0) {
+        // The write first: it holds the staff member's membership and role and waits for the branch; the deactivation
+        // waits for that membership.
+        const results = await staged({ table: 'tenancy.branches', id: branchId }, [write, deactivate]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await branchName(branchId)).toBe(name);
+      } else {
+        // The deactivation first: it holds the membership and waits to revoke the staff member's session; the write
+        // waits for the membership, then its re-check finds the session revoked — refused, nothing written.
+        const results = await staged({ table: 'identity.sessions', id: staffSession }, [deactivate, write]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+        expect(await branchName(branchId)).not.toBe(name);
+      }
+      expect((await membershipState(member.membershipId)).status).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+describe('(i) account setup admitting two invitations of two businesses against member operations and role edits in both (§7.2)', () => {
+  /** Two businesses inviting one new person as staff (role and branch each); the second issue's setup link is live. */
+  async function fixture() {
+    const [m1, m2] = [await business(), await business()];
+    const address = email('race-two-invitations');
+    const per = async (b: Awaited<ReturnType<typeof business>>) => {
+      const roleId = await role(b.merchantId);
+      const branchId = await branch(b.merchantId);
+      const setupHash = hash();
+      await t1.query(`SELECT * FROM tenancy.issue_invitation($1, $2, 'staff', $3, $4, $5, $6, 86400)`, [
+        b.ownerSession,
+        address,
+        roleId,
+        branchId,
+        hash(),
+        setupHash,
+      ]);
+      // A member of this business for the concurrent member operation.
+      const other = await staff(b, roleId);
+      return { ...b, roleId, branchId, setupHash, other };
+    };
+    const one = await per(m1);
+    const two = await per(m2);
+    const {
+      rows: [person],
+    } = await owner.query(`SELECT id FROM identity.identities WHERE email = $1`, [address]);
+    return { one, two, personId: person.id as string };
+  }
+  const admitted = async (merchantId: string, personId: string) =>
+    (
+      await owner.query(
+        `SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = $1 AND identity_id = $2`,
+        [merchantId, personId],
+      )
+    ).rowCount;
+
+  /** x holds `holds`; each racer starts and is waiting for a lock before the next starts; then x releases. */
+  async function stagedMany(holds: { table: string; id: string }[], racers: Racer[]): Promise<Settled[]> {
+    await x.query('BEGIN');
+    for (const h of holds) await x.query(`SELECT 1 FROM ${h.table} WHERE id = $1 FOR UPDATE`, [h.id]);
+    const pending: Promise<Settled>[] = [];
+    for (const r of racers) {
+      await r.c.query('BEGIN');
+      pending.push(inTransaction(r.c, r.run()));
+      await waitsForALock(r.pid);
+    }
+    await x.query('ROLLBACK');
+    return Promise.all(pending);
+  }
+
+  it(`never deadlocks: ${RUNS} staged runs in both orders; admission follows the role's state when setup reached it`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const { one, two, personId } = await fixture();
+      const setup = {
+        c: t1,
+        pid: pid.t1,
+        run: () => t1.query(`SELECT identity.complete_account_setup($1, $2) AS id`, [two.setupHash, ARGON]),
+      };
+      // In the first business, the owner moves another member to the invited branch; in the second, the owner
+      // archives the role the invitation assigns.
+      const memberOp = {
+        c: t3,
+        pid: pid.t3,
+        run: () =>
+          t3.query(`SELECT * FROM tenancy.update_membership($1, $2, 'assign', $3, $4)`, [
+            one.ownerSession,
+            one.other.membershipId,
+            one.roleId,
+            one.branchId,
+          ]),
+      };
+      const roleEdit = {
+        c: t2,
+        pid: pid.t2,
+        run: () => updateRole(t2, two.ownerSession, two.roleId, 'archived'),
+      };
+
+      let results: Settled[];
+      if (i % 2 === 0) {
+        // Setup first: it holds both businesses, both invitations, the token, the person and both roles (S) and waits
+        // for the branches; the role edit waits for setup's hold on the role; the member operation for the branch.
+        results = await stagedMany(
+          [
+            { table: 'tenancy.branches', id: one.branchId },
+            { table: 'tenancy.branches', id: two.branchId },
+          ],
+          [setup, roleEdit, memberOp],
+        );
+        expect(
+          results.map((r) => r.code),
+          `run ${i}`,
+        ).toEqual([null, null, null]);
+        expect(outcomes(results.slice(1)), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await admitted(two.merchantId, personId), `run ${i}: admitted to the second`).toBe(1);
+      } else {
+        // The edits first: the role edit waits for the role (x), the member operation for its owner's membership (x);
+        // setup queues behind the role edit, and finds the role archived when it gets it — not admitted there.
+        results = await stagedMany(
+          [
+            { table: 'tenancy.roles', id: two.roleId },
+            { table: 'tenancy.merchant_memberships', id: one.ownerMembershipId },
+          ],
+          [roleEdit, memberOp, setup],
+        );
+        expect(
+          results.map((r) => r.code),
+          `run ${i}`,
+        ).toEqual([null, null, null]);
+        expect(outcomes(results.slice(0, 2)), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await admitted(two.merchantId, personId), `run ${i}: admitted to the second`).toBe(0);
+      }
+      // Setup completed either way, and the first business admitted the person.
+      expect(await admitted(one.merchantId, personId), `run ${i}: admitted to the first`).toBe(1);
+      expect((await membershipState(one.other.membershipId)).status).toBe('active');
+    }
+  }, 600_000);
+});

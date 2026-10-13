@@ -131,6 +131,11 @@ export const AUDIT_CATALOG = [
   bestEffort('platform.merchant_reactivated', 'failure', { reason }),
   bestEffort('platform.ownership_transferred', 'denied', { reason }),
   bestEffort('platform.ownership_transferred', 'failure', { reason }),
+  // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
+  bestEffort('authz.denied', 'denied', {
+    operation: { type: 'string', max: 64 },
+    permission: { type: 'string', max: 100 },
+  }),
 ] as const satisfies readonly CatalogEntry[];
 
 type Entries = (typeof AUDIT_CATALOG)[number];

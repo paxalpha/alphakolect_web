@@ -22,7 +22,7 @@ beforeAll(() => owner.connect());
 afterAll(() => owner.end());
 
 /**
- * The plan's §8.1 inventory of every pair that exists at this point (P5.3a), with each atomic pair's one writer.
+ * The plan's §8.1 inventory of every pair that exists at this point (P5.3a, P5.4), with each atomic pair's one writer.
  * Each later package adds its pairs here together with its writer and its coverage tests.
  */
 const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A' | 'B'; writer?: string }> = {
@@ -146,6 +146,8 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
         `platform.${i}/denied`,
         `platform.${i}/failure`,
       ]),
+      // P5.4: the policy middleware's refusal
+      'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),
   ),
 };

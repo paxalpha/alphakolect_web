@@ -6,8 +6,8 @@ import ts from 'typescript';
 // it calls with the transaction: a repository bound to it (`identity.within(tx)`), a function or method that receives
 // it or such a repository, and a function-typed parameter (resolved at its call sites, one variant per call site).
 // What it collects is what reaches the database through the transaction — every SQL statement, with constant
-// template substitutions folded (a constant map expands to its finite set of values), and every audit entry-point
-// call. Anything it cannot resolve is recorded and fails classification: non-constant SQL, a query on another
+// template substitutions folded (a constant map expands to its finite set of values, the statement's alternatives:
+// one of them runs, never all), and every audit entry-point call. Anything it cannot resolve is recorded and fails classification: non-constant SQL, a query on another
 // connection, a call that receives the transaction but cannot be resolved.
 
 export type AuditEntry = 'mutateAudited' | 'recordWithin' | 'recordBestEffort';
@@ -15,7 +15,8 @@ export type RepoTransaction = {
   /** `Class.method` of the transaction (a variant: the call site's `Class.method` it was resolved through). */
   name: string;
   at: string;
-  sql: { text: string; at: string }[];
+  /** Each SQL text; `stmt` numbers the statement it is an alternative of (one query call, one value at run time). */
+  sql: { text: string; at: string; stmt: number }[];
   audit: { entry: AuditEntry; pairs: string[] | null; at: string }[];
   unresolved: string[];
 };
@@ -38,6 +39,7 @@ export function repositoryTransactions(
 ): RepoTransaction[] {
   const checker = program.getTypeChecker();
   const files = program.getSourceFiles().filter((s) => sources.includes(s.fileName));
+  let statements = 0;
   const rel = (n: ts.Node) => path.relative(root, n.getSourceFile().fileName).replace(/\\/g, '/');
   const at = (n: ts.Node) =>
     `${rel(n)}:${n.getSourceFile().getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
@@ -197,7 +199,8 @@ export function repositoryTransactions(
         if (name === 'query') {
           if (isTx(callee.expression)) {
             const values = n.arguments[0] ? foldValue(n.arguments[0]) : null;
-            if (values) for (const text of values) out.sql.push({ text, at: at(n) });
+            const stmt = statements++;
+            if (values) for (const text of values) out.sql.push({ text, at: at(n), stmt });
             else out.unresolved.push(`${at(n)}: SQL that is not a constant`);
           } else {
             out.unresolved.push(
@@ -374,14 +377,19 @@ const strip = (sql: string) => sql.toLowerCase().replace(/'(?:[^']|'')*'/g, "''"
 export function classify(tx: RepoTransaction, rules: ClassRules): Classification {
   const problems = [...tx.unresolved];
   const definers = new Set<string>();
+  /** Per statement, the functions each of its alternatives calls. */
+  const calls = new Map<number, string[][]>();
   const directWrites: string[] = [];
   let locks = false;
-  for (const { text } of tx.sql) {
+  for (const { text, stmt } of tx.sql) {
     const s = strip(text);
     // A schema-qualified name followed by "(" is a call — in any schema but pg_catalog, so a function of a schema
     // the guard does not know is an unclassified function, never unseen — unless it is the table of INSERT INTO t (…).
+    const called: string[] = [];
     for (const m of s.matchAll(/(?<![a-z0-9_.])(?<!\binto\s+)([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s*\(/g))
-      if (m[1] !== 'pg_catalog') definers.add(`${m[1]}.${m[2]}`);
+      if (m[1] !== 'pg_catalog') called.push(`${m[1]}.${m[2]}`);
+    for (const fn of called) definers.add(fn);
+    calls.set(stmt, [...(calls.get(stmt) ?? []), called]);
     for (const m of s.matchAll(
       /\b(insert\s+into|delete\s+from|(?<!(?:for|key|do)\s)update)\s+([a-z_]+\.[a-z_][a-z0-9_]*)/g,
     ))
@@ -391,6 +399,15 @@ export function classify(tx: RepoTransaction, rules: ClassRules): Classification
   const classOf = (fn: string) => rules.classes[fn]?.class;
   for (const fn of definers) if (!classOf(fn)) problems.push(`${fn} is not a classified function`);
   const nonReaders = [...definers].filter((fn) => classOf(fn) !== 'reader');
+  // One privileged operation per transaction, counted per statement: a statement folded from a constant map runs one
+  // of its alternatives, so it is one operation if each alternative calls exactly one (a branch-or-role writer), and
+  // two statements that each call one are two operations.
+  const writingStatements = [...calls.values()]
+    .map((alternatives) => alternatives.map((c) => c.filter((fn) => classOf(fn) !== 'reader')))
+    .filter((alternatives) => alternatives.some((c) => c.length > 0));
+  const oneOperation =
+    writingStatements.length === 1 &&
+    writingStatements[0]!.every((c) => c.length === 1 && classOf(c[0]!) === 'operation');
   const audits = tx.audit;
   for (const a of audits) {
     if (!a.pairs) problems.push(`${a.at}: an audit pair the guard cannot resolve`);
@@ -414,14 +431,7 @@ export function classify(tx: RepoTransaction, rules: ClassRules): Classification
   )
     fits.push('T5');
   // T1 — privileged write: one planned operation, its audit rows written by itself (pattern A).
-  if (
-    audits.length === 0 &&
-    directWrites.length === 0 &&
-    !locks &&
-    nonReaders.length === 1 &&
-    classOf(nonReaders[0]!) === 'operation'
-  )
-    fits.push('T1');
+  if (audits.length === 0 && directWrites.length === 0 && !locks && oneOperation) fits.push('T1');
   // T2 — pattern-B audited write: identity definer calls and mutateAudited for approved pattern-B pairs.
   if (
     only('mutateAudited') &&

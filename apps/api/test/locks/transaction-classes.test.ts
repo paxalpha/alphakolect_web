@@ -147,6 +147,11 @@ describe('self-tests: each kind of violation fails the classification, the contr
     import type { AuditLog } from '../../src/modules/audit/audit-log.js';
     import type { IdentityRepository } from '../../src/modules/identity/repository.js';
     import type { Db } from '../../src/platform/db.js';
+    const WRITER = { members: 'tenancy.update_membership', invitations: 'tenancy.revoke_invitation' };
+    const BOTH = {
+      members: 'tenancy.update_membership($1, 1), tenancy.revoke_invitation($1, 1)',
+      invitations: 'tenancy.revoke_invitation($1, 1)',
+    };
     export class Probe {
       constructor(private readonly db: Db, private readonly identity: IdentityRepository, private readonly audit: AuditLog) {}
       async validB(id: string) {
@@ -158,6 +163,22 @@ describe('self-tests: each kind of violation fails the classification, the contr
       async validT1(session: string, invitation: string) {
         await this.db.transaction(async (tx) => {
           await tx.query(\`SELECT outcome FROM tenancy.revoke_invitation($1, $2)\`, [session, invitation]);
+        });
+      }
+      async eitherOperation(session: string, kind: 'members' | 'invitations') {
+        await this.db.transaction(async (tx) => {
+          await tx.query(\`SELECT outcome FROM \${WRITER[kind]}($1, 'x')\`, [session]);
+        });
+      }
+      async twoOperations(session: string, invitation: string) {
+        await this.db.transaction(async (tx) => {
+          await tx.query(\`SELECT outcome FROM tenancy.revoke_invitation($1, $2)\`, [session, invitation]);
+          await tx.query(\`SELECT outcome FROM tenancy.update_membership($1, 'x')\`, [session]);
+        });
+      }
+      async bothInOneAlternative(session: string, kind: 'members' | 'invitations') {
+        await this.db.transaction(async (tx) => {
+          await tx.query(\`SELECT \${BOTH[kind]}\`, [session]);
         });
       }
       async validT3(email: string) {
@@ -285,6 +306,14 @@ describe('self-tests: each kind of violation fails the classification, the contr
     expect(results.get('validT1')!.cls, problems('validT1')).toBe('T1');
     expect(results.get('validT3')!.cls, problems('validT3')).toBe('T3');
     expect(results.get('validT5')!.cls, problems('validT5')).toBe('T5');
+  });
+
+  it('one privileged operation, counted per statement: a constant map’s alternatives are one, two statements two', () => {
+    expect(results.get('eitherOperation')!.cls, problems('eitherOperation')).toBe('T1');
+    expect(results.get('twoOperations')!.cls).toBeNull();
+    expect(problems('twoOperations')).toContain('matches no class');
+    // An alternative that calls two operations is two, whatever the other alternatives call.
+    expect(results.get('bothInOneAlternative')!.cls).toBeNull();
   });
 
   it('a call of a function the guard does not know fails — never passes as read-only', () => {

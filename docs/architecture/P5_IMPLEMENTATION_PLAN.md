@@ -1900,6 +1900,80 @@ independent of the permission catalog); it is listed with them so it is complete
   `permission` endpoint and only there** (moved from P5.3 with the middleware it checks — reviewer's condition at the
   P5.3 gate, 2026-10-12).
 - **Done when:** the API enforces declarations with zero behaviour change for existing actors.
+- **Built 2026-10-13 — awaiting review at the P5.4 gate.** Commits `b260f3f` (migration
+  `20261013000800_authz_denied_event`: the best-effort pair `authz.denied`/denied, summary `operation` (64) and
+  `permission` (100); the mirror and the coverage inventory), `a39b2c7` (`CurrentMembership.permissions`, sorted),
+  `0ca5ae3` (`apps/api/src/platform/authorization.ts` — `decide` and `authorize`; the router mounts `authorize` on
+  every `permission` endpoint, after validation; `authenticate()` carries the restricting branch's state and signals a
+  resolver failure; tests), `1643c7a` (the interim owner checks removed; the source guard). **Tests, each listed
+  item:** the P4 isolation matrix passes unchanged — and fails when the middleware is not mounted (sabotage 1), so it is
+  a working oracle; the source guard parses every `apps/api/src` file except the policy module and refuses
+  `requireOwner`, `ownerOrDenied`, and any comparison, `case` or `includes`/`has`/`indexOf` test on `'owner'` or
+  `'super_admin'`, with a mutation test per form and type and data uses left alone; **denial responses unchanged:**
+  for each of the 21 permission endpoints, staff (merchant) or platform support (platform) receive P4's exact body —
+  status, code, message, request id — nothing changes, and exactly one `authz.denied` row is stored (actor, the
+  actor's business or none for a platform actor, no target, the operation and the permission); the owner and the
+  super admin pass the middleware on all 21; validation still answers first (400 before any refusal); route parity
+  asserts `authorizeRequest` on every permission endpoint and only there, with a count control; `decide` unit tests
+  with synthetic branch resources (§7.6); the middleware with synthetic endpoints — refused at build time on a
+  non-permission endpoint, the exact `recordBestEffort` call, and 500 with the signal and no denial when no session
+  reached it, when a branch endpoint has no resolver, and when the audit call itself throws; through the real app, an
+  injected resolver failure (§4 invariant 7) answers 500 `INTERNAL_ERROR`, logs one signal line holding only the signal
+  and the request id, stores no row and changes nothing; the membership endpoints return the owner's whole merchant
+  set, sorted, and `[]` for staff without grants and for agents. The per-action denial assertions in four API test
+  files and in `refusal-paths.test.ts` now expect `authz.denied`; the database's own refusals stay tested — the
+  `owner_protected` member refusal through the API (A7 case) and the lifecycle refusal with the middleware bypassed
+  (new). **Gate (§9.3), local, on the tree of `1643c7a`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 424, api 583, all passing; oasdiff against `origin/main`
+  (`5d8904b`): no breaking changes (its changelog: the required `permissions` property added to both membership
+  responses); gitleaks clean per commit. Each intermediate commit was checked on its own tree (`0ca5ae3`: typecheck,
+  lint, format and the whole API suite, 581); the final tree is byte-identical to the gated one. Not CI.
+  **Intermittent failure, not reproduced:** once, in `b260f3f`'s check of `test/audit` (four files in parallel), the A7
+  case `merchant.invitation_revoked/failure` failed — code from P5.3a, unchanged by P5.4; the error was not captured.
+  It passed on the immediate re-run and in two further runs of `test/audit`, the whole API suite on `0ca5ae3`'s tree and three whole-suite runs on the final tree (583 each). Carried, with the reviewer's P5.3a observation, to P5.5's
+  test-budget confirmation (§9.3). **Protections proven by sabotage** (restored byte-identical): (1) the middleware not
+  mounted — route parity, the denial oracle and the P4 isolation matrix fail (35 tests); (2) the middleware before
+  validation — route parity and the validation-first test fail; (3) `if (tenant.kind !== 'owner')` put back in a
+  service — the source guard fails; (4) the resolver failure not signalled — the resolution test fails. **Judgement
+  calls for the reviewer:**
+  (1) `authorize` runs **after** input validation: P4 validated before its in-service owner checks, so mounting after
+  keeps every answer identical (a refused caller with an invalid body still gets 400); validation reveals only the
+  contract's shape, which is published;
+  (2) P4's refusal messages are kept exactly — the middleware maps each permission to P4's text ("Only the business
+  owner can do this" for merchant permissions; the two platform messages). When P5.6 lets staff hold grantable
+  permissions, "only the business owner" becomes inaccurate for those; that user-facing wording is the owner's call
+  then (noted for P5.6);
+  (3) every refusal is now recorded, reads included (§8.1, §8.2a rule 6) — P4 recorded only refused changes. More rows,
+  no response change;
+  (4) `authz.denied` names the operation and the permission, never a target: the middleware runs before the resource
+  is resolved, so a path id is a client-supplied value that may not exist or may belong to another business. P4's
+  member and invitation denial rows carried the target id;
+  (5) the per-action denied pairs the helpers wrote (the profile, branch and role `denied` pairs, and `not_owner` on
+  member and invitation actions) are no longer written by the API; their catalog entries stay (never deleted). The
+  services still write the `denied` outcomes the database functions return (`forbidden`, `owner_protected`); for
+  `forbidden` the middleware now refuses first, so those are reachable only if the two disagree — the defence-in-depth
+  path, tested by bypass for the lifecycle; P5.5 aligns the functions;
+  (6) `GET /v1/agent/membership` shares the `CurrentMembership` schema, so it gains `permissions` too — always `[]`
+  (agents hold nothing), consistent with the `Session.permissions` rule for agents (P5.7). The plan named only the
+  merchant endpoint;
+  (7) the field is `string[]`, not an enum of the catalog (as `Role.permissions`), so a new catalog identifier never
+  changes the response schema;
+  (8) the branch decision (unit-tested only — the router still refuses branch endpoints, §7.6): a restriction to an
+  archived branch reaches nothing branch-scoped, its own branch included (404); a resource of no branch is not the
+  restricted member's (404); an unknown branch state counts as not active; merchant-wide endpoints ignore restrictions;
+  (9) the resolution signal covers the per-request resolver call in `authenticate()` and any error inside the decision.
+  Its line holds only the signal and the request id; the error itself is logged by the existing error handler's
+  "Unhandled error" line, as for every 500;
+  (10) `authenticate()` takes `AuthDeps & { logger }`; `createApp` passes its logger, so `AppDeps.auth`, the server
+  wiring and the test support are unchanged;
+  (11) until P5.5 the app writes branches, roles and the profile directly, with no database re-check, so for those the
+  middleware is the only authority check — exactly as `requireOwner` was in P4. Member, invitation and platform
+  writes keep their database re-check;
+  (12) **correction:** this package's "13 `requireOwner` call sites" — at `3add9ea` there were 9 `requireOwner` calls (2
+  inside the helpers) and 5 `ownerOrDenied` calls, guarding 12 service operations that serve 18 endpoints. All are
+  removed, and `requireOwner` itself. `1643c7a`'s message repeats the "13"; this is the correct count;
+  (13) the source guard refuses comparisons and membership tests on the literals; it would not catch, for example, a
+  lookup table keyed by kind. The reviewer may want it widened.
 
 ### P5.5 — Database functions aligned (and direct writes moved)
 
@@ -2334,6 +2408,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 37 | 2026-10-13 | **P5.4 built; awaiting review at its gate.** The policy middleware enforces each endpoint's declared permission — mounted after validation on permission endpoints only, failing closed with the `authorization_resolution_failure` signal — the interim owner checks are removed, refusals are recorded as `authz.denied` (best effort), and the membership endpoints return effective permissions (`b260f3f`, `a39b2c7`, `0ca5ae3`, `1643c7a`). The P4 isolation matrix and a per-endpoint P4 denial oracle pass unchanged. Gate passed locally; evidence and 13 judgement calls under P5.4, including a correction of this package's call-site count. P5.5 waits for the gate review. |
 | 36 | 2026-10-13 | **P5.3a gate approved.** All 14 judgement calls accepted, including the fix that makes the invitation-link success atomic. The reviewer re-ran the focused suites serially (141 API, 19 database tests passed); its first parallel run hit timeouts and a dropped connection, carried to P5.5's test-budget confirmation (§9.3). Local runs only; CI has not run. P5.4 is next, on the go-ahead. |
 | 35 | 2026-10-13 | **P5.3a built; awaiting review at its gate.** The audit event catalog and its validation trigger (66 pairs), the three entry points with §9.4 signals and the TypeScript mirror, every identity flow committing with its event (pattern B), every refusal best effort, and the writer and coverage guards with per-pair co-commit and rollback tests (`4068baf`, `f2a2133`, `12ff1ad`, `7f655c7`, `0957b1c`). Finding: the invitation-link success was not atomic in P4; it is now. Gate passed locally; evidence and 14 judgement calls under P5.3a. P5.4 waits for the gate review. |
 | 34 | 2026-10-12 | **P5.3 gate approved.** All eight judgement calls accepted; the authorization-middleware parity assertion moves to P5.4 as a condition (P5.4's tests updated). The reviewer re-ran the focused tests (36 passed). Local runs only; CI has not run. Next: P5.3a, with its own gate. |

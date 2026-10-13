@@ -1,4 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   AUTH_COOKIES,
   CSRF_HEADER,
@@ -13,6 +16,7 @@ import express from 'express';
 import { pino } from 'pino';
 import { pinoHttp } from 'pino-http';
 import request from 'supertest';
+import ts from 'typescript';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   authorize,
@@ -32,7 +36,7 @@ import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
 // through the real app, every permission endpoint refused with exactly P4's answer and recorded as authz.denied, a
 // failure to resolve authority answered 500 with its signal and nothing recorded or changed, and the effective
-// permissions on the membership endpoints.
+// permissions on the membership endpoints; and the source guard that keeps authority decisions in one module.
 
 type Line = Record<string, unknown>;
 const lines: Line[] = [];
@@ -440,5 +444,90 @@ describe('effective permissions on the membership endpoints (§5, TARGET_ARCHITE
       .set('Authorization', `Bearer ${agent.token}`);
     expect(asAgent.status).toBe(200);
     expect(CurrentMembership.parse(asAgent.body)).toMatchObject({ kind: 'agent', permissions: [] });
+  });
+});
+
+// ── the source guard ──────────────────────────────────────────────────────────────────────────────────────────────
+
+const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const POLICY_MODULE = 'src/platform/authorization.ts';
+/** Kinds and roles that must never decide authority outside the policy module (they hold fixed sets, ADR-16). */
+const AUTHORITY_LITERALS = new Set(['owner', 'super_admin']);
+const RETIRED_CHECKS = new Set(['requireOwner', 'ownerOrDenied']);
+const EQUALITY = new Set([
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+]);
+
+/** Every authority decision by kind or role in one source: a comparison or case on 'owner'/'super_admin', or a retired check. */
+function authorityChecks(file: string, text: string): string[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const at = (n: ts.Node) => `${file}:${sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1}`;
+  const isAuthorityLiteral = (n: ts.Node) =>
+    (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) && AUTHORITY_LITERALS.has(n.text);
+  const visit = (n: ts.Node) => {
+    if (ts.isIdentifier(n) && RETIRED_CHECKS.has(n.text)) found.push(`${at(n)} ${n.text}`);
+    if (
+      ts.isBinaryExpression(n) &&
+      EQUALITY.has(n.operatorToken.kind) &&
+      (isAuthorityLiteral(n.left) || isAuthorityLiteral(n.right))
+    ) {
+      found.push(`${at(n)} ${n.getText(sf)}`);
+    }
+    if (ts.isCaseClause(n) && isAuthorityLiteral(n.expression))
+      found.push(`${at(n)} case ${n.expression.getText(sf)}`);
+    // ['owner', …].includes(kind), kinds.includes('owner'), allowed.has('super_admin'), …
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ['includes', 'has', 'indexOf'].includes(n.expression.name.text) &&
+      (n.arguments.some(isAuthorityLiteral) ||
+        (ts.isArrayLiteralExpression(n.expression.expression) &&
+          n.expression.expression.elements.some(isAuthorityLiteral)))
+    ) {
+      found.push(`${at(n)} ${n.getText(sf)}`);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+describe('the source guard: authority is decided only by the policy module (P5.4)', () => {
+  it('no requireOwner, ownerOrDenied, or owner / super admin comparison anywhere else in the API source', () => {
+    const offenders: string[] = [];
+    let files = 0;
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        const rel = path.relative(apiRoot, full).replace(/\\/g, '/');
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.ts') && rel !== POLICY_MODULE) {
+          files += 1;
+          offenders.push(...authorityChecks(rel, readFileSync(full, 'utf8')));
+        }
+      }
+    };
+    walk(path.join(apiRoot, 'src'));
+    expect(files).toBeGreaterThan(30);
+    expect(offenders).toEqual([]);
+  });
+
+  it('catches each form it refuses (mutation tests), and leaves types and data alone', () => {
+    const probe = (code: string) => authorityChecks('probe.ts', code);
+    expect(probe(`if (tenant.kind !== 'owner') throw forbidden();`)).toHaveLength(1);
+    expect(probe(`const ok = 'owner' === auth.kind;`)).toHaveLength(1);
+    expect(probe('if (auth.kind == `super_admin`) allow();')).toHaveLength(1);
+    expect(probe(`switch (auth.kind) { case 'owner': break; }`)).toHaveLength(1);
+    expect(probe(`if (['owner', 'staff'].includes(kind)) allow();`)).toHaveLength(1);
+    expect(probe(`if (auth.permissions.length && fixed.has('super_admin')) allow();`)).toHaveLength(1);
+    expect(probe(`requireOwner(tenant);`)).toHaveLength(1);
+    expect(probe(`await this.ownerOrDenied(tenant, event);`)).toHaveLength(1);
+    expect(
+      probe(`type Kind = 'owner' | 'staff'; const k: Kind = 'owner'; const s = new Set(['owner']);`),
+    ).toEqual([]);
   });
 });

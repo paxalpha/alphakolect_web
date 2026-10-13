@@ -2,7 +2,7 @@ import type { AcceptInvitationRequest, CreateInvitationRequest, Invitation } fro
 import type { Db } from '../../platform/db.js';
 import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
-import { requireOwner, withTenant, type TenantContext } from '../../platform/tenant.js';
+import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import { INVITATION_TTL_SECONDS, invitationAcceptEmail, invitationSetupEmail } from '../identity/emails.js';
 import { burnPasswordCheck, verifyPassword } from '../identity/passwords.js';
@@ -14,9 +14,10 @@ import { tenancyRepository as repo, type InvitationRow } from './repository.js';
 
 // Staff and agent invitations (P4.6; TARGET_ARCHITECTURE ADR-15 T10, T11, T16; D12).
 //
-// Issuing and revoking: the owner, through the scoped repository; the database decides authority from the session
-// and every rule, and tells this service which email to send — an account-setup link to a new person, the
-// invitation link to an existing account, nothing to a disabled one. The owner's answer never reveals which (D12).
+// Issuing and revoking: whoever holds merchant.invitations.manage (checked first by the router's policy middleware,
+// P5.4), through the scoped repository; the database decides authority again from the session and every rule, and
+// tells this service which email to send — an account-setup link to a new person, the invitation link to an existing
+// account, nothing to a disabled one. The issuer's answer never reveals which (D12).
 // Acceptance by an existing account: the invitation link plus that account's password (T11), rate-limited, one
 // generic error for every failure; the database re-checks the invitation, the business and the person at that
 // moment and creates the membership and consumes the invitation together. A new person joins by finishing account
@@ -59,7 +60,6 @@ export class InvitationService {
   constructor(private readonly deps: InvitationDeps) {}
 
   async list(tenant: TenantContext): Promise<InvitationRow[]> {
-    requireOwner(tenant);
     return withTenant(this.deps.db, tenant, (tx) => repo.invitations(tx));
   }
 
@@ -70,7 +70,6 @@ export class InvitationService {
   ): Promise<InvitationRow> {
     const { db, audit, limiter, mailer, webAppUrl } = this.deps;
     const event = this.event(tenant, 'merchant.invitation_issued', null, ctx);
-    await this.ownerOrDenied(tenant, event);
     await limiter.enforce('invitation_issue', ctx.ip, tenant.merchantId);
 
     const token = newOpaqueToken();
@@ -133,7 +132,6 @@ export class InvitationService {
   async revoke(tenant: TenantContext, invitationId: string, ctx: RequestContext): Promise<InvitationRow> {
     const { db, audit } = this.deps;
     const event = this.event(tenant, 'merchant.invitation_revoked', invitationId, ctx);
-    await this.ownerOrDenied(tenant, event);
 
     const result = await withTenant(db, tenant, async (tx) => {
       const outcome = await repo.revokeInvitation(tx, invitationId);
@@ -214,19 +212,6 @@ export class InvitationService {
       return 'ok';
     });
     if (outcome !== 'ok') throw await fail(outcome);
-  }
-
-  private async ownerOrDenied(tenant: TenantContext, event: ReturnType<InvitationService['event']>) {
-    try {
-      requireOwner(tenant);
-    } catch (err) {
-      await this.deps.audit.recordBestEffort({
-        ...event,
-        outcome: 'denied',
-        summary: { reason: 'not_owner', kind: tenant.kind },
-      });
-      throw err;
-    }
   }
 
   private event<A extends 'merchant.invitation_issued' | 'merchant.invitation_revoked'>(

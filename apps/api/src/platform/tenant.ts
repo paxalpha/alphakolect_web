@@ -1,6 +1,5 @@
 import type { Permission } from '@alphakolect/contracts';
 import type { Db, Queryable } from './db.js';
-import { AppError } from './errors.js';
 import type { AuthContext } from './http/authenticate.js';
 
 // TenantContext and tenant-scoped transactions (TARGET_ARCHITECTURE §4, ADR-15 T3, T5, T14).
@@ -76,14 +75,4 @@ export function withTenant<T>(db: Db, tenant: TenantContext, fn: (tx: TenantTx) 
 export function scopeOf(tx: TenantTx): TenantContext {
   if (!opened.has(tx)) throw new Error('Tenant data requires a transaction opened by withTenant');
   return tx.tenant;
-}
-
-/**
- * ADR-15 T9, the P4 interim check, kept in this one place: merchant-management endpoints require the owner.
- * Replaced wholesale by P5 policies — not a permission system.
- */
-export function requireOwner(tenant: TenantContext): void {
-  if (tenant.kind !== 'owner') {
-    throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
-  }
 }

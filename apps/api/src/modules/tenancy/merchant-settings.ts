@@ -7,7 +7,7 @@ import type {
 } from '@alphakolect/contracts';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
-import { requireOwner, withTenant, type TenantContext } from '../../platform/tenant.js';
+import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import type { RequestContext } from '../identity/sessions.js';
 import {
@@ -21,9 +21,10 @@ import {
 // The merchant's own settings — profile, branches, roles (P4.4; TARGET_ARCHITECTURE §4, ADR-15 T7–T9, T14, T15).
 //
 // The tenant is the caller's TenantContext, never a request field. Every read and write runs in one withTenant
-// transaction through the scoped repository; each change and its audit row commit together. Until P5 only the
-// owner manages these (T9: requireOwner); a refused change is audited as denied. Another merchant's branch or role
-// is "not found", exactly like one that does not exist (T15).
+// transaction through the scoped repository; each change and its audit row commit together. Who may read or change
+// them is decided by the router's policy middleware from the endpoint's declared permission (P5.4, ADR-16), which
+// records a refusal as authz.denied. Another merchant's branch or role is "not found", exactly like one that does
+// not exist (T15).
 
 const ITEM: Record<CatalogTable, 'branch' | 'role'> = { branches: 'branch', roles: 'role' };
 
@@ -48,9 +49,7 @@ export const toBranch = (row: CatalogRow): Branch => ({ branchId: row.id, ...toI
 export const toRole = (row: CatalogRow): Role => ({ roleId: row.id, ...toItem(row) });
 
 export class MerchantSettingsService {
-  constructor(
-    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
-  ) {}
+  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordWithin'> }) {}
 
   /** Any member: their own membership, business and effective permissions, as of this request. */
   async currentMembership(tenant: TenantContext): Promise<CurrentMembership> {
@@ -72,14 +71,12 @@ export class MerchantSettingsService {
   }
 
   async profile(tenant: TenantContext): Promise<MerchantProfile> {
-    requireOwner(tenant);
     const merchant = await withTenant(this.deps.db, tenant, (tx) => repo.merchant(tx));
     if (!merchant) throw new AppError(401, 'UNAUTHENTICATED', 'Authentication required');
     return toProfile(merchant);
   }
 
   async rename(tenant: TenantContext, name: string, ctx: RequestContext): Promise<MerchantProfile> {
-    await this.ownerOrDenied(tenant, 'merchant.profile_updated', 'merchant', tenant.merchantId, ctx);
     const merchant = await withTenant(this.deps.db, tenant, async (tx) => {
       const row = await repo.renameMerchant(tx, name);
       if (row) {
@@ -96,12 +93,10 @@ export class MerchantSettingsService {
   }
 
   async list(tenant: TenantContext, table: CatalogTable): Promise<CatalogRow[]> {
-    requireOwner(tenant);
     return withTenant(this.deps.db, tenant, (tx) => repo.listCatalog(tx, table));
   }
 
   async get(tenant: TenantContext, table: CatalogTable, id: string): Promise<CatalogRow> {
-    requireOwner(tenant);
     const row = await withTenant(this.deps.db, tenant, (tx) => repo.getCatalogItem(tx, table, id));
     if (!row) throw notFound(table);
     return row;
@@ -115,7 +110,6 @@ export class MerchantSettingsService {
   ): Promise<CatalogRow> {
     // Template-built (P5.3a transitional list: these two call sites and their four identifiers only).
     const action = `merchant.${ITEM[table]}_created` as const;
-    await this.ownerOrDenied(tenant, action, ITEM[table], null, ctx);
     try {
       return await withTenant(this.deps.db, tenant, async (tx) => {
         const row = await repo.createCatalogItem(tx, table, name);
@@ -140,7 +134,6 @@ export class MerchantSettingsService {
   ): Promise<CatalogRow> {
     // Template-built (P5.3a transitional list: these two call sites and their four identifiers only).
     const action = `merchant.${ITEM[table]}_updated` as const;
-    await this.ownerOrDenied(tenant, action, ITEM[table], id, ctx);
     let row: CatalogRow | null;
     try {
       row = await withTenant(this.deps.db, tenant, async (tx) => {
@@ -159,26 +152,6 @@ export class MerchantSettingsService {
     }
     if (!row) throw notFound(table);
     return row;
-  }
-
-  /** T9: only the owner changes settings. A refused attempt is audited, best effort (in the caller's own tenant). */
-  private async ownerOrDenied(
-    tenant: TenantContext,
-    action: SettingsAction,
-    targetType: string,
-    targetId: string | null,
-    ctx: RequestContext,
-  ): Promise<void> {
-    try {
-      requireOwner(tenant);
-    } catch (err) {
-      await this.deps.audit.recordBestEffort({
-        ...this.event(tenant, action, targetType, targetId, ctx),
-        outcome: 'denied',
-        summary: { reason: 'not_owner', kind: tenant.kind },
-      });
-      throw err;
-    }
   }
 
   private event<A extends SettingsAction>(

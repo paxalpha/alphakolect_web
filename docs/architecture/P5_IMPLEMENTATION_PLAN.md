@@ -1540,7 +1540,8 @@ as CI. **Test budget ([Assumption], confirmed at the start of P5.5).** P4 hit ou
 (RESTRUCTURING_MAP, P4.8 incident), and P5 adds many two-connection suites repeated 50 times. If they do not fit
 `pnpm test` within the machine's memory and a reasonable time, they move to a separate script (`test:concurrency`)
 that is **part of the gate** for every package that touches locking — never skipped, never run with fewer repetitions
-without a recorded decision — and the change is noted in the package's evidence.
+without a recorded decision — and the change is noted in the package's evidence. **Confirmed 2026-10-13 at the start
+of P5.5** — measurements and the decision under P5.5 ("Test budget").
 
 ### 9.4 Signals — what "metric" and "counted" mean in P5
 
@@ -2031,6 +2032,33 @@ independent of the permission catalog); it is listed with them so it is complete
   when, the tolerated list is empty and every planned-footprint entry owned by P5.5 exists and conforms; the tolerance
   mechanism is then deleted from the guard (as the transitional list is, R32), and a test fails if it reappears. P5.5
   cannot close in report mode.
+- **Test budget (§9.3), confirmed 2026-10-13 before any P5.5 code — measured locally, not CI.** *Machine:* 7.7 GB
+  RAM, 12 logical CPUs; Postgres 16 in Docker (`max_connections` 100). *Time:* a probe (a temporary copy of the P5.2
+  two-connection suite, deleted, never committed) ran the "re-checked first" race 50 times for each of its two
+  revocations — 100 races, fixtures included, in 14.1 s (about 141 ms each). P5.5's eight suites × 50 runs ≈ 400
+  races ≈ 56 s; with P5.6's (c), (k) and P5.7's (e), about 550 races ≈ 78 s. They run in `packages/db`, whose files
+  run one at a time. The whole gate's `pnpm test` took 109 s wall on a quiet machine (db 47 s, API 47 s); earlier runs
+  the same day under other load took db 142 s and API 97 s. *Memory:* sampled every ~2 s through a full `pnpm test`:
+  the test processes peaked at 916 MB working set; free physical memory fell to 327 MB (average 679 MB); the commit
+  charge was already 94% of its limit before the run (other workloads on the machine) and peaked at 98%. The
+  two-connection suites add connections and time to the single `packages/db` worker, not Node memory; the memory
+  load is the API suite's four workers (argon2, 19 MiB per hash), which P5.5 does not change. *The observed
+  contention, explained:* the reviewer's first, parallel P5.3a run (database activity 00:07–00:08 UTC, inside the
+  review window between `a50831e` at 23:26 UTC and `3add9ea` at 00:27 UTC) coincides with Postgres terminating an
+  API-pool connection for **idle-in-transaction timeout** at 00:08:09 UTC — the pool sets 10 s
+  (`apps/api/src/platform/db.ts`), so a test process stalled at least 10 s inside a transaction. The application is
+  not the cause: a scan of all 31 transaction openers in `apps/api/src` (`db.transaction`, `withTenant`) finds no
+  call inside one that takes a second pool connection (pool, `identity.*` outside `.within(tx)`,
+  `recordBestEffort`, limiter, mailer, a nested transaction), and no test holds a transaction open. A stall of that
+  length on a machine at 94–98% commit is memory pressure — as in P4's incident (`apps/api/vitest.config.ts`). The
+  serial re-runs (00:09–00:11 UTC) passed. The one A7 failure seen at P5.4 (not reproduced in seven later runs) left no
+  idle-in-transaction termination in the log; its cause is not established. *Decision (§9.3):* the two-connection suites stay in
+  `pnpm test` (`packages/db`), 50 runs each, never fewer without a recorded decision — no `test:concurrency` split
+  is needed now. Gate runs on this machine are made one at a time, never alongside another test run. Every failure is
+  reported; one that is only a timeout or a terminated connection is also re-run serially, and both results are
+  recorded. The 10 s idle-in-transaction timeout is a production safeguard and stays. The budget is checked again
+  when P5.6 and P5.7 add their suites; if `packages/db` passes five minutes, or a gate run fails for memory, the
+  suites move to `test:concurrency`, which is then part of the gate.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2424,6 +2452,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 40 | 2026-10-13 | **P5.5 test budget confirmed (§9.3).** Measured before any P5.5 code: 100 two-connection races in 14.1 s (P5.5's 400 ≈ 56 s, in the sequential `packages/db` suite); a full `pnpm test` in 109 s wall; memory peaked at 916 MB for the test processes with the machine at 94–98% commit. The reviewer's P5.3a dropped connection was Postgres's 10 s idle-in-transaction termination at 00:08:09 UTC during that run — a test process stalled under memory pressure, not an application defect (no transaction takes a second pool connection). The suites stay in `pnpm test`, 50 runs each; gate runs one at a time; re-checked at P5.6 and P5.7. |
 | 39 | 2026-10-13 | **P5.5 go; the guard condition's timing decided.** The project lead: the P5.4 guard condition need not close before P5.5; it stays a P5.6 precondition and is now a hard gate — staff grants cannot be enabled until the broader guard and its mutation tests pass (P5.6's first commit; checked at the P5.6 gate). P5.5 proceeds under its own gate, starting with the §9.3 test-budget check. |
 | 38 | 2026-10-13 | **P5.4 gate approved.** Judgement calls 1–12 accepted; the API-only check on profile, branch and role writes until P5.5 is an acknowledged boundary, not database protection. Call 13 becomes a P5.6 precondition: strengthen the source guard against indirect authority lookups before staff grants exist. The intermittent invitation-revoke failure stays with P5.5's test-budget check. The reviewer re-ran the policy, isolation-matrix and route-parity suites serially (115 passed). Local runs only; CI has not run. P5.5 is next, on the go-ahead. |
 | 37 | 2026-10-13 | **P5.4 built; awaiting review at its gate.** The policy middleware enforces each endpoint's declared permission — mounted after validation on permission endpoints only, failing closed with the `authorization_resolution_failure` signal — the interim owner checks are removed, refusals are recorded as `authz.denied` (best effort), and the membership endpoints return effective permissions (`b260f3f`, `a39b2c7`, `0ca5ae3`, `1643c7a`). The P4 isolation matrix and a per-endpoint P4 denial oracle pass unchanged. Gate passed locally; evidence and 13 judgement calls under P5.4, including a correction of this package's call-site count. P5.5 waits for the gate review. |

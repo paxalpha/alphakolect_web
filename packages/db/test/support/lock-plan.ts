@@ -280,3 +280,56 @@ export const BASELINE_CLASSES: Readonly<Record<string, FnClass>> = {
     writes: ['identity.one_time_tokens', 'identity.identities', 'tenancy.merchants'],
   },
 };
+
+/** The resolver: the one place a membership kind or platform role decides authority (identity.permissions_of). */
+export const RESOLVER: ReadonlySet<string> = new Set(['identity.permissions_of']);
+
+/**
+ * The SQL authority guard's explicit list (P5 plan §10 P5.5): every comparison of a kind or role with a literal that
+ * is a **data rule** — it names the kind or role of a target or of stored rows, never the caller's authority. Each
+ * entry occurs exactly as often as listed; any other literal fails the guard, and so does an entry that stops
+ * occurring (the list stays exact).
+ */
+export const AUTHORITY_DATA_RULES: readonly string[] = [
+  // audience eligibility by kind (sign-in, selection, every session check)
+  "identity.active_membership: mm.kind = 'agent'",
+  "identity.active_membership: mm.kind in ('owner', 'staff')",
+  "identity.eligible_memberships: mm.kind = 'agent'",
+  "identity.eligible_memberships: mm.kind in ('owner', 'staff')",
+  // platform sign-in eligibility — until P5.7 replaces it; from then the guard fails if it remains
+  "identity.eligible_memberships: pm.role = 'super_admin'",
+  // the bootstrap creates the super admin (operator only; §7.4)
+  "identity.bootstrap_super_admin: pm.role = 'super_admin'",
+  // the businesses an identity owns, activated by its email verification (BR-2.2; added at P5.5 step 2)
+  "identity.verify_email: mm.kind = 'owner'",
+  "identity.verify_email: mm.kind = 'owner'",
+  // the business's owner, whose verification decides where a reactivation lands (BR-2.2)
+  "tenancy.set_merchant_status: mm.kind = 'owner'",
+  // the one-owner invariant
+  "tenancy.merchant_keeps_one_owner: kind = 'owner'",
+  // the invited kind
+  "tenancy.issue_invitation: p_kind = 'agent'",
+  "tenancy.issue_invitation: p_kind = 'staff'",
+  "tenancy.issue_invitation: p_kind = 'staff'",
+  "tenancy.issue_invitation: p_kind not in ('staff', 'agent')",
+  "tenancy.admit_invitation_locked: v_inv.kind = 'staff'",
+  // owner protection, and assignment only to staff
+  "tenancy.update_membership: v_target.kind = 'owner'",
+  "tenancy.update_membership: v_target.kind <> 'staff'",
+  // transfer's demotion and promotion: the former owner, the new owner (a staff member), and the two updates
+  "tenancy.transfer_ownership: mm.kind = 'owner'",
+  "tenancy.transfer_ownership: mm.kind = 'owner'",
+  "tenancy.transfer_ownership: mm.kind = 'staff'",
+  "tenancy.transfer_ownership: kind = 'staff'",
+  "tenancy.transfer_ownership: kind = 'owner'",
+];
+
+/** Authority still decided by a literal — removed when step 3 takes authority from the resolver. The list only shrinks. */
+export const AUTHORITY_TOLERATED: readonly string[] = [
+  "tenancy.update_membership: v.kind = 'owner'",
+  "tenancy.issue_invitation: v.kind = 'owner'",
+  "tenancy.revoke_invitation: v.kind = 'owner'",
+  "tenancy.list_members: v.kind = 'owner'",
+  "tenancy.set_merchant_status: pm.role = 'super_admin'",
+  "tenancy.transfer_ownership: pm.role = 'super_admin'",
+];

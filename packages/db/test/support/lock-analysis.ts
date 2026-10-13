@@ -1035,3 +1035,44 @@ export async function schemaFindings(
   }
   return { findings: dedupe(findings), seen };
 }
+
+// ── the SQL authority guard ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** Membership kinds and platform roles: a comparison with one of these decides by a literal. */
+const KIND_AND_ROLE_VALUES = new Set([
+  'owner',
+  'staff',
+  'agent',
+  'super_admin',
+  'support',
+  'verification',
+  'finance',
+]);
+
+/**
+ * Every comparison (or assignment) of a membership kind or platform role with a literal, in every function except
+ * those in `exempt` (the resolver): `<x>.kind = 'owner'`, `kind IN ('owner', 'staff')`, `pm.role = 'super_admin'`,
+ * `p_kind = 'agent'`, … As `fn: comparison`, whitespace collapsed, so a guard can compare them with an explicit list of
+ * data rules (P5 plan §10 P5.5 "SQL authority guard"): outside the resolver, authority comes only from the resolver's
+ * permission set; a literal names the kind or role of a target or of stored rows, never the caller's authority.
+ */
+export function authorityLiterals(functions: FnRow[], exempt: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  for (const f of functions) {
+    const key = `${f.schema}.${f.name}`;
+    if (exempt.has(key)) continue;
+    const start = f.def.indexOf('$function$');
+    const end = f.def.lastIndexOf('$function$');
+    const { raw } = normalize(start >= 0 && end > start ? f.def.slice(start + 10, end) : '');
+    const re =
+      /((?:[a-z_][a-z0-9_]*\.)?(?:kind|role|p_kind|p_role)\b)\s*(=|<>|!=|\bnot\s+in\b|\bin\b)\s*(\(\s*'[^']*'(?:\s*,\s*'[^']*')*\s*\)|'[^']*')/g;
+    for (const m of raw.matchAll(re)) {
+      const values = [...m[3]!.matchAll(/'([^']*)'/g)].map((v) => v[1]!);
+      if (!values.some((v) => KIND_AND_ROLE_VALUES.has(v))) continue;
+      out.push(
+        `${key}: ${`${m[1]} ${m[2]} ${m[3]}`.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')')}`,
+      );
+    }
+  }
+  return out.sort();
+}

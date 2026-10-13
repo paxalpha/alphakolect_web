@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { connectAs } from './support/db.js';
 import {
   analyse,
+  authorityLiterals,
   contestedIndexes,
   findingKey,
   loadCatalog,
@@ -15,7 +16,15 @@ import {
   type FnClass,
   type FnRow,
 } from './support/lock-analysis.js';
-import { BASELINE, BASELINE_CLASSES, CLASSES, TOLERATED } from './support/lock-plan.js';
+import {
+  AUTHORITY_DATA_RULES,
+  AUTHORITY_TOLERATED,
+  BASELINE,
+  BASELINE_CLASSES,
+  CLASSES,
+  RESOLVER,
+  TOLERATED,
+} from './support/lock-plan.js';
 
 // The lock-order guard (P5.5 step 1; P5 plan §7.2 — L1–L6, the category order, the planned footprints and the
 // authority rule, "What the guard can analyse, and failing closed outside it", R34 report mode). It reads every
@@ -96,6 +105,21 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
     expect(seen).toContain('util.uuid_v7');
     expect(seen).toContain('util.current_merchant_id');
     expect([...seen].filter((f) => !LOCK_FREE_EXPRESSION_FUNCTIONS.has(f))).toEqual([]);
+  });
+});
+
+describe('the SQL authority guard (§10 P5.5): authority comes only from the resolver', () => {
+  it('every kind or role literal outside the resolver is a listed data rule — or tolerated until step 3 — exactly', () => {
+    expect(authorityLiterals(catalog.functions, RESOLVER)).toEqual(
+      [...AUTHORITY_DATA_RULES, ...AUTHORITY_TOLERATED].sort(),
+    );
+  });
+
+  it('sanity: the resolver itself decides by kind and role, and is the one exemption', () => {
+    expect(
+      authorityLiterals(catalog.functions, new Set()).filter((l) => l.startsWith('identity.permissions_of:'))
+        .length,
+    ).toBeGreaterThan(0);
   });
 });
 
@@ -189,6 +213,19 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
       sql: `(p_id uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN UPDATE tenancy.roles r SET name = r.name WHERE r.id = p_id; END $$`,
       cls: { class: 'identity', writes: ['tenancy.roles'] },
     },
+    // the SQL authority guard: authority decided by a literal on the session, and a data rule copied elsewhere
+    decides_by_kind: {
+      sql: `(p_session uuid) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v_actor uuid; BEGIN
+              SELECT v.membership_id INTO v_actor FROM identity.validate_session(p_session) v WHERE v.kind = 'owner';
+            END $$`,
+      cls: IDENTITY,
+    },
+    copies_a_rule: {
+      sql: `(p_id uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+              PERFORM 1 FROM tenancy.merchant_memberships mm WHERE mm.id = p_id AND mm.kind = 'owner';
+            END $$`,
+      cls: IDENTITY,
+    },
     // fail closed: dynamic SQL, an unqualified call, an unclassified callee, a call outside the analysed schemas
     dynamic: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'SELECT 1'; END $$`,
@@ -218,6 +255,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     },
   };
   let run: ReturnType<typeof analyse>;
+  let scratchFunctions: FnRow[];
   let schema: Awaited<ReturnType<typeof schemaFindings>>;
   const of = (name: string) => run.findings.filter((f) => f.fn === `${s}.${name}`);
 
@@ -242,6 +280,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     classes[`${s}.fresh`] = { class: 'reader' };
     classes[`${s}.ok`] = { class: 'reader' };
     run = analyse(withScratch, classes, [...SCHEMAS, s]);
+    scratchFunctions = withScratch.functions;
     schema = await schemaFindings(owner, [`${s}.t`]);
   });
   afterAll(async () => {
@@ -284,6 +323,19 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
       expect.arrayContaining([`an unapproved write to tenancy.roles (at ${s}.sneaky)`]),
     );
     expect(of('sneaky'), report(of('sneaky'))).toEqual([]);
+  });
+
+  it('the SQL authority guard refuses authority decided by a literal, and a listed data rule anywhere else', () => {
+    const scratchLiterals = authorityLiterals(scratchFunctions, RESOLVER).filter((l) =>
+      l.startsWith(`${s}.`),
+    );
+    expect(scratchLiterals).toEqual([
+      `${s}.copies_a_rule: mm.kind = 'owner'`,
+      `${s}.decides_by_kind: v.kind = 'owner'`,
+    ]);
+    // Neither is on the list, so the guard's exact comparison fails for each.
+    for (const l of scratchLiterals)
+      expect([...AUTHORITY_DATA_RULES, ...AUTHORITY_TOLERATED]).not.toContain(l);
   });
 
   it('fails closed: dynamic SQL, an unqualified call, an unclassified function, a call outside the analysed schemas', () => {

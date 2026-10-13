@@ -464,7 +464,7 @@ describe('privileges', () => {
       SELECT has_function_privilege('alphakolect_app', 'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer)', 'EXECUTE') AS issue,
              has_function_privilege('alphakolect_app', 'tenancy.revoke_invitation(uuid, uuid)', 'EXECUTE') AS revoke,
              has_function_privilege('alphakolect_app', 'tenancy.accept_invitation(text, uuid)', 'EXECUTE') AS accept,
-             has_function_privilege('alphakolect_app', 'tenancy.admit_invitation(uuid, uuid)', 'EXECUTE') AS admit,
+             has_function_privilege('alphakolect_app', 'tenancy.admit_invitation_locked(uuid, uuid)', 'EXECUTE') AS admit,
              has_function_privilege('alphakolect_readonly', 'tenancy.accept_invitation(text, uuid)', 'EXECUTE') AS ro`);
     expect(rows[0]).toEqual({ issue: true, revoke: true, accept: true, admit: false, ro: false });
   });

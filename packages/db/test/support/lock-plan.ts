@@ -59,8 +59,11 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['6:NKU', '+6', '+1'],
     writes: ['identity.identities', 'identity.platform_memberships', 'audit.audit_events'],
   },
-  // replaced by its …_locked inner function (L6)
-  'tenancy.admit_invitation': { class: 'retired', replacedBy: 'tenancy.admit_invitation_locked' },
+  // admission, inside accept_invitation and complete_account_setup: waits for nothing (L6, P5.5 step 2)
+  'tenancy.admit_invitation_locked': {
+    class: 'locked',
+    writes: ['tenancy.merchant_memberships', 'tenancy.invitations'],
+  },
 
   // ── identity flows of the table: the categories each may wait for ──
   'identity.reset_password': {
@@ -68,9 +71,10 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     categories: [5, 6, 10],
     writes: ['identity.one_time_tokens', 'identity.identities', 'identity.sessions'],
   },
+  // the owned businesses first (finding at P5.5 step 1; §7.2 proposed row)
   'identity.verify_email': {
     class: 'flow',
-    categories: [5, 6],
+    categories: [2, 5, 6],
     writes: ['identity.one_time_tokens', 'identity.identities', 'tenancy.merchants'],
   },
   'identity.change_password': {
@@ -215,7 +219,16 @@ export const BASELINE: readonly string[] = [
  * no longer occurs fails until it is deleted here in the same commit — the list only shrinks. P5.5 cannot close
  * until it is empty and the tolerance mechanism is deleted.
  */
-export const TOLERATED: readonly string[] = [...BASELINE];
+export const TOLERATED: readonly string[] = [
+  // the actor's authority lock: step 3
+  'footprint tenancy.update_membership',
+  'footprint tenancy.issue_invitation',
+  'footprint tenancy.revoke_invitation',
+  'footprint tenancy.set_merchant_status',
+  'footprint tenancy.transfer_ownership',
+  // the identity lock and the account separation: step 5
+  'footprint identity.bootstrap_super_admin',
+];
 
 /**
  * The nested-writer table (R27): the one T2 flow allowed to reach pattern-A audit inserts inside its definer call.
@@ -252,3 +265,18 @@ export const TRANSACTIONS_TOLERATED: readonly string[] = [
 export const NESTED_WRITERS_TOLERATED: readonly string[] = [
   'PasswordService.completeSetup → tenancy.admit_invitation_locked',
 ];
+
+/**
+ * The classes the baseline reconciliation was made under (the P4 definitions at 5d8904b, the plan's rows as at
+ * revision 41): tenancy.admit_invitation existed (replaced by its …_locked inner function), and verify_email's row was
+ * "5 → 6". The baseline control uses these, so it keeps reporting exactly BASELINE as the live classes move on.
+ */
+export const BASELINE_CLASSES: Readonly<Record<string, FnClass>> = {
+  ...CLASSES,
+  'tenancy.admit_invitation': { class: 'retired', replacedBy: 'tenancy.admit_invitation_locked' },
+  'identity.verify_email': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.one_time_tokens', 'identity.identities', 'tenancy.merchants'],
+  },
+};

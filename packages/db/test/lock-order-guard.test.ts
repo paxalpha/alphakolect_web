@@ -15,7 +15,7 @@ import {
   type FnClass,
   type FnRow,
 } from './support/lock-analysis.js';
-import { BASELINE, CLASSES, TOLERATED } from './support/lock-plan.js';
+import { BASELINE, BASELINE_CLASSES, CLASSES, TOLERATED } from './support/lock-plan.js';
 
 // The lock-order guard (P5.5 step 1; P5 plan §7.2 — L1–L6, the category order, the planned footprints and the
 // authority rule, "What the guard can analyse, and failing closed outside it", R34 report mode). It reads every
@@ -106,7 +106,7 @@ describe('the baseline control (R34)', () => {
   });
 
   it('against the P4 definitions it reports exactly the baseline reconciliation — no more, no fewer', () => {
-    const { findings } = analyse({ ...catalog, functions: fixture.functions }, CLASSES, SCHEMAS);
+    const { findings } = analyse({ ...catalog, functions: fixture.functions }, BASELINE_CLASSES, SCHEMAS);
     expect(keys(findings), report(findings)).toEqual([...BASELINE].sort());
   });
 });

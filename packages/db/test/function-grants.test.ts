@@ -88,7 +88,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.set_merchant_status(uuid, uuid, text, text)': APP,
   'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean)': APP,
   'tenancy.update_membership(uuid, uuid, text, uuid, uuid)': APP,
-  'tenancy.admit_invitation(uuid, uuid)': OWNER_ONLY,
+  'tenancy.admit_invitation_locked(uuid, uuid)': OWNER_ONLY, // P5.5 step 2: admission waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
   'tenancy.lock_branches(uuid[], uuid[])': OWNER_ONLY,

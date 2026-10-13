@@ -11,6 +11,7 @@ import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { MerchantLifecycleService } from '../../src/modules/tenancy/merchant-lifecycle.js';
 import type { AuthContext } from '../../src/platform/http/authenticate.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
+import { failAuditInsert, markerRequestId } from '../support/audit.js';
 
 // P4.1 merchant lifecycle through the real app and database (ADR-15 T5, T6, T9; P4 exit criteria 5, 10): the
 // platform endpoints, their effect on a member's very next request, refresh and login, reactivation, every refusal,
@@ -321,15 +322,11 @@ describe('refusals', () => {
 });
 
 describe('atomicity', () => {
-  it('a failed audit write rolls the status change back', async () => {
+  it('a failed audit write rolls the status change back (the function writes its own row, P5.5)', async () => {
     const m = await merchant();
-    const failingAudit = {
-      recordBestEffort: async () => undefined,
-      recordWithin: async () => {
-        throw new Error('audit store unavailable');
-      },
-    };
-    const service = new MerchantLifecycleService({ db, audit: failingAudit });
+    const requestId = markerRequestId('lifecycle-atomicity');
+    const restore = await failAuditInsert(owner, 'platform.merchant_deactivated', 'success', requestId);
+    const service = new MerchantLifecycleService({ db, audit: new AuditLog(db, pino({ level: 'silent' })) });
     const authContext: AuthContext = {
       identityId: admin.identityId,
       sessionId: admin.sessionId,
@@ -344,13 +341,17 @@ describe('atomicity', () => {
       permissions: PERMISSIONS.filter((p) => p.startsWith('platform.')),
       transport: 'cookie',
     };
-    await expect(
-      service.change(authContext, m.merchantId, 'deactivate', 'Atomicity check', {
-        ip: '127.0.0.1',
-        userAgent: null,
-        requestId: 'atomicity',
-      }),
-    ).rejects.toThrow('audit store unavailable');
+    try {
+      await expect(
+        service.change(authContext, m.merchantId, 'deactivate', 'Atomicity check', {
+          ip: '127.0.0.1',
+          userAgent: null,
+          requestId,
+        }),
+      ).rejects.toMatchObject({ code: 'XX000' });
+    } finally {
+      await restore();
+    }
     expect(await status(m.merchantId)).toBe('active');
   });
 });

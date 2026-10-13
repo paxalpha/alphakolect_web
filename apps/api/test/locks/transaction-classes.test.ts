@@ -123,7 +123,14 @@ describe('report mode (R34, R17): every repository transaction matches exactly o
     expect(byClass('T2')).toEqual(
       expect.arrayContaining(['PasswordService.completeSetup', 'SessionService.refresh']),
     );
-    expect(byClass('T1')).toEqual([]); // until the privileged functions write their own audit rows (steps 3, 7)
+    // P5.5 step 3: the privileged functions write their own audit rows; their transactions are one operation each.
+    expect(byClass('T1')).toEqual([
+      'InvitationService.create',
+      'InvitationService.revoke',
+      'MembershipService.change',
+      'MerchantLifecycleService.change',
+      'MerchantLifecycleService.transferOwnership',
+    ]);
   });
 
   it('R27: every nested-writer entry is reachable from its flow — except the tolerated ones', () => {

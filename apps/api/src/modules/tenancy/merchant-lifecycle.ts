@@ -71,9 +71,7 @@ function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppErr
 }
 
 export class MerchantLifecycleService {
-  constructor(
-    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
-  ) {}
+  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
 
   async change(
     auth: AuthContext,
@@ -95,21 +93,13 @@ export class MerchantLifecycleService {
       requestId: ctx.requestId,
     };
 
+    // The function writes the change's audit row itself, in its transaction: if that insert fails, the status change
+    // rolls back with it (pattern A, §8.1).
     const row = await db.transaction(async (tx) => {
-      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
       const [result] = await tx.query<Row>(
-        `SELECT outcome, status FROM tenancy.set_merchant_status($1, $2, $3, $4)`,
-        [auth.sessionId, merchantId, action, reason],
+        `SELECT outcome, status FROM tenancy.set_merchant_status($1, $2, $3, $4, $5, $6, $7)`,
+        [auth.sessionId, merchantId, action, reason, ctx.ip, ctx.userAgent, ctx.requestId],
       );
-      if (result!.outcome === 'ok') {
-        // Same transaction: if this insert fails, the status change rolls back with it.
-        await audit.recordWithin(tx, {
-          ...event,
-          merchantId,
-          outcome: 'success',
-          summary: { status: result!.status, ...(action === 'deactivate' ? { reason } : {}) },
-        });
-      }
       return result!;
     });
 
@@ -149,34 +139,22 @@ export class MerchantLifecycleService {
       requestId: ctx.requestId,
     };
 
+    // The function writes the transfer's audit row itself, naming both identities, in its transaction (pattern A).
     const row = await db.transaction(async (tx) => {
-      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
       const [result] = await tx.query<TransferRow>(
         `SELECT outcome, former_owner_membership_id, former_owner_identity_id, new_owner_identity_id
-           FROM tenancy.transfer_ownership($1, $2, $3, $4, $5)`,
+           FROM tenancy.transfer_ownership($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           auth.sessionId,
           merchantId,
           input.newOwnerMembershipId,
           input.formerOwnerRoleId,
           input.deactivateFormerOwner,
+          ctx.ip,
+          ctx.userAgent,
+          ctx.requestId,
         ],
       );
-      if (result!.outcome === 'ok') {
-        await audit.recordWithin(tx, {
-          ...event,
-          merchantId,
-          outcome: 'success',
-          summary: {
-            formerOwnerIdentityId: result!.former_owner_identity_id,
-            formerOwnerMembershipId: result!.former_owner_membership_id,
-            newOwnerIdentityId: result!.new_owner_identity_id,
-            newOwnerMembershipId: input.newOwnerMembershipId,
-            formerOwnerRoleId: input.formerOwnerRoleId,
-            formerOwnerDeactivated: input.deactivateFormerOwner,
-          },
-        });
-      }
       return result!;
     });
 

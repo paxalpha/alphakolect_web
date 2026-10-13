@@ -158,14 +158,7 @@ export const TRANSITIONAL_PAIRS = [
   'merchant.branch_updated/success',
   'merchant.role_created/success',
   'merchant.role_updated/success',
-  'merchant.member_assigned/success',
-  'merchant.member_deactivated/success',
-  'merchant.member_reactivated/success',
-  'merchant.invitation_issued/success',
-  'merchant.invitation_revoked/success',
-  'platform.merchant_deactivated/success',
-  'platform.merchant_reactivated/success',
-  'platform.ownership_transferred/success',
+  // P5.5 step 3: the member, invitation, lifecycle and transfer successes are written by their functions (pattern A).
 ] as const;
 type IdentifierOf<K> = K extends `${infer I}/success` ? I : never;
 export type TransitionalPair = Extract<

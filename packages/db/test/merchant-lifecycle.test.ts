@@ -175,8 +175,8 @@ describe('no direct status changes (privileges)', () => {
              has_column_privilege('alphakolect_app', 'tenancy.merchants', 'deactivated_at', 'UPDATE') AS deactivated_at,
              has_column_privilege('alphakolect_app', 'tenancy.merchants', 'deactivation_reason', 'UPDATE') AS reason,
              has_column_privilege('alphakolect_app', 'tenancy.merchants', 'name', 'UPDATE') AS name,
-             has_function_privilege('alphakolect_app', 'tenancy.set_merchant_status(uuid,uuid,text,text)', 'EXECUTE') AS app_exec,
-             has_function_privilege('alphakolect_readonly', 'tenancy.set_merchant_status(uuid,uuid,text,text)', 'EXECUTE') AS readonly_exec`);
+             has_function_privilege('alphakolect_app', 'tenancy.set_merchant_status(uuid,uuid,text,text,text,text,text)', 'EXECUTE') AS app_exec,
+             has_function_privilege('alphakolect_readonly', 'tenancy.set_merchant_status(uuid,uuid,text,text,text,text,text)', 'EXECUTE') AS readonly_exec`);
     expect(rows[0]).toEqual({
       insert: false,
       table_update: false,

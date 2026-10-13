@@ -15,17 +15,17 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.update_membership': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '7:S', '8:S', '10:W'],
-    writes: ['tenancy.merchant_memberships', 'identity.sessions'],
+    writes: ['tenancy.merchant_memberships', 'identity.sessions', 'audit.audit_events'],
   },
   'tenancy.issue_invitation': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '4:NKU', '5:NKU', '6:S', '7:S', '8:S', '+6', '+4'],
-    writes: ['identity.identities', 'identity.one_time_tokens', 'tenancy.invitations'],
+    writes: ['identity.identities', 'identity.one_time_tokens', 'tenancy.invitations', 'audit.audit_events'],
   },
   'tenancy.revoke_invitation': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '4:NKU'],
-    writes: ['tenancy.invitations'],
+    writes: ['tenancy.invitations', 'audit.audit_events'],
   },
   'tenancy.accept_invitation': {
     class: 'operation',
@@ -46,12 +46,12 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.set_merchant_status': {
     class: 'operation',
     planned: ['A1:S', '2:NKU', '6:S'],
-    writes: ['tenancy.merchants'],
+    writes: ['tenancy.merchants', 'audit.audit_events'],
   },
   'tenancy.transfer_ownership': {
     class: 'operation',
     planned: ['A1:S', '2:NKU', '3:NKU', '6:S', '7:S', '10:W'],
-    writes: ['tenancy.merchant_memberships', 'identity.sessions'],
+    writes: ['tenancy.merchant_memberships', 'identity.sessions', 'audit.audit_events'],
   },
   // operator only (§7.4, rev 14)
   'identity.bootstrap_super_admin': {
@@ -220,12 +220,6 @@ export const BASELINE: readonly string[] = [
  * until it is empty and the tolerance mechanism is deleted.
  */
 export const TOLERATED: readonly string[] = [
-  // the actor's authority lock: step 3
-  'footprint tenancy.update_membership',
-  'footprint tenancy.issue_invitation',
-  'footprint tenancy.revoke_invitation',
-  'footprint tenancy.set_merchant_status',
-  'footprint tenancy.transfer_ownership',
   // the identity lock and the account separation: step 5
   'footprint identity.bootstrap_super_admin',
 ];
@@ -253,12 +247,7 @@ export const TRANSACTIONS_TOLERATED: readonly string[] = [
   'MerchantSettingsService.rename',
   'MerchantSettingsService.create',
   'MerchantSettingsService.update',
-  'MembershipService.change',
-  'InvitationService.create',
-  'InvitationService.revoke',
   'InvitationService.accept',
-  'MerchantLifecycleService.change',
-  'MerchantLifecycleService.transferOwnership',
 ];
 
 /** Nested-writer entries whose function does not exist yet (step 5 creates tenancy.admit_invitation_locked). */
@@ -325,11 +314,4 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
 ];
 
 /** Authority still decided by a literal — removed when step 3 takes authority from the resolver. The list only shrinks. */
-export const AUTHORITY_TOLERATED: readonly string[] = [
-  "tenancy.update_membership: v.kind = 'owner'",
-  "tenancy.issue_invitation: v.kind = 'owner'",
-  "tenancy.revoke_invitation: v.kind = 'owner'",
-  "tenancy.list_members: v.kind = 'owner'",
-  "tenancy.set_merchant_status: pm.role = 'super_admin'",
-  "tenancy.transfer_ownership: pm.role = 'super_admin'",
-];
+export const AUTHORITY_TOLERATED: readonly string[] = [];

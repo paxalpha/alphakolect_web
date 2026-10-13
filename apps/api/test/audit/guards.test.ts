@@ -78,37 +78,37 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
     pattern: 'A',
     writer: 'MerchantSettingsService.update',
   },
-  'merchant.member_assigned/success': { class: 'atomic', pattern: 'A', writer: 'MembershipService.change' },
+  'merchant.member_assigned/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_membership' },
   'merchant.member_deactivated/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'MembershipService.change',
+    writer: 'tenancy.update_membership',
   },
   'merchant.member_reactivated/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'MembershipService.change',
+    writer: 'tenancy.update_membership',
   },
-  'merchant.invitation_issued/success': { class: 'atomic', pattern: 'A', writer: 'InvitationService.create' },
+  'merchant.invitation_issued/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.issue_invitation' },
   'merchant.invitation_revoked/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'InvitationService.revoke',
+    writer: 'tenancy.revoke_invitation',
   },
   'platform.merchant_deactivated/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'MerchantLifecycleService.change',
+    writer: 'tenancy.set_merchant_status',
   },
   'platform.merchant_reactivated/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'MerchantLifecycleService.change',
+    writer: 'tenancy.set_merchant_status',
   },
   'platform.ownership_transferred/success': {
     class: 'atomic',
     pattern: 'A',
-    writer: 'MerchantLifecycleService.transferOwnership',
+    writer: 'tenancy.transfer_ownership',
   },
   ...Object.fromEntries(
     [
@@ -155,12 +155,7 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
 const ENTRY_POINTS = ['mutateAudited', 'recordBestEffort', 'recordWithin'] as const;
 type EntryPoint = (typeof ENTRY_POINTS)[number];
 /** Where the transitional writers live (§10 P5.3a); P5.5 empties the list. */
-const TRANSITIONAL_FILES = [
-  'src/modules/tenancy/invitations.ts',
-  'src/modules/tenancy/memberships.ts',
-  'src/modules/tenancy/merchant-lifecycle.ts',
-  'src/modules/tenancy/merchant-settings.ts',
-];
+const TRANSITIONAL_FILES = ['src/modules/tenancy/invitations.ts', 'src/modules/tenancy/merchant-settings.ts'];
 
 type Site = { writer: EntryPoint | 'sql'; where: string; file: string; pairs: string[] | null };
 

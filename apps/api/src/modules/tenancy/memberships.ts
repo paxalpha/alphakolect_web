@@ -63,9 +63,7 @@ function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: Me
 }
 
 export class MembershipService {
-  constructor(
-    private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
-  ) {}
+  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
 
   async list(tenant: TenantContext): Promise<MemberRow[]> {
     return withTenant(this.deps.db, tenant, (tx) => repo.members(tx));
@@ -97,19 +95,10 @@ export class MembershipService {
       requestId: ctx.requestId,
     };
     const result = await withTenant(this.deps.db, tenant, async (tx) => {
-      const change = await repo.changeMembership(tx, membershipId, action, assignment);
+      // On success the function wrote the change's audit row itself, in this transaction (pattern A, §8.1).
+      const change = await repo.changeMembership(tx, membershipId, action, assignment, ctx);
       if (change.outcome !== 'ok') return { change, member: null };
       const [member] = await repo.members(tx, membershipId);
-      await this.deps.audit.recordWithin(tx, {
-        ...event,
-        outcome: 'success',
-        summary: {
-          kind: member!.kind,
-          status: member!.status,
-          roleId: member!.role_id,
-          branchId: member!.branch_id,
-        },
-      });
       return { change, member: member! };
     });
 

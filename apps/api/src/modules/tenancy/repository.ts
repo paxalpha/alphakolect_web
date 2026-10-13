@@ -1,4 +1,5 @@
 import { scopeOf, type TenantTx } from '../../platform/tenant.js';
+import type { RequestContext } from '../identity/sessions.js';
 
 // The tenancy module's scoped repository (TARGET_ARCHITECTURE §4, ADR-15 T13–T15). Every function takes a TenantTx
 // — a transaction opened by withTenant, with app.merchant_id set — and calls scopeOf(tx) before any query, so it
@@ -201,17 +202,30 @@ export const tenancyRepository = {
     );
   },
 
-  /** tenancy.update_membership (P4.5): authority, tenant and every rule are decided in the database. */
+  /**
+   * tenancy.update_membership (P4.5; P5.5): authority, tenant and every rule are decided in the database, which also
+   * writes the change's audit row (pattern A); the request context is recorded as given.
+   */
   async changeMembership(
     tx: TenantTx,
     membershipId: string,
     action: MembershipAction,
     assignment: { roleId: string; branchId: string | null } | null,
+    ctx: RequestContext,
   ): Promise<MembershipChange> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<MembershipChange>(
-      `SELECT outcome, membership_id FROM tenancy.update_membership($1, $2, $3, $4, $5)`,
-      [sessionId, membershipId, action, assignment?.roleId ?? null, assignment?.branchId ?? null],
+      `SELECT outcome, membership_id FROM tenancy.update_membership($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        sessionId,
+        membershipId,
+        action,
+        assignment?.roleId ?? null,
+        assignment?.branchId ?? null,
+        ctx.ip,
+        ctx.userAgent,
+        ctx.requestId,
+      ],
     );
     return row!;
   },
@@ -227,17 +241,22 @@ export const tenancyRepository = {
     );
   },
 
-  /** tenancy.issue_invitation (P4.6): authority, tenant and every rule are decided in the database. */
+  /**
+   * tenancy.issue_invitation (P4.6; P5.5): authority, tenant and every rule are decided in the database, which also
+   * writes the invitation's audit row (pattern A); the request context is recorded as given.
+   */
   async issueInvitation(
     tx: TenantTx,
     invite: { email: string; kind: 'staff' | 'agent'; roleId: string | null; branchId: string | null },
     tokenHash: string,
     setupTokenHash: string,
     ttlSeconds: number,
+    ctx: RequestContext,
   ): Promise<IssuedInvitation> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<IssuedInvitation>(
-      `SELECT outcome, invitation_id, delivery FROM tenancy.issue_invitation($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `SELECT outcome, invitation_id, delivery
+         FROM tenancy.issue_invitation($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         sessionId,
         invite.email,
@@ -247,19 +266,24 @@ export const tenancyRepository = {
         tokenHash,
         setupTokenHash,
         ttlSeconds,
+        ctx.ip,
+        ctx.userAgent,
+        ctx.requestId,
       ],
     );
     return row!;
   },
 
+  /** tenancy.revoke_invitation (P4.6; P5.5): decided in the database, which writes the audit row (pattern A). */
   async revokeInvitation(
     tx: TenantTx,
     invitationId: string,
+    ctx: RequestContext,
   ): Promise<'ok' | 'forbidden' | 'not_found' | 'invalid_transition'> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<{ outcome: 'ok' | 'forbidden' | 'not_found' | 'invalid_transition' }>(
-      `SELECT outcome FROM tenancy.revoke_invitation($1, $2)`,
-      [sessionId, invitationId],
+      `SELECT outcome FROM tenancy.revoke_invitation($1, $2, $3, $4, $5)`,
+      [sessionId, invitationId, ctx.ip, ctx.userAgent, ctx.requestId],
     );
     return row!.outcome;
   },

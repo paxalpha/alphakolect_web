@@ -57,8 +57,8 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
   it('analyses every function of the four schemas (sanity: it is looking at the real code)', () => {
     const { footprints } = analyse(catalog, CLASSES, SCHEMAS);
     expect(catalog.functions.length).toBeGreaterThanOrEqual(59);
-    expect(footprints.get('tenancy.update_membership')).toEqual(['2:S', '3:NKU', '7:S', '8:S', '10:W']);
-    expect(footprints.get('tenancy.revoke_invitation')).toEqual(['2:S', '4:NKU']);
+    expect(footprints.get('tenancy.update_membership')).toEqual(['2:S', 'A3:NKU', '7:S', '8:S', '10:W']);
+    expect(footprints.get('tenancy.revoke_invitation')).toEqual(['2:S', 'A3:NKU', '4:NKU']);
     expect(footprints.get('identity.rotate_refresh_token')).toEqual(['5:NKU', '10:NKU']);
   });
 

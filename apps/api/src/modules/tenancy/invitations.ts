@@ -86,22 +86,12 @@ export class InvitationService {
         token.hash,
         setup.hash,
         INVITATION_TTL_SECONDS,
+        ctx,
       );
+      // On success the function wrote the invitation's audit row itself, in this transaction (pattern A, §8.1).
       if (issued.outcome !== 'ok') return { issued, row: null, business: null };
       const [row] = await repo.invitations(tx, issued.invitation_id);
       const business = await repo.merchant(tx);
-      await audit.recordWithin(tx, {
-        ...event,
-        targetId: row!.id,
-        outcome: 'success',
-        // Internal record only: which delivery says whether the email had an account (never told to the owner).
-        summary: {
-          kind: row!.kind,
-          roleId: row!.role_id,
-          branchId: row!.branch_id,
-          delivery: issued.delivery,
-        },
-      });
       return { issued, row: row!, business: business! };
     });
 
@@ -134,10 +124,10 @@ export class InvitationService {
     const event = this.event(tenant, 'merchant.invitation_revoked', invitationId, ctx);
 
     const result = await withTenant(db, tenant, async (tx) => {
-      const outcome = await repo.revokeInvitation(tx, invitationId);
+      // On success the function wrote the revocation's audit row itself, in this transaction (pattern A, §8.1).
+      const outcome = await repo.revokeInvitation(tx, invitationId, ctx);
       if (outcome !== 'ok') return { outcome, row: null };
       const [row] = await repo.invitations(tx, invitationId);
-      await audit.recordWithin(tx, { ...event, outcome: 'success', summary: { kind: row!.kind } });
       return { outcome, row: row! };
     });
     if (result.outcome !== 'ok') {

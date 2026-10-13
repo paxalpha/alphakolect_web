@@ -359,8 +359,8 @@ describe('grants', () => {
     const { rows } = await owner.query(`
       SELECT has_function_privilege('alphakolect_app', 'tenancy.list_members(uuid, uuid)', 'EXECUTE') AS list_app,
              has_function_privilege('alphakolect_readonly', 'tenancy.list_members(uuid, uuid)', 'EXECUTE') AS list_ro,
-             has_function_privilege('alphakolect_app', 'tenancy.update_membership(uuid, uuid, text, uuid, uuid)', 'EXECUTE') AS upd_app,
-             has_function_privilege('alphakolect_readonly', 'tenancy.update_membership(uuid, uuid, text, uuid, uuid)', 'EXECUTE') AS upd_ro`);
+             has_function_privilege('alphakolect_app', 'tenancy.update_membership(uuid, uuid, text, uuid, uuid, text, text, text)', 'EXECUTE') AS upd_app,
+             has_function_privilege('alphakolect_readonly', 'tenancy.update_membership(uuid, uuid, text, uuid, uuid, text, text, text)', 'EXECUTE') AS upd_ro`);
     expect(rows[0]).toEqual({ list_app: true, list_ro: false, upd_app: true, upd_ro: false });
   });
 });

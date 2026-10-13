@@ -461,8 +461,8 @@ describe('privileges', () => {
 
   it('functions: the app may call issue, revoke and accept; nobody may call admit directly', async () => {
     const { rows } = await owner.query(`
-      SELECT has_function_privilege('alphakolect_app', 'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer)', 'EXECUTE') AS issue,
-             has_function_privilege('alphakolect_app', 'tenancy.revoke_invitation(uuid, uuid)', 'EXECUTE') AS revoke,
+      SELECT has_function_privilege('alphakolect_app', 'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer, text, text, text)', 'EXECUTE') AS issue,
+             has_function_privilege('alphakolect_app', 'tenancy.revoke_invitation(uuid, uuid, text, text, text)', 'EXECUTE') AS revoke,
              has_function_privilege('alphakolect_app', 'tenancy.accept_invitation(text, uuid)', 'EXECUTE') AS accept,
              has_function_privilege('alphakolect_app', 'tenancy.admit_invitation_locked(uuid, uuid)', 'EXECUTE') AS admit,
              has_function_privilege('alphakolect_readonly', 'tenancy.accept_invitation(text, uuid)', 'EXECUTE') AS ro`);

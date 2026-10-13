@@ -533,10 +533,11 @@ describe('(j) acceptance of an invitation against its revocation and its re-issu
         },
         { c: t3, pid: pid.t3, run: () => issue(t3, second, person.email) },
       ]);
-      const [accepted, revoked, reissued] = outcomes(results);
+      const all = outcomes(results);
+      const [accepted, revoked, reissued] = all;
       expect(
-        [accepted, revoked, reissued].filter((o) => o.startsWith('error')),
-        `run ${i}: ${[accepted, revoked, reissued].join(', ')}`,
+        all.filter((o) => o.startsWith('error')),
+        `run ${i}: ${all.join(', ')}`,
       ).toEqual([]);
       const { rowCount: members } = await owner.query(
         `SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = $1 AND identity_id = $2`,

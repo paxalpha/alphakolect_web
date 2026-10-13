@@ -1,0 +1,292 @@
+import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import type pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { connectAs } from './support/db.js';
+import {
+  analyse,
+  contestedIndexes,
+  findingKey,
+  loadCatalog,
+  LOCK_FREE_EXPRESSION_FUNCTIONS,
+  schemaFindings,
+  type Catalog,
+  type Finding,
+  type FnClass,
+  type FnRow,
+} from './support/lock-analysis.js';
+import { BASELINE, CLASSES, TOLERATED } from './support/lock-plan.js';
+
+// The lock-order guard (P5.5 step 1; P5 plan §7.2 — L1–L6, the category order, the planned footprints and the
+// authority rule, "What the guard can analyse, and failing closed outside it", R34 report mode). It reads every
+// function of the identity, tenancy, audit and util schemas from the migrated catalog, computes each one's waiting
+// footprint (recursively, triggers included) and checks it against its class (test/support/lock-plan.ts).
+//
+// Report mode (R34): a finding listed in TOLERATED is reported and tolerated; any other finding fails at once, and a
+// tolerated entry that no longer occurs fails until it is deleted from the list in the same commit. P5.5 cannot close
+// in report mode. The baseline control runs the same analysis on the P4 definitions (5d8904b, kept as a fixture) and
+// must report exactly the baseline reconciliation. The mutation and fail-closed self-tests install scratch functions
+// and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
+// passes, so the failures are not noise.
+
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util'];
+const fixture = JSON.parse(
+  readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
+) as { commit: string; functions: FnRow[] };
+const keys = (findings: Finding[]) => findings.map(findingKey).sort();
+const report = (findings: Finding[]) => findings.map((f) => `[${f.kind}] ${f.fn}: ${f.detail}`).join('\n');
+
+let owner: pg.Client;
+let catalog: Catalog;
+beforeAll(async () => {
+  owner = await connectAs('migrator');
+  catalog = await loadCatalog(owner, SCHEMAS);
+});
+afterAll(() => owner.end());
+
+describe('report mode (R34): only tolerated findings, and every tolerated finding still occurs', () => {
+  it('analyses every function of the four schemas (sanity: it is looking at the real code)', () => {
+    const { footprints } = analyse(catalog, CLASSES, SCHEMAS);
+    expect(catalog.functions.length).toBeGreaterThanOrEqual(59);
+    expect(footprints.get('tenancy.update_membership')).toEqual(['2:S', '3:NKU', '7:S', '8:S', '10:W']);
+    expect(footprints.get('tenancy.revoke_invitation')).toEqual(['2:S', '4:NKU']);
+    expect(footprints.get('identity.rotate_refresh_token')).toEqual(['5:NKU', '10:NKU']);
+  });
+
+  it('reports nothing that is not tolerated, and nothing tolerated has stopped occurring', () => {
+    const { findings } = analyse(catalog, CLASSES, SCHEMAS);
+    const found = keys(findings);
+    const unexpected = findings.filter((f) => !TOLERATED.includes(findingKey(f)));
+    expect(unexpected, report(unexpected)).toEqual([]);
+    expect(
+      TOLERATED.filter((k) => !found.includes(k)),
+      'tolerated entries that no longer occur: delete them from TOLERATED',
+    ).toEqual([]);
+  });
+
+  it('every function of the four schemas is classified, and nothing classified is missing', () => {
+    const names = new Set(catalog.functions.map((f) => `${f.schema}.${f.name}`));
+    expect([...names].filter((n) => !CLASSES[n])).toEqual([]);
+    // A class for a function that does not exist is allowed only for one the planned footprints still add.
+    expect(Object.keys(CLASSES).filter((n) => !names.has(n))).toEqual([]);
+  });
+
+  it('the contested unique keys of the tables written in scope are exactly the known ones (L3)', () => {
+    const { writtenTables } = analyse(catalog, CLASSES, SCHEMAS);
+    const contested = contestedIndexes(catalog)
+      .filter((ix) => writtenTables.has(ix.table))
+      .map((ix) => `${ix.table}(${ix.columns.join(', ')})${ix.partial ? ' partial' : ''}`)
+      .sort();
+    expect(contested).toEqual([
+      'identity.identities(email)',
+      'identity.platform_memberships(identity_id)',
+      'identity.totp_credentials(identity_id)',
+      'tenancy.invitations(merchant_id, email) partial',
+      'tenancy.merchant_memberships(merchant_id) partial',
+      'tenancy.merchant_memberships(merchant_id, identity_id)',
+      'util.rate_limit_counters(key, window_start)',
+    ]);
+  });
+
+  it('schema-level expressions of every table written in scope call only lock-free functions', async () => {
+    const { writtenTables } = analyse(catalog, CLASSES, SCHEMAS);
+    const { findings, seen } = await schemaFindings(owner, [...writtenTables]);
+    expect(findings, report(findings)).toEqual([]);
+    // Sanity: the check reads the expressions — the defaults' id generator and the policies' tenant function.
+    expect(seen).toContain('util.uuid_v7');
+    expect(seen).toContain('util.current_merchant_id');
+    expect([...seen].filter((f) => !LOCK_FREE_EXPRESSION_FUNCTIONS.has(f))).toEqual([]);
+  });
+});
+
+describe('the baseline control (R34)', () => {
+  it('the fixture is the P4 closure: every function as migrated at 5d8904b', () => {
+    expect(fixture.commit).toBe('5d8904b');
+    expect(fixture.functions).toHaveLength(45);
+  });
+
+  it('against the P4 definitions it reports exactly the baseline reconciliation — no more, no fewer', () => {
+    const { findings } = analyse({ ...catalog, functions: fixture.functions }, CLASSES, SCHEMAS);
+    expect(keys(findings), report(findings)).toEqual([...BASELINE].sort());
+  });
+});
+
+describe('self-tests: each violation fails the guard, a conforming copy passes (§7.2, R11)', () => {
+  const s = `lockguard_${randomBytes(4).toString('hex')}`;
+  /** A planned operation, conforming: merchant S → actor's membership NKU (helper) → invitation NKU, then the write. */
+  const body = (locks: string) => `
+    DECLARE v_actor uuid;
+    BEGIN
+      SELECT v.membership_id INTO v_actor FROM identity.validate_session(p_session) v;
+      ${locks}
+      UPDATE tenancy.invitations i SET revoked_at = now() WHERE i.id = p_invitation;
+    END`;
+  const MERCHANT = `PERFORM 1 FROM tenancy.merchants m WHERE m.id = p_merchant FOR SHARE;`;
+  const ACTOR = `PERFORM tenancy.lock_memberships(NULL, ARRAY[v_actor]);`;
+  const INVITATION = `PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE;`;
+  const ARGS = 'p_session uuid, p_merchant uuid, p_invitation uuid';
+  const op = (planned: string[]): FnClass => ({ class: 'operation', planned });
+  const REVOKE: string[] = ['2:S', 'A3:NKU', '4:NKU'];
+
+  const scratch: Record<string, { sql: string; cls: FnClass }> = {
+    conforming: {
+      sql: `(${ARGS}) RETURNS void LANGUAGE plpgsql AS $$${body(`${MERCHANT} ${ACTOR} ${INVITATION}`)}$$`,
+      cls: op(REVOKE),
+    },
+    // (a) one inverted pair of categories
+    inverted: {
+      sql: `(${ARGS}) RETURNS void LANGUAGE plpgsql AS $$${body(`${MERCHANT} ${INVITATION} ${ACTOR}`)}$$`,
+      cls: op(REVOKE),
+    },
+    // (b) an inversion reached only through a nested call
+    nested: {
+      sql: `(${ARGS}) RETURNS void LANGUAGE plpgsql AS $$${body(`${MERCHANT} ${ACTOR} ${INVITATION} PERFORM ${s}.inner_platform(p_session);`)}$$`,
+      cls: op(REVOKE),
+    },
+    inner_platform: {
+      sql: `(p_id uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM 1 FROM identity.platform_memberships pm WHERE pm.id = p_id FOR SHARE; END $$`,
+      cls: { class: 'identity' },
+    },
+    // (c) a FOR UPDATE
+    for_update: {
+      sql: `(${ARGS}) RETURNS void LANGUAGE plpgsql AS $$${body(`${MERCHANT} ${ACTOR} ${INVITATION.replace('FOR NO KEY UPDATE', 'FOR UPDATE')}`)}$$`,
+      cls: op(REVOKE),
+    },
+    // (d) a lock after a contested insert
+    after_insert: {
+      sql: `(p_merchant uuid, p_identity uuid, p_role uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+              INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES (p_merchant, p_identity, 'agent');
+              PERFORM 1 FROM tenancy.roles r WHERE r.id = p_role FOR SHARE;
+            END $$`,
+      cls: { class: 'identity' },
+    },
+    // (e) a waiting lock inside a …_locked function
+    admit_locked: {
+      sql: `(p_invitation uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+              PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE;
+            END $$`,
+      cls: { class: 'locked' },
+    },
+    // its conforming twin: re-asserts with NOWAIT, then writes the held row
+    admit_ok_locked: {
+      sql: `(p_invitation uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+              PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE NOWAIT;
+              UPDATE tenancy.invitations i SET accepted_at = now() WHERE i.id = p_invitation;
+            END $$`,
+      cls: { class: 'locked' },
+    },
+    // fail closed: dynamic SQL, an unqualified call, an unclassified callee, a call outside the analysed schemas
+    dynamic: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'SELECT 1'; END $$`,
+      cls: { class: 'identity' },
+    },
+    unqualified: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM inner_platform(NULL); END $$`,
+      cls: { class: 'identity' },
+    },
+    calls_unlisted: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ${s}.unlisted(); END $$`,
+      cls: { class: 'identity' },
+    },
+    unlisted: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN NULL; END $$`,
+      cls: undefined as unknown as FnClass,
+    },
+    outside: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ledger.assert_entry_balanced(NULL); END $$`,
+      cls: { class: 'identity' },
+    },
+    // schema-level constructs on a table in scope: a default and a CHECK calling a non-allowlisted function, a cascading
+    // foreign key and a rewrite rule — the table is in scope because this function writes it
+    writes_scratch_table: {
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN INSERT INTO ${s}.t (n) VALUES ('x'); END $$`,
+      cls: { class: 'standalone' },
+    },
+  };
+  let run: ReturnType<typeof analyse>;
+  let schema: Awaited<ReturnType<typeof schemaFindings>>;
+  const of = (name: string) => run.findings.filter((f) => f.fn === `${s}.${name}`);
+
+  beforeAll(async () => {
+    await owner.query(`CREATE SCHEMA ${s}`);
+    await owner.query(
+      `CREATE FUNCTION ${s}.fresh() RETURNS uuid LANGUAGE sql AS $$ SELECT util.uuid_v7() $$`,
+    );
+    await owner.query(
+      `CREATE FUNCTION ${s}.ok(p text) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT p <> '' $$`,
+    );
+    await owner.query(
+      `CREATE TABLE ${s}.t (id uuid PRIMARY KEY DEFAULT ${s}.fresh(), n text CHECK (${s}.ok(n)),
+         merchant_id uuid REFERENCES tenancy.merchants (id) ON DELETE CASCADE)`,
+    );
+    await owner.query(`CREATE RULE t_also AS ON UPDATE TO ${s}.t DO ALSO NOTHING`);
+    for (const [name, { sql }] of Object.entries(scratch))
+      await owner.query(`CREATE FUNCTION ${s}.${name}${sql}`);
+    const withScratch = await loadCatalog(owner, [...SCHEMAS, s]);
+    const classes: Record<string, FnClass> = { ...CLASSES };
+    for (const [name, { cls }] of Object.entries(scratch)) if (cls) classes[`${s}.${name}`] = cls;
+    classes[`${s}.fresh`] = { class: 'reader' };
+    classes[`${s}.ok`] = { class: 'reader' };
+    run = analyse(withScratch, classes, [...SCHEMAS, s]);
+    schema = await schemaFindings(owner, [`${s}.t`]);
+  });
+  afterAll(async () => {
+    await owner.query(`DROP SCHEMA ${s} CASCADE`);
+  });
+
+  it('control: a conforming copy of a planned operation, and a conforming …_locked function, pass', () => {
+    expect(of('conforming'), report(of('conforming'))).toEqual([]);
+    expect(run.footprints.get(`${s}.conforming`)).toEqual(REVOKE);
+    expect(of('admit_ok_locked'), report(of('admit_ok_locked'))).toEqual([]);
+  });
+
+  it('(a) one inverted pair of categories fails (order and footprint)', () => {
+    expect(
+      of('inverted')
+        .map((f) => f.kind)
+        .sort(),
+    ).toEqual(['footprint', 'order']);
+  });
+
+  it('(b) an inversion reached only through a nested call fails', () => {
+    expect(of('nested').map((f) => f.kind)).toContain('order');
+    expect(of('nested').find((f) => f.kind === 'order')?.detail).toContain(`${s}.inner_platform`);
+  });
+
+  it('(c) a FOR UPDATE fails (L1)', () => {
+    expect(of('for_update').map((f) => f.kind)).toEqual(['L1']);
+  });
+
+  it('(d) a lock after a contested insert fails (L3)', () => {
+    expect(of('after_insert').map((f) => f.kind)).toEqual(['L3']);
+  });
+
+  it('(e) a waiting lock inside a …_locked function fails (L6)', () => {
+    expect(of('admit_locked').map((f) => f.kind)).toEqual(['L6']);
+  });
+
+  it('fails closed: dynamic SQL, an unqualified call, an unclassified function, a call outside the analysed schemas', () => {
+    expect(of('dynamic').map((f) => f.detail)).toEqual([expect.stringContaining('dynamic SQL (EXECUTE)')]);
+    expect(of('unqualified').map((f) => f.detail)).toEqual([
+      expect.stringContaining('unqualified call of inner_platform'),
+    ]);
+    expect(of('unlisted').map((f) => f.detail)).toEqual([expect.stringContaining('not classified')]);
+    expect(of('outside').map((f) => f.detail)).toEqual([
+      expect.stringContaining('outside the analysed schemas'),
+    ]);
+  });
+
+  it('fails closed on schema-level constructs of a table in scope: default, CHECK, cascading foreign key, rule', () => {
+    expect(run.writtenTables).toContain(`${s}.t`);
+    const details = schema.findings.map((f) => f.detail);
+    expect(details).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(new RegExp(`^a default calls ${s}\\.fresh`)),
+        expect.stringMatching(new RegExp(`^a check calls ${s}\\.ok`)),
+        expect.stringMatching(/^a foreign-key action: .*ON DELETE CASCADE/),
+        expect.stringMatching(/^a rule: t_also/),
+      ]),
+    );
+    expect(details).toHaveLength(4);
+  });
+});

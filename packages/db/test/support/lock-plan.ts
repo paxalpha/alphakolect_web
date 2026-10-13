@@ -1,0 +1,143 @@
+import type { FnClass } from './lock-analysis.js';
+
+// The lock-order guard's plan data (P5 plan §7.2): how every function of the identity, tenancy, audit and util schemas
+// is checked, the planned footprints as token sequences, the baseline reconciliation (R34) and the report-mode
+// tolerated list. Kept here and in the plan; a change to either is a change to both.
+//
+// Tokens, in acquisition order: `<category>:<mode>` for a waiting acquisition — S (FOR SHARE), NKU (FOR NO KEY UPDATE;
+// a FOR UPDATE is reported under L1 and compared as NKU), W (the implicit lock of an UPDATE or DELETE of rows not
+// already held), S+NKU (one helper call taking both); a leading A marks the acquisition that holds the actor's row
+// (the authority lock, "Authority is acquired by category, not by row"); `+<category>` is an insert under a contested
+// unique key (L3: last, and nothing waited for afterwards).
+
+export const CLASSES: Readonly<Record<string, FnClass>> = {
+  // ── privileged operations: the planned-footprint table ──
+  'tenancy.update_membership': { class: 'operation', planned: ['2:S', 'A3:NKU', '7:S', '8:S', '10:W'] },
+  'tenancy.issue_invitation': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '4:NKU', '5:NKU', '6:S', '7:S', '8:S', '+6', '+4'],
+  },
+  'tenancy.revoke_invitation': { class: 'operation', planned: ['2:S', 'A3:NKU', '4:NKU'] },
+  'tenancy.accept_invitation': { class: 'operation', planned: ['2:S', '4:NKU', '6:S', '7:S', '8:S', '+3'] },
+  'identity.complete_account_setup': {
+    class: 'operation',
+    planned: ['2:S', '4:NKU', '5:NKU', '6:NKU', '7:S', '8:S', '10:W', '+3'],
+  },
+  'tenancy.set_merchant_status': { class: 'operation', planned: ['A1:S', '2:NKU', '6:S'] },
+  'tenancy.transfer_ownership': {
+    class: 'operation',
+    planned: ['A1:S', '2:NKU', '3:NKU', '6:S', '7:S', '10:W'],
+  },
+  // operator only (§7.4, rev 14)
+  'identity.bootstrap_super_admin': { class: 'operation', planned: ['6:NKU', '+6', '+1'] },
+  // replaced by its …_locked inner function (L6)
+  'tenancy.admit_invitation': { class: 'retired', replacedBy: 'tenancy.admit_invitation_locked' },
+
+  // ── identity flows of the table: the categories each may wait for ──
+  'identity.reset_password': { class: 'flow', categories: [5, 6, 10] },
+  'identity.verify_email': { class: 'flow', categories: [5, 6] },
+  'identity.change_password': { class: 'flow', categories: [6, 10] },
+  'identity.rotate_refresh_token': { class: 'flow', categories: [5, 10] },
+  'identity.take_selection': { class: 'flow', categories: [5, 6] },
+  'identity.consume_mfa_challenge': { class: 'flow', categories: [5, 6] },
+  'identity.take_mfa_challenge_attempt': { class: 'flow', categories: [5, 6] },
+  'identity.consume_recovery_code': { class: 'flow', categories: [5, 6] },
+  'identity.accept_totp_step': { class: 'flow', categories: [5, 6] },
+  'identity.begin_totp_enrollment': { class: 'flow', categories: [5, 6] },
+  'identity.confirm_totp_enrollment': { class: 'flow', categories: [5, 6] },
+
+  // ── other identity functions: the category order and L1–L6 ──
+  'identity.apply_new_password': { class: 'identity' },
+  'identity.consume_one_time_token': { class: 'identity' },
+  'identity.issue_one_time_token': { class: 'identity' },
+  'identity.create_session': { class: 'identity' },
+  'identity.create_mfa_challenge': { class: 'identity' },
+  'identity.signup_merchant_owner': { class: 'identity' },
+  'identity.resolve_login_membership': { class: 'identity' },
+  'identity.rehash_password': { class: 'identity' },
+  'identity.revoke_session': { class: 'identity' },
+  'identity.revoke_all_sessions': { class: 'identity' },
+
+  // ── the nested write-time re-check (P5.2; L6: NOWAIT only) ──
+  'tenancy.assert_authority': { class: 'nested-check' },
+
+  // ── lock helpers (P5.5 step 1) ──
+  'identity.lock_platform_memberships': { class: 'helper' },
+  'tenancy.lock_merchants': { class: 'helper' },
+  'tenancy.lock_memberships': { class: 'helper' },
+  'tenancy.lock_invitations': { class: 'helper' },
+  'identity.lock_one_time_tokens': { class: 'helper' },
+  'tenancy.lock_roles': { class: 'helper' },
+  'tenancy.lock_branches': { class: 'helper' },
+
+  // ── lock-free readers ──
+  'identity.account_for_email': { class: 'reader' },
+  'identity.active_membership': { class: 'reader' },
+  'identity.credentials_for': { class: 'reader' },
+  'identity.eligible_memberships': { class: 'reader' },
+  'identity.login_identity': { class: 'reader' },
+  'identity.mfa_credential': { class: 'reader' },
+  'identity.permissions_of': { class: 'reader' },
+  'identity.selection_choices': { class: 'reader' },
+  'identity.session_authority': { class: 'reader' },
+  'identity.session_limits': { class: 'reader' },
+  'identity.validate_session': { class: 'reader' },
+  'tenancy.list_members': { class: 'reader' },
+  'util.current_merchant_id': { class: 'reader' },
+  'util.uuid_v7': { class: 'reader' },
+
+  // ── trigger functions (L4) ──
+  'audit.protect_event_catalog': { class: 'trigger' },
+  'audit.validate_event': { class: 'trigger' },
+  'identity.check_grantable_permission': { class: 'trigger' },
+  'identity.protect_permission_catalog': { class: 'trigger' },
+  'tenancy.merchant_keeps_one_owner': { class: 'trigger' },
+  'util.reject_modification': { class: 'trigger' },
+
+  // ── a request path called in its own statement, never inside a transaction ──
+  'util.rate_limit_hit': { class: 'standalone' },
+};
+
+/**
+ * The baseline reconciliation (R34), as the guard reports it for the P4 definitions at 5d8904b
+ * (test/fixtures/lock-baseline-5d8904b.json). L1 entries name the clause's line in the function body; the plan's table
+ * names the migration line. Entries marked "P5.5 step 1" are the ones the guard found beyond the plan's table.
+ */
+export const BASELINE: readonly string[] = [
+  // L1 lock mode — 8 functions, 10 clauses (every FOR UPDATE becomes FOR NO KEY UPDATE)
+  'L1 identity.consume_one_time_token 11', // 20261003000200:85
+  'L1 identity.rotate_refresh_token 16', // 20261013000100:38
+  'L1 identity.rotate_refresh_token 21', // 20261013000100:43
+  'L1 identity.take_selection 7', // 20261009000200:117
+  'L1 tenancy.set_merchant_status 30', // 20261009000100:118
+  'L1 tenancy.update_membership 26', // 20261011000200:71
+  'L1 tenancy.transfer_ownership 21', // 20261011000300:47
+  'L1 tenancy.transfer_ownership 30', // 20261011000300:56
+  'L1 tenancy.admit_invitation 17', // 20261012000100:113
+  'L1 tenancy.revoke_invitation 19', // 20261012000100:271
+  // category order — the plan's three, and email verification (P5.5 step 1)
+  'order tenancy.set_merchant_status',
+  'order tenancy.issue_invitation',
+  'order identity.complete_account_setup',
+  'order identity.verify_email',
+  // planned footprint and authority — the plan's eight, and email verification (P5.5 step 1)
+  'footprint tenancy.update_membership',
+  'footprint tenancy.issue_invitation',
+  'footprint tenancy.revoke_invitation',
+  'footprint tenancy.set_merchant_status',
+  'footprint tenancy.transfer_ownership',
+  'footprint tenancy.admit_invitation',
+  'footprint identity.complete_account_setup',
+  'footprint identity.bootstrap_super_admin',
+  'footprint identity.verify_email',
+  // L3 — a wait after a contested insert (P5.5 step 1)
+  'L3 tenancy.issue_invitation',
+  'L3 identity.complete_account_setup',
+];
+
+/**
+ * Report mode (R34): these findings are reported and tolerated; any other finding fails at once, and an entry that
+ * no longer occurs fails until it is deleted here in the same commit — the list only shrinks. P5.5 cannot close
+ * until it is empty and the tolerance mechanism is deleted.
+ */
+export const TOLERATED: readonly string[] = [...BASELINE];

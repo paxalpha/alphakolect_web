@@ -52,7 +52,7 @@ export class MerchantSettingsService {
     private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'> },
   ) {}
 
-  /** Any member: their own membership and business, as of this request. */
+  /** Any member: their own membership, business and effective permissions, as of this request. */
   async currentMembership(tenant: TenantContext): Promise<CurrentMembership> {
     const { membership, merchant } = await withTenant(this.deps.db, tenant, async (tx) => ({
       membership: await repo.membership(tx),
@@ -66,6 +66,8 @@ export class MerchantSettingsService {
       roleId: membership.role_id,
       branchId: membership.branch_id,
       merchant: toProfile(merchant),
+      // Resolved by the database on this request (P5.2) — never cached, never from the token.
+      permissions: [...tenant.permissions].sort(),
     };
   }
 

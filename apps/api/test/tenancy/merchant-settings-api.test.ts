@@ -6,6 +6,7 @@ import {
   CSRF_HEADER,
   CurrentMembership,
   MerchantProfile,
+  PERMISSIONS,
   Role,
   RoleList,
 } from '@alphakolect/contracts';
@@ -136,13 +137,20 @@ describe('the callerâ€™s membership', () => {
       roleId: null,
       branchId: null,
       merchant: { merchantId: a.merchantId, name: 'Alpha Savings', status: 'active' },
+      // P5.4: the owner's fixed set — every merchant permission, sorted.
+      permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort(),
     });
   });
 
   it('staff see theirs â€” and a role or branch change shows on the very next request (T5)', async () => {
     const staff = await member(a.merchantId, 'staff');
     const first = await call(staff.token, 'get', '/v1/merchant/membership');
-    expect(first.body).toMatchObject({ kind: 'staff', roleId: staff.roleId, branchId: null });
+    expect(first.body).toMatchObject({
+      kind: 'staff',
+      roleId: staff.roleId,
+      branchId: null,
+      permissions: [],
+    });
 
     const {
       rows: [branch],

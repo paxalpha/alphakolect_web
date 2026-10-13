@@ -4323,6 +4323,12 @@
           },
           "merchant": {
             "$ref": "#/components/schemas/MerchantProfile"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -4330,10 +4336,11 @@
           "kind",
           "roleId",
           "branchId",
-          "merchant"
+          "merchant",
+          "permissions"
         ],
         "additionalProperties": false,
-        "description": "The caller’s own membership, as of this request"
+        "description": "The caller’s own membership and effective permissions, as of this request"
       },
       "MembershipKind": {
         "type": "string",

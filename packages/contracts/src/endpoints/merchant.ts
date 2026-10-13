@@ -25,13 +25,21 @@ export const CurrentMembership = z
   .object({
     membershipId: Id,
     kind: MembershipKind,
-    /** Staff only: their role (names only until P5). */
+    /** Staff only: their role, whose grants are their permissions. */
     roleId: Id.nullable(),
     /** Staff only: the one branch they are restricted to; null = all branches. */
     branchId: Id.nullable(),
     merchant: MerchantProfile,
+    /**
+     * The caller's effective merchant permissions, resolved on this request (ADR-16), sorted. They only drive what
+     * the interface shows; the server decides every request again.
+     */
+    permissions: z.array(z.string()),
   })
-  .meta({ id: 'CurrentMembership', description: 'The caller’s own membership, as of this request' });
+  .meta({
+    id: 'CurrentMembership',
+    description: 'The caller’s own membership and effective permissions, as of this request',
+  });
 
 export type CurrentMembership = z.infer<typeof CurrentMembership>;
 

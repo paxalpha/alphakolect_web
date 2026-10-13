@@ -1820,7 +1820,14 @@ independent of the permission catalog); it is listed with them so it is complete
   table.
 - **Done when:** every audit writer in the code is one of the three entry points (or on the transitional list), and
   every identity security change commits with its event.
-- **Built 2026-10-13 — awaiting review at the P5.3a gate.** Commits `4068baf` (migration
+- **Built 2026-10-13; gate approved 2026-10-13** (§14: "P5.3a approved to close"; all 14 judgement calls accepted; the
+  account-setup invitation event stays with P5.5 and the sensitive-read behaviour tests with the first such events in
+  P5.7/P5.8; the unused retention override approves nothing of Part 2). The reviewer re-ran the focused suites serially —
+  141 API tests and 19 database catalog tests passed. **Observation carried to P5.5's test-budget confirmation (§9.3):**
+  the reviewer's first, parallel run of the same API files hit three 30-second timeouts and a dropped database
+  connection (resource contention, not an assertion); the configured four-worker local runs passed. P5.5 confirms the
+  budget at its start, as §9.3 requires, and moves database-heavy suites to a separate gate script if they do not fit.
+  **Original evidence:** Commits `4068baf` (migration
   `20261013000700_event_catalog`: `audit.event_catalog`, 66 pairs, the validation trigger; database tests; older tests
   and fixtures use real pairs), `f2a2133` (the three entry points, the TypeScript mirror, §9.4 signals, the tenancy
   writers), `12ff1ad` (every identity flow pattern B; `record()` removed), `7f655c7` (one allowlist tightened),
@@ -2277,6 +2284,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Reviewer — **P5.1 completion gate** | "P5.1: approved to close, based on the evidence you've reported. Go ahead with the next package sequence: P5.2, P5.3 and P5.3a, following the approved plan and their individual completion gates." The eight judgement calls accepted (5, 6 and 8 subject to checks); CI has not run | The independent reviewer, 2026-10-12 | **Approved** — checks answered and effective privileges tested in `dfaf579`; each later package stops at its own gate | P5.1 |
 | Reviewer — **P5.2 completion gate** | "P5.2 is approved to close based on the evidence reported. Proceed with P5.3 and P5.3a according to the approved plan, with a separate completion gate for each package." Eight judgement calls accepted (2, 3, 6, 7 with conditions); P5.5 must test the real functions against concurrent revocation; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — boundary check added in `3baa6bf`; conditions answered under P5.2 | P5.2 |
 | Reviewer — **P5.3 completion gate** | "Verdict: P5.3 approved to close. I accept decision 1: defer the authorization-middleware mount assertion to P5.4. … P5.4 must add the parity assertion when it mounts the real middleware. I accept decisions 2–8." The reviewer ran the focused tests (36 passed); the full gate as reported; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — this closes P5.3 only; P5.3a has its own gate | P5.3, P5.4 |
+| Reviewer — **P5.3a completion gate** | "Verdict: P5.3a approved to close. I accept the 14 recorded decisions. … The remaining account-setup invitation event is explicitly assigned to P5.5, and sensitive-read behavior tests belong with the first such events in P5.7/P5.8. … The unused retention override remains outside this approval; it does not approve Part 2." Focused suites re-run serially: 141 API and 19 database tests passed; a first parallel run hit timeouts and a dropped connection | The independent reviewer, 2026-10-13 | **Approved** — closes P5.3a only; P5.4 has its own work and gate; the contention is carried to P5.5's test-budget check (§9.3); CI has not run | P5.3a, P5.5 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
@@ -2326,6 +2334,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 36 | 2026-10-13 | **P5.3a gate approved.** All 14 judgement calls accepted, including the fix that makes the invitation-link success atomic. The reviewer re-ran the focused suites serially (141 API, 19 database tests passed); its first parallel run hit timeouts and a dropped connection, carried to P5.5's test-budget confirmation (§9.3). Local runs only; CI has not run. P5.4 is next, on the go-ahead. |
 | 35 | 2026-10-13 | **P5.3a built; awaiting review at its gate.** The audit event catalog and its validation trigger (66 pairs), the three entry points with §9.4 signals and the TypeScript mirror, every identity flow committing with its event (pattern B), every refusal best effort, and the writer and coverage guards with per-pair co-commit and rollback tests (`4068baf`, `f2a2133`, `12ff1ad`, `7f655c7`, `0957b1c`). Finding: the invitation-link success was not atomic in P4; it is now. Gate passed locally; evidence and 14 judgement calls under P5.3a. P5.4 waits for the gate review. |
 | 34 | 2026-10-12 | **P5.3 gate approved.** All eight judgement calls accepted; the authorization-middleware parity assertion moves to P5.4 as a condition (P5.4's tests updated). The reviewer re-ran the focused tests (36 passed). Local runs only; CI has not run. Next: P5.3a, with its own gate. |
 | 33 | 2026-10-12 | **P5.3 built; awaiting review at its gate.** Every endpoint declares its authorization (the frozen route map, published as `x-authorization`), the router refuses to start on a missing or invalid declaration, and query parameters are validated from the contract with unknown ones refused (`8adec6f`, `277d389`). Gate passed locally; evidence and eight judgement calls under P5.3 — notably, the route-parity assertion for the authorization middleware moves to P5.4, where that middleware is built. P5.3a waits for the gate review. |

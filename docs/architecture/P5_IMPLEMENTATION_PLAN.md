@@ -2138,6 +2138,43 @@ independent of the permission catalog); it is listed with them so it is complete
   activates only the businesses it locked, re-checking ownership under the lock; (4) the test helpers end each racing
   transaction as soon as its statement settles — the first versions waited on both statements before ending either, a
   client-side wait the database cannot see, and hung.
+- **Progress — step 3 built 2026-10-13 (local, not CI).** Commits `88eff08` (the SQL authority guard, in report mode),
+  `50bcdc8` (migration `20261013001100_authority` and the API switch), `843c102` and `1302ec8` (the races; the second
+  fixes a type error the first was committed with — the commit helper checked secrets, not types; code commits now go
+  through a helper that refuses unless typecheck and lint pass). **Authority from the resolver:** `update_membership`,
+  `issue_invitation`, `revoke_invitation` (`merchant.members.manage` / `merchant.invitations.manage`, reserved to
+  the owner, D5′), `set_merchant_status` and `transfer_ownership` (the reserved platform permissions) take their whole
+  footprint — the actor's row at its category's turn, in the same sorted acquisition as their targets — then ask
+  `tenancy.assert_authority`, then check every rule in P4's order (`forbidden` still first), then write;
+  `list_members` checks `merchant.members.read` in the resolver's set. **Pattern A:** each success inserts its atomic
+  row in the same transaction, the actor from the session (no actor parameter exists), the request context recorded as
+  given (new trailing parameters, NULL by default for direct callers); eight pairs left the transitional list (six
+  remain: the settings writes, step 4; `auth.invitation_accepted`, step 5). **The guards:** every planned footprint
+  of the five is met (tolerated: `bootstrap_super_admin` only, step 5); the SQL authority guard tolerates nothing —
+  its exact list holds 22 data rules (eligibility, the bootstrap, owner lookups, the one-owner invariant, the invited
+  kind, owner protection, transfer's demotion and promotion; the platform sign-in literal until P5.7); five
+  transactions classify T1. **Tests:** `privileged-functions.test.ts` (16): each success writes exactly one row with the
+  session's actor and the request context; a staff member holding every grantable permission is refused member and
+  invitation writes and platform support is refused lifecycle and transfer, with nothing changed and no row; `forbidden`
+  before `not_found`; owner protection; reserved permissions cannot be granted; the actor's own row is held — a blocker
+  makes the call wait until a lock timeout (the test checks the message: a NOWAIT failure shares SQLSTATE 55P03, and
+  `assert_authority` would raise one at once if a function forgot the actor's lock); the parameter lists. Two-connection
+  races (`lock-races.test.ts`, 50 staged runs each, no deadlock): (b) two owner sessions on two members, both orders;
+  (a)/(d) transfer against the former owner's member change — the change first, both succeed; the transfer first, the
+  change is refused by its re-check; (f) deactivation against transfer, and against invitation issue — an issue after the
+  deactivation is refused; (g) account setup against deactivation — admitted only when setup ran first; (j)
+  acceptance, revocation and re-issue — exactly one of acceptance and withdrawal takes effect. (b)'s staff-write half
+  and (i) need step 4's writers. **Gate on `50bcdc8`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 496, api 597, all passing (the API coverage tests confirm each
+  moved pair still commits with its change and rolls back with it, with the same actor, business, target and request
+  id), 124 s wall. **Sabotage:** the actor removed from `update_membership`'s lock fails the runtime test (a NOWAIT
+  failure, not a lock timeout) and the guard (`3:NKU` where `A3:NKU` is planned). **Judgement calls:** (1) the request
+  context parameters default to NULL, so direct callers (database tests, operators) need not pass them; the API always
+  does; (2) a staff caller of an owner-only function — impossible through the API, whose policy middleware refuses first —
+  has its role re-asserted by `assert_authority` with NOWAIT: an error, never a wait, if a role edit holds it at that
+  instant; (3) `update_membership` locks a target only if it is a member of the caller's business (an unlocked lookup
+  first), so no request locks another business's row; (4) the lifecycle service no longer sets `app.merchant_id` (it
+  wrote the audit row through RLS; the function now does, as table owner) and left the T14 setter list.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2531,6 +2568,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 43 | 2026-10-13 | **P5.5 step 3 built** (`88eff08`, `50bcdc8`, `843c102`, `1302ec8`): authority from the resolver in the five privileged operations and `list_members`; each success writes its own audit row (pattern A; eight pairs off the transitional list); the SQL authority guard holds 22 data rules and tolerates nothing; the actor's own row is shown held; races (a), (b), (d), (f), (g), (j) pass 50 staged runs each. Gate passed locally (db 496, api 597). |
 | 42 | 2026-10-13 | **P5.5 step 2 built** (`8cdf7c6`): every FOR UPDATE is FOR NO KEY UPDATE; set_merchant_status, transfer_ownership, issue_invitation, verify_email, complete_account_setup and accept_invitation take their footprints; admission waits for nothing (`admit_invitation_locked`, L6). The §7.2 latent deadlock is confirmed — test (h) deadlocked on its first run against P4, none in 50 after. Guard: no L1, order or L3 finding left; six footprints tolerated until steps 3 and 5. Gate passed locally (db 477, api 597). |
 | 41 | 2026-10-13 | **P5.5 step 1 built** (`afe7499`, `73d3e89`, `708730e`, `f6c5ecc`): the seven lock helpers and the lock-order guard in report mode — SQL footprints with the baseline control against the 5d8904b fixture, approved writes (R22), and the repository-transaction classes (R17, R27). Findings: `verify_email` locks the merchant after the identity (a latent deadlock once `set_merchant_status` is reordered; footprint proposed in §7.2 for the gate review); two L3 violations the table did not list. §7.2's reconciliation amended to the 25 entries the guard reports. Gate passed locally (contracts 62, db 475, api 597). Step 2 next. |
 | 40 | 2026-10-13 | **P5.5 test budget confirmed (§9.3).** Measured before any P5.5 code: 100 two-connection races in 14.1 s (P5.5's 400 ≈ 56 s, in the sequential `packages/db` suite); a full `pnpm test` in 109 s wall; memory peaked at 916 MB for the test processes with the machine at 94–98% commit. The reviewer's P5.3a dropped connection was Postgres's 10 s idle-in-transaction termination at 00:08:09 UTC during that run — a test process stalled under memory pressure, not an application defect (no transaction takes a second pool connection). The suites stay in `pnpm test`, 50 runs each; gate runs one at a time; re-checked at P5.6 and P5.7. |

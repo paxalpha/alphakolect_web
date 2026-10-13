@@ -463,6 +463,9 @@ function, satisfies L1–L6 and its planned footprint.
 `issue_one_time_token`, updates that identity's unconsumed setup tokens; `complete_account_setup` holds the setup token
 it consumes and then updates the same identity. Re-issuing an invitation while the person completes setup can therefore
 cycle — PostgreSQL aborts one transaction (no corruption, an avoidable failure). The planned footprints remove it.
+**Confirmed at P5.5 step 2:** against the P4 functions, test (h) — staged with a third connection holding the older
+setup token — deadlocked on its first run (`40P01`, account setup aborted); after the reorder (`8cdf7c6`), 50 staged
+runs, none.
 
 **Lock-order guard ([Plan], P5.5) — what it covers, and how it is itself tested.** A database test reads every
 function and trigger body from the migrated catalog (`pg_get_functiondef`) and every repository transaction in
@@ -2113,6 +2116,28 @@ independent of the permission catalog); it is listed with them so it is complete
   (7) T4 has nothing to classify before P5.7; the classifier recognises the other four classes;
   (8) the plan's `list_members`-style lock-free readers are classified as readers and verified to lock and write
   nothing anywhere in their footprint.
+- **Progress — step 2 built 2026-10-13 (local, not CI).** Commit `8cdf7c6`, migration `20261013001000_lock_order`: every
+  `FOR UPDATE` is `FOR NO KEY UPDATE` (L1); `set_merchant_status`, `transfer_ownership`, `issue_invitation`,
+  `verify_email` (the step 1 finding, as proposed), `complete_account_setup` and `accept_invitation` take their
+  footprints in the category order with every multi-row category in one helper call and contested inserts last;
+  admission is `tenancy.admit_invitation_locked` (L6: NOWAIT re-assertions only; `admit_invitation` dropped). Authority
+  is unchanged (step 3). **The guard:** no L1, order or L3 finding remains; `complete_account_setup` and `verify_email`
+  meet their footprints; the tolerated list is down to six footprints (the actor's lock in five operations, step 3;
+  `bootstrap_super_admin`, step 5); `BASELINE_CLASSES` keeps the baseline control on the P4 definitions and the rows
+  they were reconciled under. **Two-connection tests** (`packages/db/test/lock-races.test.ts`, staged with a third
+  connection holding one row): (h) deadlocked on run 1 against P4, none in 50 runs after; email verification against a
+  merchant deactivation, 50 runs, no deadlock, the deactivation always wins. **Gate on `8cdf7c6`:** `format:check`,
+  `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 477, api 597, all passing (every
+  existing account-setup, invitation, lifecycle, transfer, membership and session test unchanged), 121 s wall.
+  **Sabotage** (restored byte-identical): admission with a waiting lock fails L6 and, through both callers, order, L3
+  and footprint; `verify_email` consuming the token before its merchant lock fails the order. **Judgement calls:**
+  (1) `issue_invitation` inserts a new invitee's identity last (L3); if another transaction created that email between
+  the lookup and the insert, it reads the identity without a lock (a lock may not follow a contested insert) and
+  re-checks membership — the answer is unchanged; (2) `complete_account_setup` admits the invitations pending at its
+  lookup; one issued in the instant between lookup and lock stays pending (its link still works); (3) `verify_email`
+  activates only the businesses it locked, re-checking ownership under the lock; (4) the test helpers end each racing
+  transaction as soon as its statement settles — the first versions waited on both statements before ending either, a
+  client-side wait the database cannot see, and hung.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2506,6 +2531,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 42 | 2026-10-13 | **P5.5 step 2 built** (`8cdf7c6`): every FOR UPDATE is FOR NO KEY UPDATE; set_merchant_status, transfer_ownership, issue_invitation, verify_email, complete_account_setup and accept_invitation take their footprints; admission waits for nothing (`admit_invitation_locked`, L6). The §7.2 latent deadlock is confirmed — test (h) deadlocked on its first run against P4, none in 50 after. Guard: no L1, order or L3 finding left; six footprints tolerated until steps 3 and 5. Gate passed locally (db 477, api 597). |
 | 41 | 2026-10-13 | **P5.5 step 1 built** (`afe7499`, `73d3e89`, `708730e`, `f6c5ecc`): the seven lock helpers and the lock-order guard in report mode — SQL footprints with the baseline control against the 5d8904b fixture, approved writes (R22), and the repository-transaction classes (R17, R27). Findings: `verify_email` locks the merchant after the identity (a latent deadlock once `set_merchant_status` is reordered; footprint proposed in §7.2 for the gate review); two L3 violations the table did not list. §7.2's reconciliation amended to the 25 entries the guard reports. Gate passed locally (contracts 62, db 475, api 597). Step 2 next. |
 | 40 | 2026-10-13 | **P5.5 test budget confirmed (§9.3).** Measured before any P5.5 code: 100 two-connection races in 14.1 s (P5.5's 400 ≈ 56 s, in the sequential `packages/db` suite); a full `pnpm test` in 109 s wall; memory peaked at 916 MB for the test processes with the machine at 94–98% commit. The reviewer's P5.3a dropped connection was Postgres's 10 s idle-in-transaction termination at 00:08:09 UTC during that run — a test process stalled under memory pressure, not an application defect (no transaction takes a second pool connection). The suites stay in `pnpm test`, 50 runs each; gate runs one at a time; re-checked at P5.6 and P5.7. |
 | 39 | 2026-10-13 | **P5.5 go; the guard condition's timing decided.** The project lead: the P5.4 guard condition need not close before P5.5; it stays a P5.6 precondition and is now a hard gate — staff grants cannot be enabled until the broader guard and its mutation tests pass (P5.6's first commit; checked at the P5.6 gate). P5.5 proceeds under its own gate, starting with the §9.3 test-budget check. |

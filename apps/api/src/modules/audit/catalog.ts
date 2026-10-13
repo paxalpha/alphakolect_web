@@ -153,12 +153,8 @@ export type BestEffortPair = PairOf<Extract<Entries, { class: 'best_effort' }>>;
  */
 export const TRANSITIONAL_PAIRS = [
   'auth.invitation_accepted/success',
-  'merchant.profile_updated/success',
-  'merchant.branch_created/success',
-  'merchant.branch_updated/success',
-  'merchant.role_created/success',
-  'merchant.role_updated/success',
-  // P5.5 step 3: the member, invitation, lifecycle and transfer successes are written by their functions (pattern A).
+  // P5.5 step 3: the member, invitation, lifecycle and transfer successes are written by their functions (pattern A);
+  // step 4: the profile, branch and role successes too.
 ] as const;
 type IdentifierOf<K> = K extends `${infer I}/success` ? I : never;
 export type TransitionalPair = Extract<

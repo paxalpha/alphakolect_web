@@ -53,6 +53,34 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['A1:S', '2:NKU', '3:NKU', '6:S', '7:S', '10:W'],
     writes: ['tenancy.merchant_memberships', 'identity.sessions', 'audit.audit_events'],
   },
+  // branch, role and profile writers (P5.5 step 4, the enforcement boundary): the plan's "branch / role / profile
+  // writers" row — the merchant (the profile: NKU, it is the row changed), the actor, the actor's role and the edited
+  // role in one sorted call, the edited branch; the contested insert last (L3)
+  'tenancy.update_profile': {
+    class: 'operation',
+    planned: ['2:NKU', 'A3:NKU', '7:S'],
+    writes: ['tenancy.merchants', 'audit.audit_events'],
+  },
+  'tenancy.create_branch': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '+8'],
+    writes: ['tenancy.branches', 'audit.audit_events'],
+  },
+  'tenancy.update_branch': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:NKU'],
+    writes: ['tenancy.branches', 'audit.audit_events'],
+  },
+  'tenancy.create_role': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '+7'],
+    writes: ['tenancy.roles', 'audit.audit_events'],
+  },
+  'tenancy.update_role': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S+NKU'],
+    writes: ['tenancy.roles', 'audit.audit_events'],
+  },
   // operator only (§7.4, rev 14)
   'identity.bootstrap_super_admin': {
     class: 'operation',
@@ -162,6 +190,13 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.session_limits': { class: 'reader' },
   'identity.validate_session': { class: 'reader' },
   'tenancy.list_members': { class: 'reader' },
+  // the B1 read functions (P5.5 step 4)
+  'tenancy.list_branches': { class: 'reader' },
+  'tenancy.list_invitations': { class: 'reader' },
+  'tenancy.list_permission_catalog': { class: 'reader' },
+  'tenancy.list_roles': { class: 'reader' },
+  'tenancy.read_own_membership': { class: 'reader' },
+  'tenancy.read_profile': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -244,9 +279,7 @@ export const NESTED_WRITERS: readonly { flow: string; fn: string; pair: string }
  * recordWithin until their functions write their own audit rows, steps 3 and 7). The list only shrinks.
  */
 export const TRANSACTIONS_TOLERATED: readonly string[] = [
-  'MerchantSettingsService.rename',
-  'MerchantSettingsService.create',
-  'MerchantSettingsService.update',
+  // the settings writes classify T1 since step 4; acceptance still writes with recordWithin (step 7)
   'InvitationService.accept',
 ];
 

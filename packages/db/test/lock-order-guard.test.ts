@@ -84,15 +84,21 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
     const { writtenTables } = analyse(catalog, CLASSES, SCHEMAS);
     const contested = contestedIndexes(catalog)
       .filter((ix) => writtenTables.has(ix.table))
-      .map((ix) => `${ix.table}(${ix.columns.join(', ')})${ix.partial ? ' partial' : ''}`)
+      .map(
+        (ix) =>
+          `${ix.table}(${[...ix.columns, ...(ix.expression ? ['<expr>'] : [])].join(', ')})${ix.partial ? ' partial' : ''}`,
+      )
       .sort();
     expect(contested).toEqual([
       'identity.identities(email)',
       'identity.platform_memberships(identity_id)',
       'identity.totp_credentials(identity_id)',
+      // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))
+      'tenancy.branches(merchant_id, <expr>) partial',
       'tenancy.invitations(merchant_id, email) partial',
       'tenancy.merchant_memberships(merchant_id) partial',
       'tenancy.merchant_memberships(merchant_id, identity_id)',
+      'tenancy.roles(merchant_id, <expr>) partial',
       'util.rate_limit_counters(key, window_start)',
     ]);
   });

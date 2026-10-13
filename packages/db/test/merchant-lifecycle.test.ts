@@ -183,7 +183,7 @@ describe('no direct status changes (privileges)', () => {
       status: false,
       deactivated_at: false,
       reason: false,
-      name: true, // the merchant profile (P4.4), under RLS
+      name: false, // since P5.5 the profile is renamed only through tenancy.update_profile (the enforcement boundary)
       app_exec: true,
       readonly_exec: false,
     });

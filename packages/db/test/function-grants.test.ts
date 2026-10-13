@@ -88,6 +88,18 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.set_merchant_status(uuid, uuid, text, text, text, text, text)': APP,
   'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean, text, text, text)': APP,
   'tenancy.update_membership(uuid, uuid, text, uuid, uuid, text, text, text)': APP,
+  // P5.5 step 4, the enforcement boundary: the branch / role / profile writers and the B1 read functions
+  'tenancy.create_branch(uuid, text, text, text, text)': APP,
+  'tenancy.create_role(uuid, text, text, text, text)': APP,
+  'tenancy.list_branches(uuid, uuid)': APP,
+  'tenancy.list_invitations(uuid, uuid)': APP,
+  'tenancy.list_permission_catalog(uuid)': APP,
+  'tenancy.list_roles(uuid, uuid)': APP,
+  'tenancy.read_own_membership(uuid)': APP,
+  'tenancy.read_profile(uuid)': APP,
+  'tenancy.update_branch(uuid, uuid, text, text, text, text, text)': APP,
+  'tenancy.update_profile(uuid, text, text, text, text)': APP,
+  'tenancy.update_role(uuid, uuid, text, text, text, text, text)': APP,
   'tenancy.admit_invitation_locked(uuid, uuid)': OWNER_ONLY, // P5.5 step 2: admission waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,

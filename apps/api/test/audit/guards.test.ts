@@ -53,31 +53,11 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
     pattern: 'A',
     writer: 'identity.bootstrap_super_admin',
   },
-  'merchant.profile_updated/success': {
-    class: 'atomic',
-    pattern: 'A',
-    writer: 'MerchantSettingsService.rename',
-  },
-  'merchant.branch_created/success': {
-    class: 'atomic',
-    pattern: 'A',
-    writer: 'MerchantSettingsService.create',
-  },
-  'merchant.branch_updated/success': {
-    class: 'atomic',
-    pattern: 'A',
-    writer: 'MerchantSettingsService.update',
-  },
-  'merchant.role_created/success': {
-    class: 'atomic',
-    pattern: 'A',
-    writer: 'MerchantSettingsService.create',
-  },
-  'merchant.role_updated/success': {
-    class: 'atomic',
-    pattern: 'A',
-    writer: 'MerchantSettingsService.update',
-  },
+  'merchant.profile_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_profile' },
+  'merchant.branch_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_branch' },
+  'merchant.branch_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_branch' },
+  'merchant.role_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_role' },
+  'merchant.role_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_role' },
   'merchant.member_assigned/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_membership' },
   'merchant.member_deactivated/success': {
     class: 'atomic',
@@ -155,7 +135,7 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
 const ENTRY_POINTS = ['mutateAudited', 'recordBestEffort', 'recordWithin'] as const;
 type EntryPoint = (typeof ENTRY_POINTS)[number];
 /** Where the transitional writers live (§10 P5.3a); P5.5 empties the list. */
-const TRANSITIONAL_FILES = ['src/modules/tenancy/invitations.ts', 'src/modules/tenancy/merchant-settings.ts'];
+const TRANSITIONAL_FILES = ['src/modules/tenancy/invitations.ts'];
 
 type Site = { writer: EntryPoint | 'sql'; where: string; file: string; pairs: string[] | null };
 

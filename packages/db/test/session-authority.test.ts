@@ -521,11 +521,11 @@ describe('two connections: the re-check followed by a write vs a concurrent revo
     'role archive': {
       start: async (f: Fixture) => {
         await revoker.query('BEGIN');
-        await revoker.query(`SELECT set_config('app.merchant_id', $1, true)`, [f.merchantId]);
-        return revoker.query(
-          `UPDATE tenancy.roles SET status = 'archived', archived_at = now(), updated_at = now() WHERE id = $1`,
-          [f.roleId],
-        );
+        // Since P5.5 the owner archives a role only through tenancy.update_role (the enforcement boundary).
+        return revoker.query(`SELECT outcome FROM tenancy.update_role($1, $2, NULL, 'archived')`, [
+          f.ownerSession,
+          f.roleId,
+        ]);
       },
       refusal: 'forbidden',
     },

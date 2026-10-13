@@ -91,8 +91,9 @@ export class InvitationService {
       // On success the function wrote the invitation's audit row itself, in this transaction (pattern A, §8.1).
       if (issued.outcome !== 'ok') return { issued, row: null, business: null };
       const [row] = await repo.invitations(tx, issued.invitation_id);
-      const business = await repo.merchant(tx);
-      return { issued, row: row!, business: business! };
+      // The business's name for the email: the issuer's own business (read_own_membership; no permission needed).
+      const own = await repo.ownMembership(tx);
+      return { issued, row: row!, business: own!.merchant_name };
     });
 
     const { issued, row, business } = result;
@@ -112,9 +113,9 @@ export class InvitationService {
 
     // Sent only after the commit: an email never announces an invitation that does not exist.
     if (issued.delivery === 'setup') {
-      mailer.dispatch(invitationSetupEmail(row!.email, webAppUrl, setup.raw, business!.name));
+      mailer.dispatch(invitationSetupEmail(row!.email, webAppUrl, setup.raw, business!));
     } else if (issued.delivery === 'accept') {
-      mailer.dispatch(invitationAcceptEmail(row!.email, webAppUrl, token.raw, business!.name));
+      mailer.dispatch(invitationAcceptEmail(row!.email, webAppUrl, token.raw, business!));
     }
     return row!;
   }

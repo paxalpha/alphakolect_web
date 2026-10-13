@@ -8,9 +8,8 @@ import { FIXTURE, MERCHANT_A, MERCHANT_B } from './support/fixtures.js';
 const A = FIXTURE.A;
 const B = FIXTURE.B;
 
-// Every P1 tenant table, with the column that names its tenant.
+// Every tenant table the app reads directly, with the column that names its tenant.
 const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
-  ['tenancy.merchants', 'id'],
   ['ledger.ledgers', 'merchant_id'],
   ['ledger.accounts', 'merchant_id'],
   ['ledger.journal_entries', 'merchant_id'],
@@ -18,15 +17,21 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
   ['ledger.balance_projection', 'merchant_id'],
   ['audit.audit_events', 'merchant_id'],
   ['tenancy.merchant_memberships', 'merchant_id'],
-  ['tenancy.branches', 'merchant_id'],
-  ['tenancy.roles', 'merchant_id'],
-  ['tenancy.invitations', 'merchant_id'],
 ];
 
 // Tenant tables the app holds no privilege on at all (so the visibility tests above, which read as the app, do not
 // apply); they still must carry RLS and an app policy, so that any later grant is tenant-scoped from the start.
-// P5.1: role permissions are read and written only through database functions (ADR-16).
-const NO_APP_ACCESS_TENANT_TABLES = ['tenancy.role_permissions'];
+// P5.1: role permissions are read and written only through database functions (ADR-16). P5.5 (the enforcement
+// boundary, owner decision B1): the business, its branches, roles and invitations too — their tenant isolation is the
+// read functions' (the business from the session; enforcement.test.ts), and the P1 criterion holds a fortiori: the app
+// cannot read them at all.
+const NO_APP_ACCESS_TENANT_TABLES = [
+  'tenancy.role_permissions',
+  'tenancy.merchants',
+  'tenancy.branches',
+  'tenancy.roles',
+  'tenancy.invitations',
+];
 
 let app: pg.Client;
 let readonly: pg.Client;
@@ -54,7 +59,6 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
   it("B's rows are invisible even when addressed by exact id", async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
       const checks = [
-        [`SELECT 1 FROM tenancy.merchants WHERE id = $1`, B.merchantId],
         [`SELECT 1 FROM ledger.ledgers WHERE id = $1`, B.ledgerId],
         [`SELECT 1 FROM ledger.accounts WHERE id = $1`, B.cashAccountId],
         [`SELECT 1 FROM ledger.journal_entries WHERE id = $1`, B.entryId],
@@ -67,6 +71,13 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
         expect(rowCount, sql).toBe(0);
       }
     });
+  });
+
+  it.each(NO_APP_ACCESS_TENANT_TABLES)('%s: the app cannot read it at all, in any context', async (table) => {
+    for (const tenant of [MERCHANT_A, null])
+      await inTenantTx(app, tenant, (db) =>
+        expectSqlState(db.query(`SELECT 1 FROM ${table} LIMIT 1`), SQLSTATE.insufficientPrivilege),
+      );
   });
 
   it('the same connection sees B, and only B, when switched to B’s context', async () => {

@@ -443,14 +443,24 @@ describe('revoke_invitation', () => {
 });
 
 describe('privileges', () => {
-  it('the app reads its own tenant’s invitations — never the token hash — and writes none directly', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
-      const { rows } = await db.query(`SELECT DISTINCT merchant_id FROM tenancy.invitations`);
-      expect(rows.map((r) => r.merchant_id)).toEqual([A.merchantId]);
-    });
-    await inTenantTx(app, A.merchantId, (db) =>
-      expectSqlState(db.query(`SELECT token_hash FROM tenancy.invitations`), SQLSTATE.insufficientPrivilege),
+  it('the app reads invitations only through tenancy.list_invitations — never the token hash — and writes none directly', async () => {
+    // P5.5 (owner decision B1): no direct read at all; the reader takes the business from the session
+    // (enforcement.test.ts) and returns no token hash.
+    for (const sql of [
+      `SELECT merchant_id FROM tenancy.invitations`,
+      `SELECT token_hash FROM tenancy.invitations`,
+    ])
+      await inTenantTx(app, A.merchantId, (db) =>
+        expectSqlState(db.query(sql), SQLSTATE.insufficientPrivilege),
+      );
+    const {
+      rows: [reader],
+    } = await owner.query(
+      `SELECT p.proargnames AS names FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'tenancy' AND p.proname = 'list_invitations'`,
     );
+    expect(reader.names).not.toContain('token_hash');
+    expect(reader.names).not.toContain('identity_id');
     await inTenantTx(app, A.merchantId, (db) =>
       expectSqlState(
         db.query(`UPDATE tenancy.invitations SET revoked_at = now()`),

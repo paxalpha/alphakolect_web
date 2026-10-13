@@ -1900,7 +1900,14 @@ independent of the permission catalog); it is listed with them so it is complete
   `permission` endpoint and only there** (moved from P5.3 with the middleware it checks — reviewer's condition at the
   P5.3 gate, 2026-10-12).
 - **Done when:** the API enforces declarations with zero behaviour change for existing actors.
-- **Built 2026-10-13 — awaiting review at the P5.4 gate.** Commits `b260f3f` (migration
+- **Built 2026-10-13; gate approved 2026-10-13** (§14: "P5.4 approved to close"; judgement calls 1–12 accepted — call
+  11, the API-only check on profile, branch and role writes until P5.5, accepted as an acknowledged boundary, **not** as
+  approval to treat those writes as database-protected today; the intermittent invitation-revoke failure is not
+  blocking and stays with P5.5's test-budget check, §9.3). **Call 13 — condition carried to P5.6:** the source guard
+  catches today's direct comparisons and membership tests but not an indirect lookup (for example a table keyed by
+  kind); it must be strengthened before P5.6 makes staff grants possible (see P5.6). The reviewer re-ran the policy,
+  P4 isolation-matrix and route-parity suites serially — 115 passed — on a clean worktree; the full local gate was not
+  re-run by the reviewer; CI has not run. **Original evidence:** Commits `b260f3f` (migration
   `20261013000800_authz_denied_event`: the best-effort pair `authz.denied`/denied, summary `operation` (64) and
   `permission` (100); the mirror and the coverage inventory), `a39b2c7` (`CurrentMembership.permissions`, sorted),
   `0ca5ae3` (`apps/api/src/platform/authorization.ts` — `decide` and `authorize`; the router mounts `authorize` on
@@ -2066,6 +2073,10 @@ independent of the permission catalog); it is listed with them so it is complete
   D5′, D8′); concurrent edit vs assignment per §7.2 — two-connection tests **(c)** and **(k)**, 50 runs each, no
   `40P01`; the P5.5 staff-authority tests repeated with grants set through `set_role_permissions` instead of fixtures; cross-tenant role ids ⇒ 404; every change audited atomically with old/new permission lists
   (allowlisted).
+- **Precondition (reviewer's condition at the P5.4 gate, 2026-10-13):** before the first staff grant is possible, the
+  P5.4 source guard (`apps/api/test/authorization-policy.test.ts`) is strengthened so that an authority decision by
+  membership kind or platform role cannot hide in an indirect form — a lookup table or map keyed by kind or role, a
+  helper that returns one, or a comparison through a variable — with a mutation test for each form it adds.
 - **Done when:** role management cannot escalate.
 
 ### P5.7 — Platform staff
@@ -2359,6 +2370,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Reviewer — **P5.2 completion gate** | "P5.2 is approved to close based on the evidence reported. Proceed with P5.3 and P5.3a according to the approved plan, with a separate completion gate for each package." Eight judgement calls accepted (2, 3, 6, 7 with conditions); P5.5 must test the real functions against concurrent revocation; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — boundary check added in `3baa6bf`; conditions answered under P5.2 | P5.2 |
 | Reviewer — **P5.3 completion gate** | "Verdict: P5.3 approved to close. I accept decision 1: defer the authorization-middleware mount assertion to P5.4. … P5.4 must add the parity assertion when it mounts the real middleware. I accept decisions 2–8." The reviewer ran the focused tests (36 passed); the full gate as reported; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — this closes P5.3 only; P5.3a has its own gate | P5.3, P5.4 |
 | Reviewer — **P5.3a completion gate** | "Verdict: P5.3a approved to close. I accept the 14 recorded decisions. … The remaining account-setup invitation event is explicitly assigned to P5.5, and sensitive-read behavior tests belong with the first such events in P5.7/P5.8. … The unused retention override remains outside this approval; it does not approve Part 2." Focused suites re-run serially: 141 API and 19 database tests passed; a first parallel run hit timeouts and a dropped connection | The independent reviewer, 2026-10-13 | **Approved** — closes P5.3a only; P5.4 has its own work and gate; the contention is carried to P5.5's test-budget check (§9.3); CI has not run | P5.3a, P5.5 |
+| Reviewer — **P5.4 completion gate** | "Verdict: P5.4 approved to close. The router wiring and policy behavior match the plan. … I accept decisions 1–12, including the temporary API-only check for profile, branch, and role writes until P5.5. That is an acknowledged boundary, not approval to treat those writes as database-protected today. The intermittent invitation-revoke test failure is not blocking … keep it in P5.5's test-budget check. Decision 13: … Please strengthen the guard before P5.6 introduces staff grants … This approves P5.4 only; P5.5 still awaits your go-ahead." Policy, P4 isolation-matrix and route-parity suites re-run serially: 115 passed; worktree clean; full gate not re-run by the reviewer | The independent reviewer, 2026-10-13 | **Approved** — closes P5.4 only; the guard-strengthening condition is a P5.6 precondition; P5.5 waits for the go-ahead; CI has not run | P5.4, P5.5, P5.6 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
@@ -2408,6 +2420,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 38 | 2026-10-13 | **P5.4 gate approved.** Judgement calls 1–12 accepted; the API-only check on profile, branch and role writes until P5.5 is an acknowledged boundary, not database protection. Call 13 becomes a P5.6 precondition: strengthen the source guard against indirect authority lookups before staff grants exist. The intermittent invitation-revoke failure stays with P5.5's test-budget check. The reviewer re-ran the policy, isolation-matrix and route-parity suites serially (115 passed). Local runs only; CI has not run. P5.5 is next, on the go-ahead. |
 | 37 | 2026-10-13 | **P5.4 built; awaiting review at its gate.** The policy middleware enforces each endpoint's declared permission — mounted after validation on permission endpoints only, failing closed with the `authorization_resolution_failure` signal — the interim owner checks are removed, refusals are recorded as `authz.denied` (best effort), and the membership endpoints return effective permissions (`b260f3f`, `a39b2c7`, `0ca5ae3`, `1643c7a`). The P4 isolation matrix and a per-endpoint P4 denial oracle pass unchanged. Gate passed locally; evidence and 13 judgement calls under P5.4, including a correction of this package's call-site count. P5.5 waits for the gate review. |
 | 36 | 2026-10-13 | **P5.3a gate approved.** All 14 judgement calls accepted, including the fix that makes the invitation-link success atomic. The reviewer re-ran the focused suites serially (141 API, 19 database tests passed); its first parallel run hit timeouts and a dropped connection, carried to P5.5's test-budget confirmation (§9.3). Local runs only; CI has not run. P5.4 is next, on the go-ahead. |
 | 35 | 2026-10-13 | **P5.3a built; awaiting review at its gate.** The audit event catalog and its validation trigger (66 pairs), the three entry points with §9.4 signals and the TypeScript mirror, every identity flow committing with its event (pattern B), every refusal best effort, and the writer and coverage guards with per-pair co-commit and rollback tests (`4068baf`, `f2a2133`, `12ff1ad`, `7f655c7`, `0957b1c`). Finding: the invitation-link success was not atomic in P4; it is now. Gate passed locally; evidence and 14 judgement calls under P5.3a. P5.4 waits for the gate review. |

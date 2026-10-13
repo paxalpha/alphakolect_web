@@ -12,51 +12,126 @@ import type { FnClass } from './lock-analysis.js';
 
 export const CLASSES: Readonly<Record<string, FnClass>> = {
   // ── privileged operations: the planned-footprint table ──
-  'tenancy.update_membership': { class: 'operation', planned: ['2:S', 'A3:NKU', '7:S', '8:S', '10:W'] },
+  'tenancy.update_membership': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '10:W'],
+    writes: ['tenancy.merchant_memberships', 'identity.sessions'],
+  },
   'tenancy.issue_invitation': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '4:NKU', '5:NKU', '6:S', '7:S', '8:S', '+6', '+4'],
+    writes: ['identity.identities', 'identity.one_time_tokens', 'tenancy.invitations'],
   },
-  'tenancy.revoke_invitation': { class: 'operation', planned: ['2:S', 'A3:NKU', '4:NKU'] },
-  'tenancy.accept_invitation': { class: 'operation', planned: ['2:S', '4:NKU', '6:S', '7:S', '8:S', '+3'] },
+  'tenancy.revoke_invitation': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '4:NKU'],
+    writes: ['tenancy.invitations'],
+  },
+  'tenancy.accept_invitation': {
+    class: 'operation',
+    planned: ['2:S', '4:NKU', '6:S', '7:S', '8:S', '+3'],
+    writes: ['tenancy.merchant_memberships', 'tenancy.invitations'],
+  },
   'identity.complete_account_setup': {
     class: 'operation',
     planned: ['2:S', '4:NKU', '5:NKU', '6:NKU', '7:S', '8:S', '10:W', '+3'],
+    writes: [
+      'identity.one_time_tokens',
+      'identity.identities',
+      'identity.sessions',
+      'tenancy.merchant_memberships',
+      'tenancy.invitations',
+    ],
   },
-  'tenancy.set_merchant_status': { class: 'operation', planned: ['A1:S', '2:NKU', '6:S'] },
+  'tenancy.set_merchant_status': {
+    class: 'operation',
+    planned: ['A1:S', '2:NKU', '6:S'],
+    writes: ['tenancy.merchants'],
+  },
   'tenancy.transfer_ownership': {
     class: 'operation',
     planned: ['A1:S', '2:NKU', '3:NKU', '6:S', '7:S', '10:W'],
+    writes: ['tenancy.merchant_memberships', 'identity.sessions'],
   },
   // operator only (§7.4, rev 14)
-  'identity.bootstrap_super_admin': { class: 'operation', planned: ['6:NKU', '+6', '+1'] },
+  'identity.bootstrap_super_admin': {
+    class: 'operation',
+    planned: ['6:NKU', '+6', '+1'],
+    writes: ['identity.identities', 'identity.platform_memberships', 'audit.audit_events'],
+  },
   // replaced by its …_locked inner function (L6)
   'tenancy.admit_invitation': { class: 'retired', replacedBy: 'tenancy.admit_invitation_locked' },
 
   // ── identity flows of the table: the categories each may wait for ──
-  'identity.reset_password': { class: 'flow', categories: [5, 6, 10] },
-  'identity.verify_email': { class: 'flow', categories: [5, 6] },
-  'identity.change_password': { class: 'flow', categories: [6, 10] },
-  'identity.rotate_refresh_token': { class: 'flow', categories: [5, 10] },
-  'identity.take_selection': { class: 'flow', categories: [5, 6] },
-  'identity.consume_mfa_challenge': { class: 'flow', categories: [5, 6] },
-  'identity.take_mfa_challenge_attempt': { class: 'flow', categories: [5, 6] },
-  'identity.consume_recovery_code': { class: 'flow', categories: [5, 6] },
-  'identity.accept_totp_step': { class: 'flow', categories: [5, 6] },
-  'identity.begin_totp_enrollment': { class: 'flow', categories: [5, 6] },
-  'identity.confirm_totp_enrollment': { class: 'flow', categories: [5, 6] },
+  'identity.reset_password': {
+    class: 'flow',
+    categories: [5, 6, 10],
+    writes: ['identity.one_time_tokens', 'identity.identities', 'identity.sessions'],
+  },
+  'identity.verify_email': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.one_time_tokens', 'identity.identities', 'tenancy.merchants'],
+  },
+  'identity.change_password': {
+    class: 'flow',
+    categories: [6, 10],
+    writes: ['identity.identities', 'identity.sessions'],
+  },
+  'identity.rotate_refresh_token': {
+    class: 'flow',
+    categories: [5, 10],
+    writes: ['identity.refresh_tokens', 'identity.sessions'],
+  },
+  'identity.take_selection': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.membership_selection_challenges'],
+  },
+  'identity.consume_mfa_challenge': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.mfa_challenges'],
+  },
+  'identity.take_mfa_challenge_attempt': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.mfa_challenges'],
+  },
+  'identity.consume_recovery_code': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.recovery_codes'],
+  },
+  'identity.accept_totp_step': { class: 'flow', categories: [5, 6], writes: ['identity.totp_credentials'] },
+  'identity.begin_totp_enrollment': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.totp_credentials'],
+  },
+  'identity.confirm_totp_enrollment': {
+    class: 'flow',
+    categories: [5, 6],
+    writes: ['identity.totp_credentials', 'identity.recovery_codes'],
+  },
 
   // ── other identity functions: the category order and L1–L6 ──
-  'identity.apply_new_password': { class: 'identity' },
-  'identity.consume_one_time_token': { class: 'identity' },
-  'identity.issue_one_time_token': { class: 'identity' },
-  'identity.create_session': { class: 'identity' },
-  'identity.create_mfa_challenge': { class: 'identity' },
-  'identity.signup_merchant_owner': { class: 'identity' },
-  'identity.resolve_login_membership': { class: 'identity' },
-  'identity.rehash_password': { class: 'identity' },
-  'identity.revoke_session': { class: 'identity' },
-  'identity.revoke_all_sessions': { class: 'identity' },
+  'identity.apply_new_password': { class: 'identity', writes: ['identity.identities', 'identity.sessions'] },
+  'identity.consume_one_time_token': { class: 'identity', writes: ['identity.one_time_tokens'] },
+  'identity.issue_one_time_token': { class: 'identity', writes: ['identity.one_time_tokens'] },
+  'identity.create_session': { class: 'identity', writes: ['identity.sessions', 'identity.refresh_tokens'] },
+  'identity.create_mfa_challenge': { class: 'identity', writes: ['identity.mfa_challenges'] },
+  'identity.signup_merchant_owner': {
+    class: 'identity',
+    writes: ['identity.identities', 'tenancy.merchants', 'tenancy.merchant_memberships'],
+  },
+  'identity.resolve_login_membership': {
+    class: 'identity',
+    writes: ['identity.membership_selection_challenges'],
+  },
+  'identity.rehash_password': { class: 'identity', writes: ['identity.identities'] },
+  'identity.revoke_session': { class: 'identity', writes: ['identity.sessions'] },
+  'identity.revoke_all_sessions': { class: 'identity', writes: ['identity.sessions'] },
 
   // ── the nested write-time re-check (P5.2; L6: NOWAIT only) ──
   'tenancy.assert_authority': { class: 'nested-check' },
@@ -95,7 +170,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'util.reject_modification': { class: 'trigger' },
 
   // ── a request path called in its own statement, never inside a transaction ──
-  'util.rate_limit_hit': { class: 'standalone' },
+  'util.rate_limit_hit': { class: 'standalone', writes: ['util.rate_limit_counters'] },
 };
 
 /**

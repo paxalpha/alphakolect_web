@@ -125,7 +125,12 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
   const ACTOR = `PERFORM tenancy.lock_memberships(NULL, ARRAY[v_actor]);`;
   const INVITATION = `PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE;`;
   const ARGS = 'p_session uuid, p_merchant uuid, p_invitation uuid';
-  const op = (planned: string[]): FnClass => ({ class: 'operation', planned });
+  const op = (planned: string[]): FnClass => ({
+    class: 'operation',
+    planned,
+    writes: ['tenancy.invitations'],
+  });
+  const IDENTITY: FnClass = { class: 'identity', writes: [] };
   const REVOKE: string[] = ['2:S', 'A3:NKU', '4:NKU'];
 
   const scratch: Record<string, { sql: string; cls: FnClass }> = {
@@ -145,7 +150,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     },
     inner_platform: {
       sql: `(p_id uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM 1 FROM identity.platform_memberships pm WHERE pm.id = p_id FOR SHARE; END $$`,
-      cls: { class: 'identity' },
+      cls: IDENTITY,
     },
     // (c) a FOR UPDATE
     for_update: {
@@ -158,14 +163,14 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
               INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES (p_merchant, p_identity, 'agent');
               PERFORM 1 FROM tenancy.roles r WHERE r.id = p_role FOR SHARE;
             END $$`,
-      cls: { class: 'identity' },
+      cls: { class: 'identity', writes: ['tenancy.merchant_memberships'] },
     },
     // (e) a waiting lock inside a …_locked function
     admit_locked: {
       sql: `(p_invitation uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
               PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE;
             END $$`,
-      cls: { class: 'locked' },
+      cls: { class: 'locked', writes: [] },
     },
     // its conforming twin: re-asserts with NOWAIT, then writes the held row
     admit_ok_locked: {
@@ -173,20 +178,29 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
               PERFORM 1 FROM tenancy.invitations i WHERE i.id = p_invitation FOR NO KEY UPDATE NOWAIT;
               UPDATE tenancy.invitations i SET accepted_at = now() WHERE i.id = p_invitation;
             END $$`,
-      cls: { class: 'locked' },
+      cls: { class: 'locked', writes: ['tenancy.invitations'] },
+    },
+    // R22: a conforming operation whose nested callee writes a table the operation does not approve
+    unapproved: {
+      sql: `(${ARGS}) RETURNS void LANGUAGE plpgsql AS $$${body(`${MERCHANT} ${ACTOR} ${INVITATION} PERFORM ${s}.sneaky(p_session);`)}$$`,
+      cls: op(REVOKE),
+    },
+    sneaky: {
+      sql: `(p_id uuid) RETURNS void LANGUAGE plpgsql AS $$ BEGIN UPDATE tenancy.roles r SET name = r.name WHERE r.id = p_id; END $$`,
+      cls: { class: 'identity', writes: ['tenancy.roles'] },
     },
     // fail closed: dynamic SQL, an unqualified call, an unclassified callee, a call outside the analysed schemas
     dynamic: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'SELECT 1'; END $$`,
-      cls: { class: 'identity' },
+      cls: IDENTITY,
     },
     unqualified: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM inner_platform(NULL); END $$`,
-      cls: { class: 'identity' },
+      cls: IDENTITY,
     },
     calls_unlisted: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ${s}.unlisted(); END $$`,
-      cls: { class: 'identity' },
+      cls: IDENTITY,
     },
     unlisted: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN NULL; END $$`,
@@ -194,13 +208,13 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     },
     outside: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ledger.assert_entry_balanced(NULL); END $$`,
-      cls: { class: 'identity' },
+      cls: IDENTITY,
     },
     // schema-level constructs on a table in scope: a default and a CHECK calling a non-allowlisted function, a cascading
     // foreign key and a rewrite rule — the table is in scope because this function writes it
     writes_scratch_table: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN INSERT INTO ${s}.t (n) VALUES ('x'); END $$`,
-      cls: { class: 'standalone' },
+      cls: { class: 'standalone', writes: [`${s}.t`] },
     },
   };
   let run: ReturnType<typeof analyse>;
@@ -263,6 +277,13 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
 
   it('(e) a waiting lock inside a …_locked function fails (L6)', () => {
     expect(of('admit_locked').map((f) => f.kind)).toEqual(['L6']);
+  });
+
+  it('R22: an unapproved write reached through a nested call fails the operation that reaches it', () => {
+    expect(of('unapproved').map((f) => f.detail)).toEqual(
+      expect.arrayContaining([`an unapproved write to tenancy.roles (at ${s}.sneaky)`]),
+    );
+    expect(of('sneaky'), report(of('sneaky'))).toEqual([]);
   });
 
   it('fails closed: dynamic SQL, an unqualified call, an unclassified function, a call outside the analysed schemas', () => {

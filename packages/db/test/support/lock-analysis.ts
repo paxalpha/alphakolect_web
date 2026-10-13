@@ -56,15 +56,15 @@ export const HELPERS: Readonly<Record<string, string>> = {
  */
 export type FnClass =
   /** A privileged operation of the planned-footprint table: its token sequence must equal `planned` exactly. */
-  | { class: 'operation'; planned: string[] }
+  | { class: 'operation'; planned: string[]; writes: string[] }
   /** An identity flow of the table ("identity flows: …"): every category it waits for is one of `categories`. */
-  | { class: 'flow'; categories: number[] }
+  | { class: 'flow'; categories: number[]; writes: string[] }
   /** Any other identity function: the category order and L1–L6 apply. */
-  | { class: 'identity' }
+  | { class: 'identity'; writes: string[] }
   /** A lock helper: exactly one FOR SHARE and one FOR NO KEY UPDATE of its table, one row per statement, in a loop. */
   | { class: 'helper' }
   /** A `…_locked` inner function (L6): waits for nothing, never executable by the app. */
-  | { class: 'locked' }
+  | { class: 'locked'; writes: string[] }
   /** A nested re-check (tenancy.assert_authority): NOWAIT locks only, no writes, never executable by the app. */
   | { class: 'nested-check' }
   /** A lock-free reader: no lock, no write, anywhere in its footprint. */
@@ -72,7 +72,7 @@ export type FnClass =
   /** A trigger function: locks and writes nothing (L4). */
   | { class: 'trigger' }
   /** A request-path function called in its own statement, never inside a transaction (the rate limiter). */
-  | { class: 'standalone' }
+  | { class: 'standalone'; writes: string[] }
   /** A function the planned footprints replace: its existence is a finding. */
   | { class: 'retired'; replacedBy: string };
 
@@ -563,13 +563,16 @@ type Step =
     }
   | { t: 'insert'; category: number; table: string; via: string; line: number }
   | { t: 'nowait'; table: string; via: string; line: number; mode: 'S' | 'NKU' }
-  | { t: 'held-write'; table: string; via: string; line: number };
+  /** Every row write, waiting or not — for the approved-writes check (R22). */
+  | { t: 'write'; table: string; via: string; line: number };
 
 export type Analysis = {
   findings: Finding[];
   footprints: Map<string, string[]>;
   /** Every table a function in scope inserts into, updates or deletes from (the schema-level check's scope). */
   writtenTables: Set<string>;
+  /** Per function: every table it writes, directly or through any call or trigger, and where (R22). */
+  reachableWrites: Map<string, { table: string; via: string }[]>;
 };
 
 /**
@@ -654,6 +657,7 @@ export function analyse(
           });
       } else if (e.t === 'update' || e.t === 'delete') {
         const category = CATEGORY[e.table];
+        out.push({ t: 'write', table: e.table, via, line: e.line });
         out.push({
           t: 'wait',
           category: category ?? -1,
@@ -672,6 +676,7 @@ export function analyse(
           ]),
         );
       } else if (e.t === 'insert') {
+        out.push({ t: 'write', table: e.table, via, line: e.line });
         if (contested.has(e.table)) {
           const category = CATEGORY[e.table];
           out.push({ t: 'insert', category: category ?? -1, table: e.table, via, line: e.line });
@@ -717,7 +722,7 @@ export function analyse(
     const held = new Map<string, 'S' | 'NKU'>();
     const out: Step[] = [];
     for (const s of all) {
-      if (s.t === 'nowait' || s.t === 'held-write') {
+      if (s.t === 'nowait' || s.t === 'write') {
         // A NOWAIT re-assertion (L6) holds its row in its mode without waiting.
         if (s.t === 'nowait' && (s.mode === 'NKU' || !held.has(s.table))) held.set(s.table, s.mode);
         continue;
@@ -742,6 +747,7 @@ export function analyse(
         : '';
 
   const footprints = new Map<string, string[]>();
+  const reachableWrites = new Map<string, { table: string; via: string }[]>();
   for (const [key, p] of parsed) {
     const cls = classOf(key);
     for (const problem of p.problems) add('fail-closed', key, problem);
@@ -779,6 +785,16 @@ export function analyse(
     const own = steps(key, []);
     const w = waits(own);
     footprints.set(key, w.map(token));
+    const written = own
+      .filter((s): s is Extract<Step, { t: 'write' }> => s.t === 'write')
+      .map((s) => ({ table: s.table, via: s.via }))
+      .filter((x, i, xs) => xs.findIndex((y) => y.table === x.table && y.via === x.via) === i);
+    reachableWrites.set(key, written);
+    // R22: every table written, directly or through any call or trigger, is one this function's class approves.
+    if ('writes' in cls) {
+      for (const x of written.filter((x) => !cls.writes.includes(x.table)))
+        add('footprint', key, `an unapproved write to ${x.table} (at ${x.via})`);
+    }
 
     if (cls.class === 'reader') {
       if (own.length)
@@ -892,7 +908,7 @@ export function analyse(
       p.events.filter((e) => e.t !== 'lock' && e.t !== 'call').map((e) => (e as { table: string }).table),
     ),
   );
-  return { findings: dedupe(findings), footprints, writtenTables };
+  return { findings: dedupe(findings), footprints, writtenTables, reachableWrites };
 }
 
 function collapseInserts(tokens: string[]): string[] {

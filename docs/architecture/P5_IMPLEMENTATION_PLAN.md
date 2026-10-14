@@ -2413,6 +2413,58 @@ independent of the permission catalog); it is listed with them so it is complete
   line, `platform/tenant.ts:43`, which checks that a merchant context's kind is a merchant kind (a validation, not a
   grant); a mutation test for each form. No guard of this kind is complete; it catches the listed forms and fails closed
   on a value it cannot type.
+- **Built 2026-10-14 — awaiting review at the P5.6 gate.** Commits, in order: `63e1893` (the strengthened source
+  guard — **the first P5.6 commit after the go, as the hard gate requires; no grant writer or endpoint precedes it**),
+  `062b53a` (the bounded list rule), `b597345` (permission descriptions), `cfc1573` (the grant writer, the role reader
+  and the two endpoints), `588bfae` (their tests), `521ed4e` (races (c), (k)), `e41a97d` (the P5.5 staff-authority
+  tests on writer-set grants). **The source guard** (`apps/api/test/support/authority-flow.ts`, in
+  `authorization-policy.test.ts`): through the compiler's type checker, the caller's kind or role — the `kind`/`role`
+  property of `AuthContext` or `TenantContext`, found by its declaration, or any non-literal value whose type admits
+  `'owner'` or `'super_admin'`, followed through variables, destructuring, helpers that return one, templates,
+  concatenation, conditionals and arrays, and an untyped `.kind`/`.role` — may be copied into data but may not reach
+  an equality, `in`, a `switch`, an element-access key or the argument of any call; the API source holds one such flow,
+  allowed with its reason (`tenantContextOf` validates that a merchant session's kind is a merchant kind); 17
+  type-checked probes, one per form (a comparison through a constant, a copied variable, destructuring; a lookup table, a
+  template key; a map, a set, an array through a variable; `in`; `switch`; a helper returning the kind, one returning a
+  table, one deciding; a value typed with the kinds; the platform role through a constant; access by name; an untyped
+  kind) are caught, 7 controls are not; a lookup table planted in `memberships.ts` fails it. **The list rule**
+  (migration `20261014000300`): `audit.validate_event` accepts `{"type": "string_list", "maxItems": n, "max": m}`; the
+  mirror's `FieldRule` too; 12 tests on a scratch pair. **Descriptions** (`20261014000400`): the catalog's
+  `description`, seeded word for word with O13 and required for every merchant permission (CHECK); the B1 catalog
+  reader returns it. **The writer** (`20261014000500`): `tenancy.set_role_permissions(session, role, permissions[],
+  context)` on the plan's footprint (`2:S`, `A3:NKU`, `7:NKU`, `9:W`, `+9`, met by the guard); `assert_authority`
+  for the reserved `merchant.roles.manage`; the set checked (active, grantable, merchant, none twice); `forbidden`,
+  `not_found`, `invalid_permissions` returned with nothing written; #21 with the set before and after; an archived
+  role's set may change and stays inert until restored (O14). `list_roles` returns each role's permissions.
+  **Endpoints** (ADR-16's frozen shapes): `GET /v1/merchant/permissions`, `PUT /v1/merchant/roles/{roleId}/permissions`,
+  `Role.permissions` on every role answer (read back in the same transaction after a write); 46 operations in the frozen
+  route map. **Tests:** `role-permissions.test.ts` (db, 17), `role-permissions-api.test.ts` (API, 10), the
+  database-only refusal in `settings-refusals.test.ts`, #21's co-commit and injected-rollback case, races **(c)**
+  (an edit against an assignment into the role) and **(k)** (a staff write against the owner removing its permission)
+  50 staged runs each, no deadlock; the enforcement, privileged-function and containment suites and race (b)'s staff
+  half now grant through the writer. **Gate on `e41a97d`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 64, db 614, api 690, all passing; 574 s wall
+  (0.30 GB free of 7.7 GB, Docker Desktop just restarted); oasdiff 1.32.1 against `origin/main`: 0 errors,
+  0 warnings, 8 info — the two endpoints added, `Role.permissions` on the four role responses, and P5.4's two
+  `permissions` fields. **Test budget (§9.3), re-checked as decided:** the two-connection suites (13 × 50 staged runs)
+  took 165 s against an estimate of about 78 s, and the whole run 574 s; the suites stay in `pnpm test`, 50 runs
+  each, one gate run at a time, and the time is put to the reviewer (judgement 8).
+  **Sabotage:** an unpinned definer (P5.5's guard); a planted lookup table (the source guard); the list rule without
+  its per-item check (2 tests); the writer without its role lock (race (k) and the lock-order guard). **Judgement
+  calls:** (1) the source guard treats **any call** receiving the caller's kind as a decision, so a helper cannot hide
+  one; data copies (object literals, assertions, variables) stay allowed; (2) platform permissions have no description
+  yet — no contract shows them; P5.7 adds them if its staff screens need them; (3) `set_role_permissions` does not lock
+  the actor's own role — an owner-only operation, as the plan's row states; a staff caller's role is re-asserted
+  NOWAIT by `assert_authority`; (4) every successful call writes #21, even when the set is unchanged — it records that
+  the owner set it; (5) an unknown, owner-only or platform identifier is a 400 `VALIDATION_ERROR` recorded best effort
+  as a failure; a malformed body (repeated identifiers, not a list) is refused by the contract first, with no row;
+  (6) the P5.5 staff-authority fixtures were converted to the writer rather than duplicated; the grant table's own
+  refusals (P5.1), the resolver's tests (P5.2) and platform grants (until P5.7) keep direct inserts; (7) **open for the
+  reviewer:** staff refused a grantable permission still read P4's message "Only the business owner can do this"
+  (`DENIAL_MESSAGE`, unchanged since P5.4 — the oracle pins it); now that the owner can grant those permissions, a
+  neutral wording may be wanted; not changed here; (8) **open for the reviewer:** the gate's length on this machine —
+  a `test:concurrency` split (the races out of `pnpm test`, still run at every gate) or fewer runs would each need a
+  recorded decision (§9.3); none is made here.
 - **Done when:** role management cannot escalate.
 
 ### P5.7 — Platform staff
@@ -2773,6 +2825,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 52 | 2026-10-14 | **P5.6 built; awaiting review at its gate.** The strengthened source guard first (`63e1893`, the hard gate), then the bounded list rule, the owner-approved permission descriptions, `tenancy.set_role_permissions` with #21, `list_roles` with permissions, `GET /v1/merchant/permissions` and `PUT /v1/merchant/roles/{roleId}/permissions`; races (c) and (k) pass 50 staged runs each; the P5.5 staff-authority suites run on writer-set grants. Gate passed locally (db 614, api 690). |
 | 51 | 2026-10-14 | **Go for P5.6** (project lead, §14): it starts with the strengthened source guard, the hard gate; the permission lists of #21 use a new bounded list rule in the event catalog (finding 1, option (a)), judged by the reviewer at the P5.6 gate. |
 | 50 | 2026-10-14 | **The owner answered O10–O17** (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed 2026-10-14, `17745e4`): every answer takes the suggested or as-designed option — the eleven permission descriptions as worded; a restored role's permissions apply at once; business-wide permissions for branch-restricted staff; the containment switch set by the owner or (in an emergency) the technical lead, lifted only with the owner's approval, business owners told; backups 35 days; the report copy handed over in person, the operator's copy deleted on the owner's written receipt; a privacy notice; the planning documents kept. Recorded in the decision log; no owner question for P5 is open. |
 | 49 | 2026-10-14 | **One owner questionnaire for the rest of P5** (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`): every open owner decision in one form — new open items O13 (permission wording), O14 (restoring an archived role), O15 (branch-restricted staff and business-wide permissions), O16 (who sets and lifts the containment switch; telling business owners), O17 (the planning documents in the merged history), and O10–O12 unchanged; the two unanswered earlier forms marked superseded. Mapping and timing recorded in §14. |

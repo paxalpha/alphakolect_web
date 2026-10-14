@@ -2400,8 +2400,8 @@ independent of the permission catalog); it is listed with them so it is complete
   it — `identity.permission_catalog` has no such column, and step 4's `tenancy.list_permission_catalog` returns the
   identifier and grantability only. Proposed: a `description` column on the catalog, seeded by P5.6's migration (the
   catalog stays the only authority) and returned by the reader. The wording is shown to business owners when they grant
-  access, so it is the owner's: `docs/business/P5_OWNER_PERMISSION_DESCRIPTIONS.md` (prepared 2026-10-14) asks him to
-  confirm or rewrite a suggested line for each merchant permission.
+  access, so it is the owner's (O13): `docs/business/P5_OWNER_REMAINING_QUESTIONS.md` A1 (prepared 2026-10-14) asks
+  him to confirm or rewrite a suggested line for each merchant permission.
   (3) **`Role.permissions` on every role response** (frozen, ADR-16): step 4's role reader and writers return no
   permissions, so P5.6 replaces `tenancy.list_roles` (a new result column) and the role responses read the set after a
   write — expected, recorded here so it is not a surprise at the gate.
@@ -2658,6 +2658,8 @@ D10–D12, §3) are recorded the same way — as the owner's explicit confirmati
 Questionnaire mapping (confirmation form: CF1 → every entry, CF2 → D9 retention and copy, CF3 → §7.4, CF4 → §8.6,
 CF5 → §8.5): A1 → O7; A2 → O3; B1 → O8(a); B2 → O8(b); B3 → the owner's preference for O4 (decided at P5.8
 step 2 on the spike's evidence); C1 → O9; Part D → the D9 policy (§8.6); E1–E8 → D2, D3, D6, D7, D8, D10, D11, D12.
+Remaining-questions form (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, 2026-10-14): A1 → O13; A2 → O14; A3 →
+O15; B1–B3 → O16; Part C (P1, P2a–d, P3, unchanged from the privacy form of 2026-10-12) → O10–O12; D1 → O17.
 
 **Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
 `docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
@@ -2712,8 +2714,10 @@ decision-maker, the date, the source, the selected option, the affected contract
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
 signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for Part 1 is given** (G1, 2026-10-12).
-**Still open:** O10–O12, the privacy questions of `docs/business/P5_OWNER_PRIVACY_QUESTIONS.md`, needed only by the
-D9 written policy at P5.8 step (e). **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
+**Still open:** O10–O17, all asked in one form, `docs/business/P5_OWNER_REMAINING_QUESTIONS.md` (2026-10-14; it
+replaces the unanswered privacy form of 2026-10-12 and the permission-wording form of the same day, both marked
+superseded): O13–O15 are needed before P5.6 closes, O16 before the `admin:containment` runbook (P5.10), O17 before
+the merge, and O10–O12 by the D9 written policy at P5.8 step (e). **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
 owner's G1. O4 is decided at P5.8 step 2 on measured evidence, by design. P5.0 then moves this log into ADR-16 (Part 1
 entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
 
@@ -2727,6 +2731,11 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 | O7 | Branch ceiling for delegation | **RESOLVED by D5′ (2026-10-12; decision log):** only the owner assigns or invites, choosing one branch or all (F1b), so no branch ceiling is needed (§7.6) |
 | O8 | Platform staff onboarding (§7.4) | **DECIDED by the owner (2026-10-11; decision log, §14): (a) an email that already has an identity is refused; (b) reactivation restores the membership with no grants (event #37).** |
+| O13 | Wording of the merchant permission descriptions (the frozen `PermissionCatalog.description`; §10 P5.6, finding 2) | proposal: the suggested lines of the form's A1. **Owner decision required before P5.6 closes**, so its migration seeds the approved wording (a later change needs only a forward migration) |
+| O14 | Restoring an archived role (A2; follows from E3/D6 and the frozen `Role.permissions`: "an archived role keeps its set, inert") | as designed: the role's permissions apply again at once. **Owner confirmation requested before P5.6 closes**; a "No" changes a frozen contract and needs the reviewer |
+| O15 | A branch-restricted staff member and the business-wide permissions (A3; §7.6, D7) | as designed: every P5 endpoint is `merchant_wide`, so a branch restriction does not narrow these permissions. **Owner confirmation requested before P5.6 closes**; a "No" adds branch-scoped declarations and tests to P5.6 |
+| O16 | Who may set and lift the containment switch, and whether business owners are told (B1–B3; §11.1) | proposal: the owner, or the technical lead in an emergency, who informs the owner at once; lifted with the owner's approval; every business owner told when it is set and when it is lifted. **Owner decision required before the `admin:containment` runbook (P5.10)** |
+| O17 | Whether the three planning documents stay in the merged history (D1; P5.10) | proposal: keep them. **The owner's choice, before the merge** |
 | O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
 
 ## 15. Legacy context (background only — not a requirement)
@@ -2757,6 +2766,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 49 | 2026-10-14 | **One owner questionnaire for the rest of P5** (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`): every open owner decision in one form — new open items O13 (permission wording), O14 (restoring an archived role), O15 (branch-restricted staff and business-wide permissions), O16 (who sets and lifts the containment switch; telling business owners), O17 (the planning documents in the merged history), and O10–O12 unchanged; the two unanswered earlier forms marked superseded. Mapping and timing recorded in §14. |
 | 48 | 2026-10-14 | **Findings before P5.6 starts** (§10 P5.6), open until decided: the event catalog's summary rules cannot hold the permission lists #21 (and P5.7's #31) must record — a bounded list rule is recommended and needs the reviewer's agreement; the frozen `PermissionCatalog.description` has no source — a catalog column is proposed, its wording put to the owner (`P5_OWNER_PERMISSION_DESCRIPTIONS.md`); `Role.permissions` needs `list_roles` replaced; the strengthened source guard's intended design. |
 | 47 | 2026-10-14 | **P5.5 gate approved** by the independent reviewer ("P5.5 approved to close"; seven decisions accepted; the bootstrap parsing fix accepted, a regression test for it noted as non-blocking; 80 + 76 focused tests re-run serially; full gate and CI not re-run). Recorded in §14. P5.6 waits for the project lead's go, and its first commit is the strengthened source guard. |
 | 46 | 2026-10-14 | **P5.5 built; awaiting review at its gate.** Step 6 (`d740d77`, `a897faa`): the containment switch — one-row table, operator-only `util.set_authorization_containment` with #39, read by the resolver and every re-check, fail closed, `admin:containment`. Step 7 (`89deb89`): the R32 gate tests. Enforcing mode (`0278b38`): the tolerance lists deleted, a test fails if one returns. Added at the gate: the definer `search_path` guard (`351c827`) and the settings writers' §8.2a refusal tests (`74bf1ca`). Outside the package: `admin:bootstrap` accepts its documented `--` (`9d408bf`). Gate on `74bf1ca` passed locally (contracts 62, db 580, api 642; oasdiff 0 errors). |

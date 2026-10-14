@@ -3,5 +3,12 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src", "test", "prisma.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "prisma.config.ts",
+    "vitest.config.ts",
+    "vitest.base.ts",
+    "vitest.concurrency.config.ts"
+  ]
 }

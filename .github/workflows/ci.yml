@@ -64,6 +64,8 @@ jobs:
 
       - run: pnpm typecheck
       - run: pnpm test
+      # The two-connection suites (P5 plan §9.3): their own command, part of every gate, 50 runs per race.
+      - run: pnpm test:concurrency
       - run: pnpm build # includes the contracts' independent typecheck consumer
 
       - name: API refuses to boot without required configuration

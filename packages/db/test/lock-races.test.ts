@@ -562,12 +562,17 @@ describe('(j) acceptance of an invitation against its revocation and its re-issu
 // ── P5.5 step 4: the branch and role writers ───────────────────────────────────────────────────────────────────────
 
 /** A role of `b` holding `permissions` — granted as the table owner (a fixture; no app path grants before P5.6). */
-async function grantedRole(merchantId: string, permissions: string[]) {
-  const roleId = await role(merchantId);
-  await owner.query(
-    `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) SELECT $1, $2, unnest($3::text[])`,
-    [merchantId, roleId, permissions],
-  );
+/** A role of `b` holding `permissions`, set by its owner through tenancy.set_role_permissions (P5.6). */
+async function grantedRole(b: Awaited<ReturnType<typeof business>>, permissions: string[]) {
+  const roleId = await role(b.merchantId);
+  const {
+    rows: [set],
+  } = await t1.query(`SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3)`, [
+    b.ownerSession,
+    roleId,
+    permissions,
+  ]);
+  expect(set.outcome).toBe('ok');
   return roleId;
 }
 async function branch(merchantId: string) {
@@ -589,7 +594,7 @@ describe('(b) a staff member’s branch write against the owner deactivating tha
   it(`never deadlocks: ${RUNS} staged runs; the write is made when it ran first, refused when the deactivation did`, async () => {
     for (let i = 0; i < RUNS; i++) {
       const b = await business();
-      const roleId = await grantedRole(b.merchantId, ['merchant.branches.manage']);
+      const roleId = await grantedRole(b, ['merchant.branches.manage']);
       const member = await staff(b, roleId);
       const staffSession = await session(member.identityId, 'merchant', member.membershipId);
       const branchId = await branch(b.merchantId);
@@ -805,6 +810,105 @@ describe('admission of an invitation against the bootstrap of the same email, in
       expect(audiences, `run ${i}`).toEqual(
         i % 2 === 0 ? { platform: 0, business: 1 } : { platform: 1, business: 0 },
       );
+    }
+  }, 600_000);
+});
+
+// ── P5.6: the role grant writer ───────────────────────────────────────────────────────────────────────────────────
+
+const setRolePermissions = (c: pg.Client, sessionId: string, roleId: string, permissions: string[]) =>
+  c.query(`SELECT * FROM tenancy.set_role_permissions($1, $2, $3)`, [sessionId, roleId, permissions]);
+const grantsOf = async (roleId: string) =>
+  (
+    await owner.query(`SELECT permission FROM tenancy.role_permissions WHERE role_id = $1 ORDER BY 1`, [
+      roleId,
+    ])
+  ).rows.map((r) => r.permission as string);
+const resolvedFor = async (sessionId: string) =>
+  (await owner.query(`SELECT permissions FROM identity.session_authority($1)`, [sessionId])).rows[0]
+    .permissions as string[];
+
+/** x holds the rows `holdSql` selects; each racer starts and is waiting for a lock before the next; then x releases. */
+async function stagedOn(holdSql: string, params: unknown[], racers: Racer[]): Promise<Settled[]> {
+  await x.query('BEGIN');
+  await x.query(`${holdSql} FOR UPDATE`, params);
+  const pending: Promise<Settled>[] = [];
+  for (const r of racers) {
+    await r.c.query('BEGIN');
+    pending.push(inTransaction(r.c, r.run()));
+    await waitsForALock(r.pid);
+  }
+  await x.query('ROLLBACK');
+  return Promise.all(pending);
+}
+
+describe('(c) a role-permission edit against an assignment into that role, in both orders (§7.2)', () => {
+  it(`never deadlocks: ${RUNS} staged runs; both succeed, and the member ends in the role with its new set`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const from = await role(b.merchantId);
+      const into = await grantedRole(b, ['merchant.profile.read']);
+      const member = await staff(b, from);
+      const memberSession = await session(member.identityId, 'merchant', member.membershipId);
+      const second = await session(b.ownerIdentityId, 'merchant', b.ownerMembershipId);
+      const edit = {
+        c: t1,
+        pid: pid.t1,
+        run: () =>
+          setRolePermissions(t1, b.ownerSession, into, ['merchant.branches.read', 'merchant.roles.read']),
+      };
+      const assign = {
+        c: t2,
+        pid: pid.t2,
+        run: () => updateMembership(t2, second, member.membershipId, 'assign', into),
+      };
+      // Even runs: the edit first — it holds the owner's membership and waits for the role (x); the assignment waits
+      // for the owner's membership. Odd runs: the assignment first — it holds both memberships and waits for the
+      // role (x); the edit waits for the owner's membership.
+      const results = await staged(
+        { table: 'tenancy.roles', id: into },
+        i % 2 === 0 ? [edit, assign] : [assign, edit],
+      );
+      expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+      expect(await grantsOf(into)).toEqual(['merchant.branches.read', 'merchant.roles.read']);
+      expect(await resolvedFor(memberSession)).toEqual(['merchant.branches.read', 'merchant.roles.read']);
+    }
+  }, 600_000);
+});
+
+describe('(k) a staff write against the owner editing that staff member’s role permissions, in both orders (§7.2)', () => {
+  it(`never deadlocks: ${RUNS} staged runs; the write is made when it ran first, refused when the edit did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await grantedRole(b, ['merchant.branches.manage']);
+      const member = await staff(b, roleId);
+      const staffSession = await session(member.identityId, 'merchant', member.membershipId);
+      const branchId = await branch(b.merchantId);
+      const name = `Renamed ${i}`;
+      const write = { c: t1, pid: pid.t1, run: () => updateBranch(t1, staffSession, branchId, name) };
+      const edit = { c: t2, pid: pid.t2, run: () => setRolePermissions(t2, b.ownerSession, roleId, []) };
+      if (i % 2 === 0) {
+        // The write first: it holds the staff member's role (S) and waits for the branch (x); the edit waits for the
+        // role. The write was authorized when it ran.
+        const results = await stagedOn(
+          `SELECT 1 FROM tenancy.branches WHERE id = $1`,
+          [branchId],
+          [write, edit],
+        );
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await branchName(branchId)).toBe(name);
+      } else {
+        // The edit first: it holds the role (NKU) and waits to rewrite its grant rows (x); the write waits for the
+        // role, then its re-check finds the permission gone — refused, nothing written.
+        const results = await stagedOn(
+          `SELECT 1 FROM tenancy.role_permissions WHERE role_id = $1`,
+          [roleId],
+          [edit, write],
+        );
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+        expect(await branchName(branchId)).not.toBe(name);
+      }
+      expect(await grantsOf(roleId)).toEqual([]);
     }
   }, 600_000);
 });

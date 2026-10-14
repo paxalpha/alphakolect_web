@@ -136,7 +136,12 @@ export const UpdateCatalogItemRequest = z
 export type UpdateCatalogItemRequest = z.infer<typeof UpdateCatalogItemRequest>;
 
 const error = (description: string) => ({ description, schema: ErrorResponse });
-const ownerOnly = { 403: error('FORBIDDEN — only the business owner (until P5 permissions)') };
+/** A permission the owner can give through a role (the refusal says whom to ask, P5.6). */
+const needsGrant = {
+  403: error('FORBIDDEN — the caller’s role does not include the permission; the business owner can give it'),
+};
+/** A permission reserved to the owner (merchant.roles.manage, members.manage, invitations.manage, audit.read). */
+const ownerOnly = { 403: error('FORBIDDEN — only the business owner') };
 const notFound = { 404: error('NOT_FOUND — also for another business’s items') };
 const nameTaken = { 409: error('NAME_TAKEN — an active item already has this name (case-insensitive)') };
 const invalid = { 400: error('VALIDATION_ERROR') };
@@ -161,7 +166,7 @@ export const getMerchantProfile = defineEndpoint({
   authorization: { class: 'permission', permission: 'merchant.profile.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business profile (owner)',
-  responses: { 200: { description: 'The profile', schema: MerchantProfile }, ...ownerOnly },
+  responses: { 200: { description: 'The profile', schema: MerchantProfile }, ...needsGrant },
 });
 
 export const updateMerchantProfile = defineEndpoint({
@@ -175,7 +180,7 @@ export const updateMerchantProfile = defineEndpoint({
   responses: {
     200: { description: 'The updated profile', schema: MerchantProfile },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
   },
 });
 
@@ -189,7 +194,7 @@ export const listBranches = defineEndpoint({
   authorization: { class: 'permission', permission: 'merchant.branches.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business’s branches, active and archived (owner)',
-  responses: { 200: { description: 'All branches', schema: BranchList }, ...ownerOnly },
+  responses: { 200: { description: 'All branches', schema: BranchList }, ...needsGrant },
 });
 
 export const createBranch = defineEndpoint({
@@ -207,7 +212,7 @@ export const createBranch = defineEndpoint({
   responses: {
     201: { description: 'Created', schema: Branch },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
     ...nameTaken,
   },
 });
@@ -220,7 +225,7 @@ export const getBranch = defineEndpoint({
   ...merchantSession,
   summary: 'One branch (owner)',
   request: { params: BranchParams },
-  responses: { 200: { description: 'The branch', schema: Branch }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The branch', schema: Branch }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const updateBranch = defineEndpoint({
@@ -238,7 +243,7 @@ export const updateBranch = defineEndpoint({
   responses: {
     200: { description: 'The updated branch', schema: Branch },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
     ...notFound,
     ...nameTaken,
   },
@@ -251,7 +256,7 @@ export const listRoles = defineEndpoint({
   authorization: { class: 'permission', permission: 'merchant.roles.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business’s staff roles, active and archived (owner)',
-  responses: { 200: { description: 'All roles', schema: RoleList }, ...ownerOnly },
+  responses: { 200: { description: 'All roles', schema: RoleList }, ...needsGrant },
 });
 
 export const createRole = defineEndpoint({
@@ -278,7 +283,7 @@ export const getRole = defineEndpoint({
   ...merchantSession,
   summary: 'One staff role (owner)',
   request: { params: RoleParams },
-  responses: { 200: { description: 'The role', schema: Role }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The role', schema: Role }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const updateRole = defineEndpoint({
@@ -307,7 +312,7 @@ export const listPermissionCatalog = defineEndpoint({
   summary: 'The merchant permissions a role can be given, with their descriptions',
   responses: {
     200: { description: 'The active merchant permissions', schema: PermissionCatalog },
-    ...ownerOnly,
+    ...needsGrant,
   },
 });
 
@@ -379,7 +384,7 @@ export const listMembers = defineEndpoint({
   authorization: { class: 'permission', permission: 'merchant.members.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business’s members, active and deactivated (owner)',
-  responses: { 200: { description: 'All members', schema: MemberList }, ...ownerOnly },
+  responses: { 200: { description: 'All members', schema: MemberList }, ...needsGrant },
 });
 
 export const getMember = defineEndpoint({
@@ -390,7 +395,7 @@ export const getMember = defineEndpoint({
   ...merchantSession,
   summary: 'One member (owner)',
   request: { params: MemberParams },
-  responses: { 200: { description: 'The member', schema: Member }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The member', schema: Member }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const assignMember = defineEndpoint({
@@ -499,7 +504,7 @@ export const listInvitations = defineEndpoint({
   },
   ...merchantSession,
   summary: 'The business’s invitations (owner)',
-  responses: { 200: { description: 'All invitations', schema: InvitationList }, ...ownerOnly },
+  responses: { 200: { description: 'All invitations', schema: InvitationList }, ...needsGrant },
 });
 
 export const createInvitation = defineEndpoint({

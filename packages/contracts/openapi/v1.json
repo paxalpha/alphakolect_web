@@ -1645,7 +1645,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -1716,7 +1716,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -1768,7 +1768,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -1839,7 +1839,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -1922,7 +1922,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2014,7 +2014,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2086,7 +2086,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2157,7 +2157,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — only the business owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -2240,7 +2240,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2332,7 +2332,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — only the business owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -2404,7 +2404,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2488,7 +2488,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — only the business owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -2550,7 +2550,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -2623,7 +2623,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -3081,7 +3081,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — the caller’s role does not include the permission; the business owner can give it",
             "content": {
               "application/json": {
                 "schema": {
@@ -3152,7 +3152,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — only the business owner",
             "content": {
               "application/json": {
                 "schema": {
@@ -3246,7 +3246,7 @@
             }
           },
           "403": {
-            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "description": "FORBIDDEN — only the business owner",
             "content": {
               "application/json": {
                 "schema": {

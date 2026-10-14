@@ -12,8 +12,9 @@ import type { AuthContext } from './http/authenticate.js';
 // The decision reads the effective permissions resolved by the database on this very request (identity.
 // session_authority, P5.2): owners and super admins hold their fixed sets, staff their role's grants, platform staff
 // their own grants, agents nothing. It is the early check; every privileged write is decided again by the database
-// under its locks (P5.5). Refusals keep P4's status, code and message — with no staff grant possible before P5.6, every
-// merchant permission is the owner's in practice — and are recorded as authz.denied, best effort.
+// under its locks (P5.5). Refusals keep P4's status and code; the message says whom to ask for a permission that can
+// be given, and who alone may act for a reserved one (the owner's decision, P5.6); each is recorded as authz.denied,
+// best effort.
 //
 // It fails closed: any error while evaluating authority ends the request with 500 INTERNAL_ERROR through the error
 // handler and the authorization_resolution_failure signal (§9.4) — never next() without a decision, never a 401/403,
@@ -49,16 +50,37 @@ export function decide(
     : { allowed: false, status: 404, reason: 'other_branch' };
 }
 
-/** P4's refusal messages, kept unchanged (§10 P5.4: "denial responses unchanged"). P5.6 revisits grantable ones. */
-const DENIAL_MESSAGE: Partial<Record<Permission, string>> = {
+const ASK_THE_OWNER = 'You don’t have permission to do this. Ask the business owner if you need it.';
+const ASK_A_SUPER_ADMIN = 'You don’t have permission to do this. Ask a super admin if you need it.';
+const OWNER_ONLY = 'Only the business owner can do this';
+const SUPER_ADMIN_ONLY = 'Only a platform super admin can do this';
+
+/**
+ * What a refusal says, by the permission refused (the owner's answers R1–R4, 2026-10-14; P5 plan §14). A permission
+ * that can be given — by the business owner through a role, or by a super admin to AlphaKolect staff — tells the
+ * caller whom to ask; one reserved to the owner or to a super admin keeps P4's message, which says so. Which is which
+ * is the catalog's grantable flag, and an API test compares this table with it. Every refusal of a permission — the
+ * middleware's and the database's alike — takes its message from here.
+ */
+const REFUSAL_MESSAGE: Record<Permission, string> = {
+  'merchant.profile.read': ASK_THE_OWNER,
+  'merchant.profile.update': ASK_THE_OWNER,
+  'merchant.branches.read': ASK_THE_OWNER,
+  'merchant.branches.manage': ASK_THE_OWNER,
+  'merchant.roles.read': ASK_THE_OWNER,
+  'merchant.roles.manage': OWNER_ONLY,
+  'merchant.members.read': ASK_THE_OWNER,
+  'merchant.members.manage': OWNER_ONLY,
+  'merchant.invitations.read': ASK_THE_OWNER,
+  'merchant.invitations.manage': OWNER_ONLY,
+  'merchant.audit.read': OWNER_ONLY,
+  'platform.merchants.read': ASK_A_SUPER_ADMIN,
+  'platform.audit.read': ASK_A_SUPER_ADMIN,
   'platform.merchants.lifecycle': 'Only a platform super admin may change a merchant’s status',
   'platform.merchants.transfer_ownership': 'Only a platform super admin may transfer ownership',
+  'platform.staff.manage': SUPER_ADMIN_ONLY,
 };
-const denialMessage = (permission: Permission) =>
-  DENIAL_MESSAGE[permission] ??
-  (permission.startsWith('merchant.')
-    ? 'Only the business owner can do this'
-    : 'Only a platform super admin can do this');
+export const refusalMessage = (permission: Permission): string => REFUSAL_MESSAGE[permission];
 
 /** §9.4: one error-level line — the signal and the request id, nothing else (never a message or a value). */
 export function authorizationResolutionFailure(logger: Pick<Logger, 'error'>, requestId: unknown): void {
@@ -118,7 +140,7 @@ export function authorize(endpoint: EndpointContract, deps: AuthorizeDeps): Requ
     }
     next(
       decision.status === 403
-        ? new AppError(403, 'FORBIDDEN', denialMessage(required.permission))
+        ? new AppError(403, 'FORBIDDEN', refusalMessage(required.permission))
         : new AppError(404, 'NOT_FOUND', 'Not found'),
     );
   };

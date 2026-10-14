@@ -1,4 +1,5 @@
 import type { AssignMemberRequest, Member } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import { withTenant, type TenantContext } from '../../platform/tenant.js';
@@ -40,7 +41,7 @@ export const toMember = (row: MemberRow): Member => ({
 function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: MembershipAction): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('merchant.members.manage'));
     case 'owner_protected':
       return new AppError(403, 'FORBIDDEN', 'The owner’s membership changes only by an ownership transfer');
     case 'not_found':

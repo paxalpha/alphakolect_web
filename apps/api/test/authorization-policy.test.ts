@@ -35,7 +35,7 @@ import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 
 // The policy middleware (P5.4; TARGET_ARCHITECTURE ADR-16 §3.5; P5 plan §4 invariants 3–8, §7.6, §8.2a rule 6, §9.4):
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
-// through the real app, every permission endpoint refused with exactly P4's answer and recorded as authz.denied, a
+// through the real app, every permission endpoint refused with the owner’s wording and recorded as authz.denied, a
 // failure to resolve authority answered 500 with its signal and nothing recorded or changed, and the effective
 // permissions on the membership endpoints; and the source guard that keeps authority decisions in one module.
 
@@ -202,7 +202,7 @@ describe('the middleware (synthetic endpoints)', () => {
     expect(res.body).toEqual({
       error: {
         code: 'FORBIDDEN',
-        message: 'Only the business owner can do this',
+        message: 'You don’t have permission to do this. Ask the business owner if you need it.',
         requestId: 'policy-unit-1',
       },
     });
@@ -255,13 +255,32 @@ const { app, auth } = await createTestApp({ logger: pino({ level: 'error' }, cap
 const fx = tenancyFixtures(app, auth);
 const { owner } = fx;
 
-/** P4's refusal answers — the equivalence oracle (P4 code at 3add9ea: requireOwner and the lifecycle refusals). */
+/**
+ * The refusal answers the owner chose (R1–R4, 2026-10-14; P5 plan §14), spelled out here rather than read from the code.
+ * A permission the catalog marks grantable says whom to ask; a reserved one keeps P4's answer (P4 code at 3add9ea:
+ * requireOwner and the lifecycle refusals), which says who alone may act.
+ */
+const ASK_FOR_IT = {
+  merchant: 'You don’t have permission to do this. Ask the business owner if you need it.',
+  platform: 'You don’t have permission to do this. Ask a super admin if you need it.',
+};
 const P4_MESSAGE: Partial<Record<keyof typeof endpoints, string>> = {
   deactivateMerchant: 'Only a platform super admin may change a merchant’s status',
   reactivateMerchant: 'Only a platform super admin may change a merchant’s status',
   transferOwnership: 'Only a platform super admin may transfer ownership',
 };
-const p4Message = (id: keyof typeof endpoints) => P4_MESSAGE[id] ?? 'Only the business owner can do this';
+/** The catalog's grantable permissions, read as the table owner (the catalog has no app grant, B1). */
+let GRANTABLE: ReadonlySet<string>;
+const permissionOf = (e: EndpointContract) => (e.authorization as PermissionRequirement).permission;
+const chosenMessage = (id: keyof typeof endpoints, e: EndpointContract) => {
+  const permission = permissionOf(e);
+  const scope = permission.startsWith('merchant.') ? 'merchant' : 'platform';
+  if (GRANTABLE.has(permission)) return ASK_FOR_IT[scope];
+  return (
+    P4_MESSAGE[id] ??
+    (scope === 'merchant' ? 'Only the business owner can do this' : 'Only a platform super admin can do this')
+  );
+};
 
 const PERMISSION_ENDPOINTS = (
   Object.entries(endpoints) as Array<[keyof typeof endpoints, EndpointContract]>
@@ -335,18 +354,25 @@ const snapshot = async (merchantId: string) =>
 let W: World;
 beforeAll(async () => {
   W = await setUp();
+  const { rows } = await owner.query<{ identifier: string }>(
+    `SELECT identifier FROM identity.permission_catalog WHERE grantable AND status = 'active'`,
+  );
+  GRANTABLE = new Set(rows.map((r) => r.identifier));
 });
 
-describe('denial responses unchanged (the P4 oracle), each recorded as authz.denied', () => {
-  it('covers every permission endpoint of the registry (control)', () => {
+describe('denial responses: the owner’s wording (R1–R4), each recorded as authz.denied', () => {
+  it('covers every permission endpoint of the registry, both a grantable and a reserved permission (control)', () => {
     expect(PERMISSION_ENDPOINTS.length).toBeGreaterThanOrEqual(20);
     for (const [, e] of PERMISSION_ENDPOINTS) {
       for (const p of Object.keys(e.request?.params?.shape ?? {})) expect(PARAMS, p).toHaveProperty(p);
     }
+    const grantable = PERMISSION_ENDPOINTS.filter(([, e]) => GRANTABLE.has(permissionOf(e)));
+    expect(grantable.length).toBeGreaterThan(0);
+    expect(grantable.length).toBeLessThan(PERMISSION_ENDPOINTS.length);
   });
 
   it.each(PERMISSION_ENDPOINTS)(
-    '%s: staff or platform support get P4’s exact 403; one authz.denied row; nothing changes',
+    '%s: staff or platform support get the owner’s chosen 403; one authz.denied row; nothing changes',
     async (id, e) => {
       const caller = e.audience === 'platform' ? W.support : W.staff;
       const before = await snapshot(W.merchantId);
@@ -354,9 +380,11 @@ describe('denial responses unchanged (the P4 oracle), each recorded as authz.den
       const res = await send(id, e, caller.token, W, rid);
 
       expect(res.status, JSON.stringify(res.body)).toBe(403);
-      expect(res.body).toEqual({ error: { code: 'FORBIDDEN', message: p4Message(id), requestId: rid } });
+      expect(res.body).toEqual({
+        error: { code: 'FORBIDDEN', message: chosenMessage(id, e), requestId: rid },
+      });
       expect(await snapshot(W.merchantId)).toBe(before);
-      const permission = (e.authorization as PermissionRequirement).permission;
+      const permission = permissionOf(e);
       expect(await auditRows(owner, rid)).toEqual([
         expect.objectContaining({
           action: 'authz.denied',

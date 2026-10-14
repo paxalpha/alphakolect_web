@@ -2,10 +2,12 @@ import type {
   Branch,
   CurrentMembership,
   MerchantProfile,
+  Permission,
   PermissionCatalog,
   Role,
   UpdateCatalogItemRequest,
 } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import { withTenant, type TenantContext, type TenantTx } from '../../platform/tenant.js';
@@ -37,6 +39,16 @@ type SettingsAction =
   | 'merchant.profile_updated'
   | `merchant.${'branch' | 'role'}_${'created' | 'updated'}`
   | 'merchant.role_permissions_set';
+
+/** The permission each write needs — the one its refusal names (the database decides it again under its locks). */
+const PERMISSION: Record<SettingsAction, Permission> = {
+  'merchant.profile_updated': 'merchant.profile.update',
+  'merchant.branch_created': 'merchant.branches.manage',
+  'merchant.branch_updated': 'merchant.branches.manage',
+  'merchant.role_created': 'merchant.roles.manage',
+  'merchant.role_updated': 'merchant.roles.manage',
+  'merchant.role_permissions_set': 'merchant.roles.manage',
+};
 
 const notFound = (table: CatalogTable) =>
   new AppError(404, 'NOT_FOUND', table === 'branches' ? 'Branch not found' : 'Role not found');
@@ -250,6 +262,6 @@ export class MerchantSettingsService {
       requestId: ctx.requestId,
       summary: { reason: result.outcome },
     });
-    throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+    throw new AppError(403, 'FORBIDDEN', refusalMessage(PERMISSION[action]));
   }
 }

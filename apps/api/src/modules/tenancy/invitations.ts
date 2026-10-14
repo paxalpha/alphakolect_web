@@ -1,4 +1,5 @@
 import type { AcceptInvitationRequest, CreateInvitationRequest, Invitation } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
@@ -104,7 +105,7 @@ export class InvitationService {
         summary: { reason: issued.outcome },
       });
       if (issued.outcome === 'forbidden') {
-        throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+        throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.invitations.manage'));
       }
       throw issued.outcome === 'already_member'
         ? new AppError(409, 'ALREADY_MEMBER', 'This person is already a member of the business')
@@ -139,7 +140,7 @@ export class InvitationService {
       });
       switch (result.outcome) {
         case 'forbidden':
-          throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+          throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.invitations.manage'));
         case 'not_found':
           throw new AppError(404, 'NOT_FOUND', 'Invitation not found');
         case 'invalid_transition':

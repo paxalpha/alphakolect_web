@@ -3,6 +3,7 @@ import type {
   OwnershipTransferred,
   TransferOwnershipRequest,
 } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import { AppError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
@@ -29,7 +30,7 @@ type TransferRow = {
 function transferRefusal(outcome: Exclude<TransferOutcome, 'ok'>): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only a platform super admin may transfer ownership');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('platform.merchants.transfer_ownership'));
     case 'not_found':
       return new AppError(404, 'NOT_FOUND', 'Merchant not found');
     case 'invalid_new_owner':
@@ -53,7 +54,7 @@ const AUDIT_ACTION = {
 function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only a platform super admin may change a merchant’s status');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('platform.merchants.lifecycle'));
     case 'not_found':
       return new AppError(404, 'NOT_FOUND', 'Merchant not found');
     case 'invalid_transition':

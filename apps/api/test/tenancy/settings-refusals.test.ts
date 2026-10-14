@@ -125,40 +125,55 @@ const state = async () =>
     [f.merchantId],
   );
 
+// The owner's wording (R1–R4, 2026-10-14): profile and branch permissions can be given, so the refusal says whom to
+// ask; the roles are the owner's alone.
+const ASK_THE_OWNER = 'You don’t have permission to do this. Ask the business owner if you need it.';
+const OWNER_ONLY = 'Only the business owner can do this';
+
 const WRITES = [
   [
     'merchant.profile_updated',
     'merchant',
+    ASK_THE_OWNER,
     (c: RequestContext) => settings.rename(f.staff, 'Hijacked Ltd', c),
   ],
   [
     'merchant.branch_created',
     'branch',
+    ASK_THE_OWNER,
     (c: RequestContext) => settings.create(f.staff, 'branches', 'Hijacked', c),
   ],
   [
     'merchant.branch_updated',
     'branch',
+    ASK_THE_OWNER,
     (c: RequestContext) => settings.update(f.staff, 'branches', f.branchId, { status: 'archived' }, c),
   ],
-  ['merchant.role_created', 'role', (c: RequestContext) => settings.create(f.staff, 'roles', 'Hijacked', c)],
+  [
+    'merchant.role_created',
+    'role',
+    OWNER_ONLY,
+    (c: RequestContext) => settings.create(f.staff, 'roles', 'Hijacked', c),
+  ],
   [
     'merchant.role_updated',
     'role',
+    OWNER_ONLY,
     (c: RequestContext) => settings.update(f.staff, 'roles', f.roleId, { status: 'archived' }, c),
   ],
   // P5.6: the role grant writer — merchant.roles.manage is the owner's alone, whatever the context claims
   [
     'merchant.role_permissions_set',
     'role',
+    OWNER_ONLY,
     (c: RequestContext) => settings.setRolePermissions(f.staff, f.roleId, ['merchant.profile.read'], c),
   ],
 ] as const;
 
 describe('a refusal by the database alone (§8.2a rule 5)', () => {
   it.each(WRITES)(
-    '%s: 403, nothing changed, the denial recorded best effort with the actor',
-    async (action, targetType, run) => {
+    '%s: 403 with the owner’s wording, nothing changed, the denial recorded best effort with the actor',
+    async (action, targetType, message, run) => {
       const before = await state();
       const rid = markerRequestId('refusal');
       const err = await run(ctx(rid)).then(
@@ -166,7 +181,7 @@ describe('a refusal by the database alone (§8.2a rule 5)', () => {
         (e: unknown) => e,
       );
       expect(err).toBeInstanceOf(AppError);
-      expect(err).toMatchObject({ status: 403, code: 'FORBIDDEN' });
+      expect(err).toMatchObject({ status: 403, code: 'FORBIDDEN', message });
       expect(await state()).toEqual(before);
       expect(await auditRows(owner, rid)).toEqual([
         expect.objectContaining({

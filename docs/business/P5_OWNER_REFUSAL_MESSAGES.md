@@ -26,7 +26,7 @@ branches, see roles, see members, see invitations. A staff member whose role doe
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: You don't have permission to do this. Ask the business owner if you need it.
 
 ## R2. Something only the business owner can ever do
 
@@ -36,7 +36,7 @@ Managing roles, managing members, managing invitations and seeing the activity r
 - ☐ **Keep it** *(Our suggestion: it is exactly true.)*
 - ☐ Change to:
 
-> Answer:
+> Answer: Keep it
 
 ## R3. An AlphaKolect team member lacks a permission the super admin can give
 
@@ -49,7 +49,7 @@ are told:
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: You don't have permission to do this. Ask a super admin if you need it.
 
 ## R4. Something only the super admin can ever do
 
@@ -60,7 +60,7 @@ status"**, **"Only a platform super admin may transfer ownership"** and **"Only 
 - ☐ **Keep them** *(Our suggestion: they are exactly true.)*
 - ☐ Change to:
 
-> Answer:
+> Answer: keep them
 
 ---
 

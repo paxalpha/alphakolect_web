@@ -14,7 +14,8 @@
     "typecheck": "pnpm --filter @alphakolect/contracts client:generate && tsc --noEmit",
     "test": "pnpm --filter @alphakolect/contracts client:generate && vitest run",
     "secrets:local": "tsx scripts/generate-local-secrets.ts",
-    "admin:bootstrap": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/bootstrap-super-admin.ts"
+    "admin:bootstrap": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/bootstrap-super-admin.ts",
+    "admin:containment": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/containment.ts"
   },
   "dependencies": {
     "@alphakolect/contracts": "workspace:*",

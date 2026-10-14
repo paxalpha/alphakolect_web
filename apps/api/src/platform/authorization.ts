@@ -50,8 +50,8 @@ export function decide(
     : { allowed: false, status: 404, reason: 'other_branch' };
 }
 
-const ASK_THE_OWNER = 'You don’t have permission to do this. Ask the business owner if you need it.';
-const ASK_A_SUPER_ADMIN = 'You don’t have permission to do this. Ask a super admin if you need it.';
+const ASK_THE_OWNER = "You don't have permission to do this. Ask the business owner if you need it.";
+const ASK_A_SUPER_ADMIN = "You don't have permission to do this. Ask a super admin if you need it.";
 const OWNER_ONLY = 'Only the business owner can do this';
 const SUPER_ADMIN_ONLY = 'Only a platform super admin can do this';
 
@@ -59,8 +59,9 @@ const SUPER_ADMIN_ONLY = 'Only a platform super admin can do this';
  * What a refusal says, by the permission refused (the owner's answers R1–R4, 2026-10-14; P5 plan §14). A permission
  * that can be given — by the business owner through a role, or by a super admin to AlphaKolect staff — tells the
  * caller whom to ask; one reserved to the owner or to a super admin keeps P4's message, which says so. Which is which
- * is the catalog's grantable flag, and an API test compares this table with it. Every refusal of a permission — the
- * middleware's and the database's alike — takes its message from here.
+ * is the catalog's grantable flag, and an API test compares this table with it. The two messages that ask are the
+ * owner's signed answers, character for character (straight apostrophe included); a test compares them with the
+ * form. Every refusal of a permission — the middleware's and the database's alike — takes its message from here.
  */
 const REFUSAL_MESSAGE: Record<Permission, string> = {
   'merchant.profile.read': ASK_THE_OWNER,

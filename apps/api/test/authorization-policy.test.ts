@@ -202,7 +202,7 @@ describe('the middleware (synthetic endpoints)', () => {
     expect(res.body).toEqual({
       error: {
         code: 'FORBIDDEN',
-        message: 'You don’t have permission to do this. Ask the business owner if you need it.',
+        message: "You don't have permission to do this. Ask the business owner if you need it.",
         requestId: 'policy-unit-1',
       },
     });
@@ -261,8 +261,8 @@ const { owner } = fx;
  * requireOwner and the lifecycle refusals), which says who alone may act.
  */
 const ASK_FOR_IT = {
-  merchant: 'You don’t have permission to do this. Ask the business owner if you need it.',
-  platform: 'You don’t have permission to do this. Ask a super admin if you need it.',
+  merchant: "You don't have permission to do this. Ask the business owner if you need it.",
+  platform: "You don't have permission to do this. Ask a super admin if you need it.",
 };
 const P4_MESSAGE: Partial<Record<keyof typeof endpoints, string>> = {
   deactivateMerchant: 'Only a platform super admin may change a merchant’s status',

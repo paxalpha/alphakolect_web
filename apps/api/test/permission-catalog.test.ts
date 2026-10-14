@@ -1,4 +1,5 @@
 import { PERMISSIONS } from '@alphakolect/contracts';
+import { readFileSync } from 'node:fs';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { refusalMessage } from '../src/platform/authorization.js';
@@ -39,7 +40,7 @@ describe('each refusal message = the catalog’s grantable flag', () => {
       const whom = r.scope === 'merchant' ? 'the business owner' : 'a super admin';
       if (r.grantable) {
         expect(message, r.identifier).toBe(
-          `You don’t have permission to do this. Ask ${whom} if you need it.`,
+          `You don't have permission to do this. Ask ${whom} if you need it.`,
         );
       } else {
         expect(message, r.identifier).toMatch(
@@ -47,5 +48,17 @@ describe('each refusal message = the catalog’s grantable flag', () => {
         );
       }
     }
+  });
+
+  it('the two messages that ask are the owner’s signed answers R1 and R3, character for character', () => {
+    const form = readFileSync(
+      new URL('../../../docs/business/P5_OWNER_REFUSAL_MESSAGES.md', import.meta.url),
+      'utf8',
+    ).replace(/\r\n/g, '\n');
+    expect(form).toMatch(/^\*\*Answered by:\*\* Mayowa Edward Fadahunsi \*\*Date:\*\* \S/m);
+    const answer = (item: string) =>
+      form.match(new RegExp(`^## ${item}\\.[\\s\\S]*?^> Answer: (.+)$`, 'm'))?.[1];
+    expect(refusalMessage('merchant.profile.read')).toBe(answer('R1'));
+    expect(refusalMessage('platform.audit.read')).toBe(answer('R3'));
   });
 });

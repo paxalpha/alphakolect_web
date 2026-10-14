@@ -127,7 +127,7 @@ const state = async () =>
 
 // The owner's wording (R1–R4, 2026-10-14): profile and branch permissions can be given, so the refusal says whom to
 // ask; the roles are the owner's alone.
-const ASK_THE_OWNER = 'You don’t have permission to do this. Ask the business owner if you need it.';
+const ASK_THE_OWNER = "You don't have permission to do this. Ask the business owner if you need it.";
 const OWNER_ONLY = 'Only the business owner can do this';
 
 const WRITES = [

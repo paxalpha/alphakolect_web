@@ -2388,6 +2388,30 @@ independent of the permission catalog); it is listed with them so it is complete
   **Hard gate (project lead, 2026-10-13, §14):** staff grants cannot be enabled until the broader guard and its
   mutation tests pass — P5.6's first commit is the strengthened guard, no grant writer (`set_role_permissions`) or
   its endpoint lands before it, and the P5.6 gate checks that order. Not required before P5.5.
+- **Found before the start (2026-10-14) — open until decided; none is decided by this record.**
+  (1) **List-valued audit summaries.** #21 must record the old and new permission lists (above), and P5.7's #31 the
+  identifiers removed (§7.4), but the summary rules of the event catalog — the database trigger
+  (`audit.validate_event`), the TypeScript mirror and the writer guard (P5.3a) — allow only strings, integers and
+  booleans, so a list is refused at insert. Options: (a) a bounded list-of-strings rule (at most *n* items, each at most
+  *m* characters), added to the trigger, the mirror and the guard by P5.6's migration, with tests; (b) each list stored
+  as one comma-separated string under the existing string rule. Recommended: (a), which keeps the summary structured and
+  bounded. It changes a P5.3a mechanism, so it needs the reviewer's agreement before the commit that writes #21.
+  (2) **Permission descriptions.** ADR-16's frozen `PermissionCatalog` items carry a `description`; nothing defines
+  it — `identity.permission_catalog` has no such column, and step 4's `tenancy.list_permission_catalog` returns the
+  identifier and grantability only. Proposed: a `description` column on the catalog, seeded by P5.6's migration (the
+  catalog stays the only authority) and returned by the reader. The wording is shown to business owners when they grant
+  access, so it is the owner's: `docs/business/P5_OWNER_PERMISSION_DESCRIPTIONS.md` (prepared 2026-10-14) asks him to
+  confirm or rewrite a suggested line for each merchant permission.
+  (3) **`Role.permissions` on every role response** (frozen, ADR-16): step 4's role reader and writers return no
+  permissions, so P5.6 replaces `tenancy.list_roles` (a new result column) and the role responses read the set after a
+  write — expected, recorded here so it is not a surprise at the gate.
+  (4) **The strengthened source guard (the precondition) — intended design.** Type-aware, through the compiler's
+  checker: the caller's membership kind or platform role (from `AuthContext`, `TenantContext` or a value of their kind
+  or role type) may not appear outside the policy module in a comparison, `switch`, lookup key (`map[kind]`,
+  `.get`/`.has`/`.includes`), or as the result of a helper used in one; an explicit, justified allowlist — today one
+  line, `platform/tenant.ts:43`, which checks that a merchant context's kind is a merchant kind (a validation, not a
+  grant); a mutation test for each form. No guard of this kind is complete; it catches the listed forms and fails closed
+  on a value it cannot type.
 - **Done when:** role management cannot escalate.
 
 ### P5.7 — Platform staff
@@ -2733,6 +2757,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 48 | 2026-10-14 | **Findings before P5.6 starts** (§10 P5.6), open until decided: the event catalog's summary rules cannot hold the permission lists #21 (and P5.7's #31) must record — a bounded list rule is recommended and needs the reviewer's agreement; the frozen `PermissionCatalog.description` has no source — a catalog column is proposed, its wording put to the owner (`P5_OWNER_PERMISSION_DESCRIPTIONS.md`); `Role.permissions` needs `list_roles` replaced; the strengthened source guard's intended design. |
 | 47 | 2026-10-14 | **P5.5 gate approved** by the independent reviewer ("P5.5 approved to close"; seven decisions accepted; the bootstrap parsing fix accepted, a regression test for it noted as non-blocking; 80 + 76 focused tests re-run serially; full gate and CI not re-run). Recorded in §14. P5.6 waits for the project lead's go, and its first commit is the strengthened source guard. |
 | 46 | 2026-10-14 | **P5.5 built; awaiting review at its gate.** Step 6 (`d740d77`, `a897faa`): the containment switch — one-row table, operator-only `util.set_authorization_containment` with #39, read by the resolver and every re-check, fail closed, `admin:containment`. Step 7 (`89deb89`): the R32 gate tests. Enforcing mode (`0278b38`): the tolerance lists deleted, a test fails if one returns. Added at the gate: the definer `search_path` guard (`351c827`) and the settings writers' §8.2a refusal tests (`74bf1ca`). Outside the package: `admin:bootstrap` accepts its documented `--` (`9d408bf`). Gate on `74bf1ca` passed locally (contracts 62, db 580, api 642; oasdiff 0 errors). |
 | 45 | 2026-10-14 | **P5.5 step 5 built** (`383e749`, `efee310`, `6dc4a70`, `d025f0e`): admission records `auth.invitation_accepted` on both paths with the capability-based actor (the setup path's gap closed); platform and business accounts kept apart both ways (admission and the replaced bootstrap, serialized on the identity row); `recordWithin` and the transitional list deleted with their last user; nothing tolerated by any guard list; the R27 nested-writer and rollback tests and the §7.4 separation tests and race pass. Gate passed locally (db 568, api 600). |

@@ -10,21 +10,23 @@ import type pg from 'pg';
 export const markerRequestId = (tag: string) => `t-${tag}-${randomBytes(6).toString('hex')}`;
 
 /**
- * Make every insert of (action, outcome) with this request id fail like a storage error (SQLSTATE XX000 — not the
- * catalog's refusal). Returns the cleanup, which drops the trigger and its function.
+ * Make every insert of (action, outcome) with this request id — and, if given, this target id — fail like a storage
+ * error (SQLSTATE XX000 — not the catalog's refusal). Returns the cleanup, which drops the trigger and its function.
  */
 export async function failAuditInsert(
   owner: pg.Client,
   action: string,
   outcome: string,
   requestId: string,
+  targetId?: string,
 ): Promise<() => Promise<void>> {
   const name = `test_fail_${randomBytes(6).toString('hex')}`;
   const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const target = targetId === undefined ? '' : ` AND NEW.target_id = ${quote(targetId)}`;
   await owner.query(
     `CREATE FUNCTION audit.${name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
      BEGIN
-       IF NEW.action = ${quote(action)} AND NEW.outcome = ${quote(outcome)} AND NEW.request_id = ${quote(requestId)} THEN
+       IF NEW.action = ${quote(action)} AND NEW.outcome = ${quote(outcome)} AND NEW.request_id = ${quote(requestId)}${target} THEN
          RAISE EXCEPTION 'injected audit storage failure' USING ERRCODE = 'XX000';
        END IF;
        RETURN NEW;

@@ -2231,6 +2231,47 @@ independent of the permission catalog); it is listed with them so it is complete
   step 3 (3)); (6) P4's "cannot switch row security off" test for branches and roles was removed — without a privilege
   the app's query fails before row security applies; the catalog guard still requires RLS and an app policy on those
   tables for any later grant.
+- **Progress — step 5 built 2026-10-14 (local, not CI).** Commits `383e749` (migration
+  `20261014000100_account_setup` and the API change), `efee310` (the nested-writer tests, R27), `6dc4a70` (admission
+  and account-separation tests), `d025f0e` (the admission-against-bootstrap race). **Admission records #14:**
+  `admit_invitation_locked` inserts one `auth.invitation_accepted` per membership it creates, on both paths, with the
+  capability-based actor of §8.1 — the invitation's identity (on the setup path the consumed token's identity, since
+  setup admits only that identity's invitations and admission refuses any other), no audience, the membership just
+  created, the invitation's business, the invitation as target, summary `{path, kind}` (the catalog's allowlist for the
+  pair, `{}` since P5.3a, gains the two fields) — and the request context as given (new trailing parameters of
+  `accept_invitation` and `complete_account_setup`, NULL by default; admission gains the path). The setup path's gap
+  is closed; the link path's row left the API. **Accounts apart both ways (CF3):** admission refuses an identity with
+  any platform membership (any role, any status) on both paths with the generic refusal; `bootstrap_super_admin` (same
+  signature) locks an existing identity `FOR NO KEY UPDATE` and refuses one with any merchant membership; the migration
+  refuses to run over an identity already in both audiences. **The transitional writer is gone:** its last pair moved
+  into the database, so `recordWithin` was removed from `AuditLog` and `TRANSITIONAL_PAIRS` deleted in the same commit
+  (judgement 1); the writer guard still finds the name and rejects any call. **The guards:** `TOLERATED`,
+  `TRANSACTIONS_TOLERATED` and `NESTED_WRITERS_TOLERATED` are empty — the bootstrap's footprint (`6:NKU`, `+6`,
+  `+1`) is met, acceptance classifies T1, and account setup reaches its one nested writer; the inventory names
+  `admit_invitation_locked` as #14's writer. **Tests:** `nested-writers.test.ts` (API, 5) — setup with no pending
+  invitation (#10 alone), one, and two of two businesses (one #14 per membership, each with the §8.1 actor); the second
+  #14 failing rolls back the password, the verification, both memberships, the first #14 and #10 (and the same link then
+  succeeds); #10 failing rolls back both #14 rows and both memberships (the R27 guard self-tests exist since step 1).
+  `admission.test.ts` (db, 16) — #14 on both paths with every field; another identity refused with nothing written; #14
+  failing to store rolls the admission back; the issue answer for a platform account equals any existing account's; a
+  super admin, a support member and a deactivated platform member refused by link with nothing written; a bootstrapped
+  super admin finishing setup through a business's invitation not admitted; the bootstrap refusing a business account
+  (also with a deactivated membership) and creating nothing, still taking a passwordless identity in no audience; the
+  migration's guard; no actor parameter. Race (§7.4): admission against the bootstrap of the same email, 50 staged runs
+  in both orders — the identity ends in exactly one audience, the one that reached it first; no deadlock. Changed:
+  the bootstrap CLI test's "existing password" case now uses an account in no audience, and a business account is
+  refused (23514) — the CLI already prints such database refusals. **Gate on `d025f0e`:** `format:check`, `lint`,
+  `typecheck`, `build`, `openapi:check` pass (`openapi/v1.json` unchanged); `pnpm test` — contracts 62, db 568,
+  api 600, all passing; 236 s wall. **Sabotage:** admission without the platform check (fails four admission tests
+  and the race), the bootstrap without the business check (two tests and the race), the bootstrap without its identity
+  lock (the lock-order guard and the race), admission recording the wrong target (the attribution test). **Judgement
+  calls:** (1) `recordWithin` and the transitional list were deleted in step 5, not step 7 — step 5 removed their last
+  user, and an empty list leaves a method whose argument type is `never`; step 7 now adds the R32 gate's tests (step
+  4's record said the pair would leave in step 7; it left in step 5); (2) the refusal of a platform account reuses the
+  outcome `identity_ineligible` — the link path's answer is the same generic error either way, and its best-effort
+  failure row records that reason; (3) the migration carries today's date (`20261014…`); (4) the bootstrap of a business
+  owner's email, which P3 allowed, is now refused — the owner's CF3 decision ("keep them apart both ways"), not a new
+  rule.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2624,6 +2665,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 45 | 2026-10-14 | **P5.5 step 5 built** (`383e749`, `efee310`, `6dc4a70`, `d025f0e`): admission records `auth.invitation_accepted` on both paths with the capability-based actor (the setup path's gap closed); platform and business accounts kept apart both ways (admission and the replaced bootstrap, serialized on the identity row); `recordWithin` and the transitional list deleted with their last user; nothing tolerated by any guard list; the R27 nested-writer and rollback tests and the §7.4 separation tests and race pass. Gate passed locally (db 568, api 600). |
 | 44 | 2026-10-13 | **P5.5 step 4 built** (`bb53c29`, `b555f1f`, `2591c5d`, `95214bf`): the enforcement boundary — five settings writers on their planned footprints writing their own audit rows, six read functions (B1's five and the self read `read_own_membership`), and the app's direct access to merchants, branches, roles and invitations revoked in the same migration; the mixed-version test (the 11 statements of `4319177`, each `insufficient_privilege`); races (b) staff half and (i) pass 50 staged runs each. Gate passed locally (db 551, api 598). |
 | 43 | 2026-10-13 | **P5.5 step 3 built** (`88eff08`, `50bcdc8`, `843c102`, `1302ec8`): authority from the resolver in the five privileged operations and `list_members`; each success writes its own audit row (pattern A; eight pairs off the transitional list); the SQL authority guard holds 22 data rules and tolerates nothing; the actor's own row is shown held; races (a), (b), (d), (f), (g), (j) pass 50 staged runs each. Gate passed locally (db 496, api 597). |
 | 42 | 2026-10-13 | **P5.5 step 2 built** (`8cdf7c6`): every FOR UPDATE is FOR NO KEY UPDATE; set_merchant_status, transfer_ownership, issue_invitation, verify_email, complete_account_setup and accept_invitation take their footprints; admission waits for nothing (`admit_invitation_locked`, L6). The §7.2 latent deadlock is confirmed — test (h) deadlocked on its first run against P4, none in 50 after. Guard: no L1, order or L3 finding left; six footprints tolerated until steps 3 and 5. Gate passed locally (db 477, api 597). |

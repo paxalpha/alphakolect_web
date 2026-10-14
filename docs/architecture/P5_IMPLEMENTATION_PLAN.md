@@ -1545,14 +1545,17 @@ refused every purge function and every write to those tables with `insufficient_
 ### 9.3 Gate per package (local)
 
 `pnpm format:check` · `pnpm lint` · `pnpm typecheck` · `pnpm build` · `pnpm --filter @alphakolect/contracts
-openapi:check` · `pnpm test` · CI-mode oasdiff 1.32.1 against `origin/main` (0 errors) · gitleaks staged scan per
+openapi:check` · `pnpm test` · `pnpm test:concurrency` (from P5.6; see below) · CI-mode oasdiff 1.32.1 against
+`origin/main` (0 errors) · gitleaks staged scan per
 commit and full history at closure. Results are recorded with the commit they ran on; local runs are never reported
 as CI. **Test budget ([Assumption], confirmed at the start of P5.5).** P4 hit out-of-memory failures in test setup
 (RESTRUCTURING_MAP, P4.8 incident), and P5 adds many two-connection suites repeated 50 times. If they do not fit
 `pnpm test` within the machine's memory and a reasonable time, they move to a separate script (`test:concurrency`)
 that is **part of the gate** for every package that touches locking — never skipped, never run with fewer repetitions
 without a recorded decision — and the change is noted in the package's evidence. **Confirmed 2026-10-13 at the start
-of P5.5** — measurements and the decision under P5.5 ("Test budget").
+of P5.5** — measurements and the decision under P5.5 ("Test budget"). **Applied at the P5.6 gate (2026-10-14):**
+`packages/db` passed five minutes (307 s), so the two-connection suites (`test/lock-races.test.ts`, 50 staged runs per
+race) run in `pnpm test:concurrency`, which every gate and CI run (P5.6, "Test budget applied").
 
 ### 9.4 Signals — what "metric" and "counted" mean in P5
 
@@ -2419,6 +2422,16 @@ independent of the permission catalog); it is listed with them so it is complete
   for reserved permissions, the authorization response and its tests updated; (2) the test-budget rule applied — the
   database package passed five minutes (307 s at this gate), so the two-connection suites move to `test:concurrency`,
   mandatory in the gate, still 50 runs each, with the split and its timings recorded.
+- **Test budget applied (the reviewer's item 2, 2026-10-14), `4e284ac`.** The rule of §9.3 was met — `packages/db`
+  took 307 s at the gate, past five minutes — so the two-connection suites moved to their own command, mandatory in
+  the gate: `pnpm test:concurrency` (root, and `packages/db` with `vitest.concurrency.config.ts`), run by CI right after
+  `pnpm test`. One list in `vitest.base.ts` (`test/lock-races.test.ts`: 13 races, 50 staged runs each) feeds both
+  configurations, so a suite is in exactly one run; `test-split.test.ts` checks the listed suites exist, `RUNS` is still
+  50, and the command is wired into the root scripts and CI. No repetition was reduced. **Timings** (local, one run at a
+  time, 0.5–0.8 GB free of 7.7 GB): `pnpm test` — db 604 tests in 116 s (from 307 s), contracts 64, API 690 passing,
+  347 s wall, but the run exited 1 on two Vitest worker RPC timeouts ("Timeout calling onTaskUpdate", no test failed);
+  `pnpm test:concurrency` — 13 tests, the races 139 s, 177 s wall. As §9.3 requires for a timeout, the API suite was
+  re-run on its own: a first re-run stalled for about two hours — two tests in parallel workers each took about 7,320 s — after which 15 tests failed on expired sessions (401) and timeouts and 119 were skipped; the database container stayed healthy and Windows recorded neither a clock jump nor a sleep, so its cause is not established; a second re-run passed — API 690 tests, 161 s wall, no errors.
 - **Built 2026-10-14 — awaiting review at the P5.6 gate.** Commits, in order: `63e1893` (the strengthened source
   guard — **the first P5.6 commit after the go, as the hard gate requires; no grant writer or endpoint precedes it**),
   `062b53a` (the bounded list rule), `b597345` (permission descriptions), `cfc1573` (the grant writer, the role reader
@@ -2832,6 +2845,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 54 | 2026-10-14 | **Test budget applied at the P5.6 gate** (`4e284ac`): the two-connection suites run in `pnpm test:concurrency`, part of every gate and of CI, still 50 runs per race; `packages/db` falls from 307 s to 116 s; the split and every re-run recorded under P5.6. The refusal wording waits for the owner's answers (R1–R4). |
 | 53 | 2026-10-14 | **P5.6 gate: not approved yet** (reviewer, §14). The bounded list rule, the source guard and the grant writer are accepted. Two items before closure: the refusal message for grantable permissions, put to the owner (`P5_OWNER_REFUSAL_MESSAGES.md`, R1–R4, the platform side included for P5.7); and the test-budget rule applied — the two-connection suites move to a mandatory `test:concurrency` command, 50 runs each. |
 | 52 | 2026-10-14 | **P5.6 built; awaiting review at its gate.** The strengthened source guard first (`63e1893`, the hard gate), then the bounded list rule, the owner-approved permission descriptions, `tenancy.set_role_permissions` with #21, `list_roles` with permissions, `GET /v1/merchant/permissions` and `PUT /v1/merchant/roles/{roleId}/permissions`; races (c) and (k) pass 50 staged runs each; the P5.5 staff-authority suites run on writer-set grants. Gate passed locally (db 614, api 690). |
 | 51 | 2026-10-14 | **Go for P5.6** (project lead, §14): it starts with the strengthened source guard, the hard gate; the permission lists of #21 use a new bounded list rule in the event catalog (finding 1, option (a)), judged by the reviewer at the P5.6 gate. |

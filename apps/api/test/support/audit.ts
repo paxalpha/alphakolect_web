@@ -6,6 +6,28 @@ import type pg from 'pg';
 // (action, outcome)"). The trigger also matches one request id, so test files running at the same time on the same
 // database are never affected.
 
+/**
+ * The pairs of P5.3a's transitional list (§10 P5.3a, `3add9ea`), written then by P4's code through recordWithin. P5.5
+ * moved each into its database function (steps 3–5) and deleted the list and the method; the transitional-writer gate
+ * (R32) keeps proving that with this record of what the list held.
+ */
+export const FORMER_TRANSITIONAL_PAIRS = [
+  'auth.invitation_accepted/success',
+  'merchant.profile_updated/success',
+  'merchant.branch_created/success',
+  'merchant.branch_updated/success',
+  'merchant.role_created/success',
+  'merchant.role_updated/success',
+  'merchant.member_assigned/success',
+  'merchant.member_deactivated/success',
+  'merchant.member_reactivated/success',
+  'merchant.invitation_issued/success',
+  'merchant.invitation_revoked/success',
+  'platform.merchant_deactivated/success',
+  'platform.merchant_reactivated/success',
+  'platform.ownership_transferred/success',
+] as const;
+
 /** A request id no other test uses (the API accepts a well-formed X-Request-ID until P5.8). */
 export const markerRequestId = (tag: string) => `t-${tag}-${randomBytes(6).toString('hex')}`;
 

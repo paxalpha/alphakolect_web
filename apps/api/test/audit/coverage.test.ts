@@ -9,7 +9,7 @@ import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { totpCode, totpStep } from '../../src/modules/identity/totp.js';
 import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app.js';
 import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
-import { auditRows, failAuditInsert, markerRequestId } from '../support/audit.js';
+import { auditRows, FORMER_TRANSITIONAL_PAIRS, failAuditInsert, markerRequestId } from '../support/audit.js';
 import { TEST_PASSWORD, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The coverage guard's per-pair tests (P5.3a; P5 plan §8.1): for every atomic pair the API writes, one real request
@@ -871,6 +871,10 @@ const DATABASE_COVERED = [
 ];
 
 describe('the coverage guard: every atomic pair has its two tests', () => {
+  it('R32 (4): every pair of the former transitional list has its co-commit and injected-rollback tests here', () => {
+    expect(FORMER_TRANSITIONAL_PAIRS.filter((pair) => !COVERED_PAIRS.includes(pair))).toEqual([]);
+  });
+
   it('this file covers every atomic pair the API writes, and packages/db the operator ones', () => {
     const atomic = AUDIT_CATALOG.filter((e) => e.class === 'atomic').map(
       (e) => `${e.identifier}/${e.outcome}`,

@@ -5,8 +5,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
-import type { AuditLog } from '../../src/modules/audit/audit-log.js';
+import { AuditLog } from '../../src/modules/audit/audit-log.js';
+import * as catalogModule from '../../src/modules/audit/catalog.js';
 import { AUDIT_CATALOG, catalogEntry } from '../../src/modules/audit/catalog.js';
+import { FORMER_TRANSITIONAL_PAIRS } from '../support/audit.js';
 
 // The writer guard and the coverage guard (P5.3a; P5 plan §8.1). Every audit writer in the code is found — TypeScript
 // call sites of the three entry points, resolved through the compiler to the exact (identifier, outcome) pairs they
@@ -146,6 +148,43 @@ const ENTRY_POINTS = ['mutateAudited', 'recordBestEffort', 'recordWithin'] as co
 type EntryPoint = (typeof ENTRY_POINTS)[number];
 
 type Site = { writer: EntryPoint | 'sql'; where: string; file: string; pairs: string[] | null };
+
+/** The coverage guard's count: every writer of each atomic pair (used by the real guard and the R32 mutation). */
+function writersByPair(sites: Site[]): Record<string, string[]> {
+  const writersOf = new Map<string, Set<string>>();
+  for (const site of sites) {
+    for (const pair of site.pairs ?? []) {
+      if (catalogEntry(...(pair.split('/') as [string, string]))?.class !== 'atomic') continue;
+      const writer = site.writer === 'sql' ? site.where : site.where.split(' ')[1]!;
+      writersOf.set(pair, (writersOf.get(pair) ?? new Set()).add(writer));
+    }
+  }
+  return Object.fromEntries([...writersOf].map(([pair, w]) => [pair, [...w]]));
+}
+const designatedWriters = () =>
+  Object.fromEntries(
+    Object.entries(INVENTORY)
+      .filter(([, e]) => e.class === 'atomic')
+      .map(([pair, e]) => [pair, [e.writer]]),
+  );
+
+/** Every TypeScript source under apps/api/src, with its text. */
+function sources(): { file: string; text: string }[] {
+  const out: { file: string; text: string }[] = [];
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts'))
+        out.push({
+          file: path.relative(apiRoot, full).replace(/\\/g, '/'),
+          text: readFileSync(full, 'utf8'),
+        });
+    }
+  };
+  walk(path.join(apiRoot, 'src'));
+  return out;
+}
 
 /** The one place that decides whether a writer may write its pairs (used by the real guard and its mutation tests). */
 function problemsOf(site: Site): string[] {
@@ -349,19 +388,53 @@ describe('the writer guard', () => {
     });
 
     it('every atomic pair has exactly one writer, the one the inventory names', () => {
-      const writersOf = new Map<string, Set<string>>();
-      for (const site of sites) {
-        for (const pair of site.pairs ?? []) {
-          if (catalogEntry(...(pair.split('/') as [string, string]))?.class !== 'atomic') continue;
-          const writer = site.writer === 'sql' ? site.where : site.where.split(' ')[1]!;
-          writersOf.set(pair, (writersOf.get(pair) ?? new Set()).add(writer));
-        }
-      }
-      const atomic = Object.entries(INVENTORY).filter(([, e]) => e.class === 'atomic');
-      expect(Object.fromEntries([...writersOf].map(([pair, w]) => [pair, [...w]]))).toEqual(
-        Object.fromEntries(atomic.map(([pair, e]) => [pair, [e.writer]])),
-      );
+      expect(writersByPair(sites)).toEqual(designatedWriters());
     });
+  });
+
+  // P5 plan §10 P5.5 "Done when": the transitional-writer gate (R32), each item shown by a test.
+  describe('the transitional-writer gate (R32)', () => {
+    it('(1) the transitional list is empty and deleted: the catalog exports none, and no source names one', () => {
+      expect(Object.keys(catalogModule).filter((k) => /TRANSITIONAL/i.test(k))).toEqual([]);
+      const offenders = sources().filter(({ text }) =>
+        /\bTRANSITIONAL_PAIRS\b|\bTransitionalPair\b/.test(text),
+      );
+      expect(offenders.map((f) => f.file)).toEqual([]);
+    });
+
+    it('(2) no recordWithin call remains in apps/api/src, and the method is gone from AuditLog', () => {
+      expect('recordWithin' in AuditLog.prototype).toBe(false);
+      expect(sites.filter((site) => site.writer === 'recordWithin')).toEqual([]);
+      const calls = sources().filter(({ text }) => /\.recordWithin\s*\(/.test(text));
+      expect(calls.map((f) => f.file)).toEqual([]);
+    });
+
+    it.each(FORMER_TRANSITIONAL_PAIRS)(
+      '(3) a recordWithin call re-added for %s fails the writer guard and the coverage guard',
+      (pair) => {
+        const readded: Site = {
+          writer: 'recordWithin',
+          file: 'src/modules/tenancy/invitations.ts',
+          where: 'src/modules/tenancy/invitations.ts InvitationService.mutation',
+          pairs: [pair],
+        };
+        expect(problemsOf(readded)).toHaveLength(1);
+        const counted = writersByPair([...sites, readded]);
+        expect(counted[pair]).toHaveLength(2);
+        expect(counted).not.toEqual(designatedWriters());
+      },
+    );
+
+    it.each(FORMER_TRANSITIONAL_PAIRS)(
+      '(4) %s has exactly one designated pattern-A writer: its database function',
+      (pair) => {
+        const designated = INVENTORY[pair];
+        expect(designated).toMatchObject({ class: 'atomic', pattern: 'A' });
+        expect(designated!.writer).toMatch(/^[a-z]+\.[a-z_]+$/);
+        expect(writersByPair(sites)[pair]).toEqual([designated!.writer]);
+        // Its co-commit and injected-rollback tests: coverage.test.ts (the R32 check there).
+      },
+    );
   });
 
   // §8.1 writer-guard mutation tests.

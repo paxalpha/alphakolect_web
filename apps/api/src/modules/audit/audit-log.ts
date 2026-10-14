@@ -1,13 +1,6 @@
 import type { Logger } from 'pino';
 import type { Db, Queryable } from '../../platform/db.js';
-import {
-  catalogEntry,
-  hasBestEffortPair,
-  TRANSITIONAL_PAIRS,
-  type BestEffortPair,
-  type PatternBPair,
-  type TransitionalPair,
-} from './catalog.js';
+import { catalogEntry, hasBestEffortPair, type BestEffortPair, type PatternBPair } from './catalog.js';
 
 // Append-only audit events (TARGET_ARCHITECTURE §16, BR-11.4; ADR-16 §3.5 "Audit (Part 1)"): who did what, when, with
 // what outcome. `summary` never contains secrets — identifiers and outcomes only; the database refuses any field its
@@ -18,9 +11,9 @@ import {
 //                              together or not at all (identity flows, §8.4)
 //   recordBestEffort(event)    best effort — its own transaction: a failure never changes the response, it is logged
 //                              as a §9.4 signal
-//   recordWithin(tx, event)    transitional only — P4's tenancy and platform pattern-A pairs until their definer
-//                              functions write them (P5.5); the closed list is TRANSITIONAL_PAIRS
-// Sensitive reads have no TypeScript writer at all (database-owned, §8.2a rule 7).
+// Pattern-A pairs (tenancy, platform and invitation acceptance) are written only by their database functions, and
+// sensitive reads have no TypeScript writer at all (§8.1, §8.2a rule 7). P5.3a's transitional writer for P4's
+// pattern-A pairs, recordWithin, was removed at P5.5 when its last pair moved into a function (R32).
 //
 // audit.audit_events is protected by row-level security (P1): the app may insert tenant-less events, or events of the
 // tenant set in the transaction, so a tenant event is written in a transaction that sets app.merchant_id to that
@@ -49,8 +42,6 @@ export type AuditSignal = 'audit_write_failure' | 'audit_validation_failure' | '
 export class AuditUsageError extends Error {
   override name = 'AuditUsageError';
 }
-
-const TRANSITIONAL: ReadonlySet<string> = new Set(TRANSITIONAL_PAIRS);
 
 /** The catalog trigger's refusal (P5.3a migration): check_violation named audit_event_catalog. */
 const isCatalogRefusal = (err: unknown) =>
@@ -91,20 +82,6 @@ export class AuditLog {
   async mutateAudited(tx: Queryable, event: AuditContext & PatternBPair): Promise<void> {
     requireClass(event, 'mutateAudited', (cls, pattern) => cls === 'atomic' && pattern === 'B');
     await scopeTo(tx, event.merchantId ?? null);
-    await insert(tx, event);
-  }
-
-  /**
-   * Transitional (§10 P5.3a, until P5.5): one of P4's pattern-A pairs, written by P4's code in the change's own
-   * transaction. Atomic like mutateAudited; accepted only for the pairs of TRANSITIONAL_PAIRS.
-   */
-  async recordWithin(tx: Queryable, event: AuditContext & TransitionalPair): Promise<void> {
-    requireClass(event, 'recordWithin', (cls, pattern) => cls === 'atomic' && pattern === 'A');
-    if (!TRANSITIONAL.has(`${event.action}/${event.outcome}`)) {
-      throw new AuditUsageError(
-        `recordWithin does not write ${event.action}/${event.outcome} (not transitional)`,
-      );
-    }
     await insert(tx, event);
   }
 

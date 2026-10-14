@@ -613,7 +613,7 @@ const CASES: Case[] = [
       };
     },
   },
-  // ── pattern A, on the transitional list until P5.5 ────────────────────────────────────────────
+  // ── pattern A, written by admission (P5.5 step 5); the setup path: nested-writers.test.ts ──────────
   {
     pair: 'auth.invitation_accepted/success',
     status: 204,

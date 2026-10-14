@@ -112,8 +112,10 @@ export class PasswordService {
 
   /** First password through the setup link; also verifies the email (D9, option A). */
   async completeSetup(input: SetPasswordRequest, ctx: RequestContext): Promise<void> {
+    // The admissions inside record their own acceptances (#14, pattern A) in this transaction: the one nested
+    // pattern-A writer of a pattern-B flow (P5 plan §7.2 R27).
     await this.useLink(input, ctx, 'auth.account_setup', (repo, tokenHash, passwordHash) =>
-      repo.completeAccountSetup(tokenHash, passwordHash),
+      repo.completeAccountSetup(tokenHash, passwordHash, ctx),
     );
   }
 

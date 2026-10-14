@@ -5,7 +5,7 @@ import { pinoHttp } from 'pino-http';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { AuditLog, AuditUsageError, type AuditContext } from '../../src/modules/audit/audit-log.js';
-import { AUDIT_CATALOG, TRANSITIONAL_PAIRS } from '../../src/modules/audit/catalog.js';
+import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
 import { createDb } from '../../src/platform/db.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
 import { resolveRequestId } from '../../src/platform/http/request-id.js';
@@ -44,13 +44,6 @@ describe('the TypeScript mirror', () => {
       AUDIT_CATALOG.map((e) => [key(e), { ...e, summary: { ...e.summary } }]),
     );
     expect(mirror).toEqual(table);
-  });
-
-  it('lists only atomic pattern-A pairs as transitional', () => {
-    for (const pair of TRANSITIONAL_PAIRS) {
-      const entry = AUDIT_CATALOG.find((e) => `${e.identifier}/${e.outcome}` === pair);
-      expect(entry, pair).toMatchObject({ class: 'atomic', pattern: 'A' });
-    }
   });
 });
 
@@ -202,23 +195,6 @@ describe('recordBestEffort — best effort: programming errors throw, data and s
       ]);
     },
   );
-});
-
-describe('recordWithin — the closed transitional list only', () => {
-  it.each([
-    ['a pattern-B pair', { action: 'auth.signup', outcome: 'success' }],
-    [
-      'a pattern-A pair that is not transitional',
-      { action: 'platform.super_admin_bootstrapped', outcome: 'success' },
-    ],
-    ['a best-effort pair', { action: 'merchant.profile_updated', outcome: 'denied' }],
-  ])('refuses %s', async (_label, pair) => {
-    const requestId = markerRequestId('within');
-    await expect(
-      db.transaction((tx) => audit.recordWithin(tx, loose({ ...pair, requestId }))),
-    ).rejects.toBeInstanceOf(AuditUsageError);
-    expect(await auditRows(owner, requestId)).toEqual([]);
-  });
 });
 
 describe('the HTTP status of the request in hand', () => {

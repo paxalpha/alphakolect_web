@@ -44,7 +44,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.account_for_email(text)': APP,
   'identity.begin_totp_enrollment(uuid, bytea, text)': APP,
   'identity.change_password(uuid, text)': APP,
-  'identity.complete_account_setup(text, text)': APP,
+  'identity.complete_account_setup(text, text, text, text, text)': APP,
   'identity.confirm_totp_enrollment(uuid, bigint, text[])': APP,
   'identity.consume_mfa_challenge(text)': APP,
   'identity.consume_recovery_code(uuid, text)': APP,
@@ -81,7 +81,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.lock_one_time_tokens(uuid[], uuid[])': OWNER_ONLY,
   'identity.lock_platform_memberships(uuid[], uuid[])': OWNER_ONLY,
   // tenancy
-  'tenancy.accept_invitation(text, uuid)': APP,
+  'tenancy.accept_invitation(text, uuid, text, text, text)': APP,
   'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer, text, text, text)': APP,
   'tenancy.list_members(uuid, uuid)': APP,
   'tenancy.revoke_invitation(uuid, uuid, text, text, text)': APP,
@@ -100,7 +100,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.update_branch(uuid, uuid, text, text, text, text, text)': APP,
   'tenancy.update_profile(uuid, text, text, text, text)': APP,
   'tenancy.update_role(uuid, uuid, text, text, text, text, text)': APP,
-  'tenancy.admit_invitation_locked(uuid, uuid)': OWNER_ONLY, // P5.5 step 2: admission waits for nothing (L6)
+  'tenancy.admit_invitation_locked(uuid, uuid, text, text, text, text)': OWNER_ONLY, // P5.5 step 2: waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
   'tenancy.lock_branches(uuid[], uuid[])': OWNER_ONLY,

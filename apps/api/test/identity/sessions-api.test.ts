@@ -52,7 +52,11 @@ async function superAdmin({ totp }: { totp: boolean }) {
   } = await owner.query(`SELECT identity.bootstrap_super_admin($1, true) AS id`, [email]);
   const setup = newOpaqueToken();
   await repo.issueOneTimeToken(id, 'account_setup', setup.hash, 86400, null);
-  await repo.completeAccountSetup(setup.hash, await hashPassword(PASSWORD));
+  await repo.completeAccountSetup(setup.hash, await hashPassword(PASSWORD), {
+    ip: '203.0.113.1',
+    userAgent: null,
+    requestId: 'test-setup',
+  });
   if (totp) {
     await repo.beginTotpEnrollment(id, randomBytes(60), 'test');
     await repo.confirmTotpEnrollment(

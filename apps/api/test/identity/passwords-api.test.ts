@@ -280,7 +280,11 @@ describe('change (D5, exit criterion 6)', () => {
     } = await owner.query(`SELECT identity.bootstrap_super_admin($1, true) AS id`, [address]);
     const t = newOpaqueToken();
     await repo.issueOneTimeToken(id, 'account_setup', t.hash, 3600, null);
-    await repo.completeAccountSetup(t.hash, await hashPassword(PASSWORD));
+    await repo.completeAccountSetup(t.hash, await hashPassword(PASSWORD), {
+      ip: '203.0.113.1',
+      userAgent: null,
+      requestId: 'test-setup',
+    });
     const enrolling = jarOf(await login(address, PASSWORD, 'platform'));
     const res = await change(enrolling, { currentPassword: PASSWORD, newPassword: NEW_PASSWORD });
     expect(res.status).toBe(403);

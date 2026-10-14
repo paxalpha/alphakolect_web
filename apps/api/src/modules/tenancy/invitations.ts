@@ -50,7 +50,7 @@ const invalidInvitation = () =>
 export type InvitationDeps = {
   db: Db;
   identity: IdentityRepository;
-  audit: Pick<AuditLog, 'recordBestEffort' | 'recordWithin'>;
+  audit: Pick<AuditLog, 'recordBestEffort'>;
   limiter: RateLimiter;
   mailer: Pick<Mailer, 'dispatch'>;
   webAppUrl: string;
@@ -176,31 +176,14 @@ export class InvitationService {
     if (!candidate || !passwordOk) throw await fail(candidate ? 'wrong_password' : 'unknown_account');
     if (!tokenHash) throw await fail('malformed_token');
 
-    // The admission and its event commit together (P5.3a: #14 on the link path was written in a separate
-    // transaction after the admission — now atomic, on the transitional list until P5.5's pattern-A function).
+    // The database admits and records the acceptance (#14) together (pattern A, P5.5): the actor is the invitation's
+    // identity, never this request's claim of one; the request context is recorded as given.
     const outcome = await db.transaction(async (tx) => {
-      const [result] = await tx.query<{
-        outcome: string;
-        membership_id: string | null;
-        merchant_id: string | null;
-        invitation_id: string | null;
-      }>(`SELECT outcome, membership_id, merchant_id, invitation_id FROM tenancy.accept_invitation($1, $2)`, [
-        tokenHash,
-        candidate.identity_id,
-      ]);
-      if (result!.outcome !== 'ok') return result!.outcome;
-      // A tenant event: written in the business just joined (the activity record is tenant-scoped by RLS).
-      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [result!.merchant_id]);
-      await audit.recordWithin(tx, {
-        ...event,
-        merchantId: result!.merchant_id,
-        actorMembershipId: result!.membership_id,
-        targetType: 'invitation',
-        targetId: result!.invitation_id,
-        outcome: 'success',
-        summary: {},
-      });
-      return 'ok';
+      const [result] = await tx.query<{ outcome: string }>(
+        `SELECT outcome FROM tenancy.accept_invitation($1, $2, $3, $4, $5)`,
+        [tokenHash, candidate.identity_id, ctx.ip, ctx.userAgent, ctx.requestId],
+      );
+      return result!.outcome;
     });
     if (outcome !== 'ok') throw await fail(outcome);
   }

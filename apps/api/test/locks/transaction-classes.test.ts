@@ -123,9 +123,10 @@ describe('report mode (R34, R17): every repository transaction matches exactly o
     expect(byClass('T2')).toEqual(
       expect.arrayContaining(['PasswordService.completeSetup', 'SessionService.refresh']),
     );
-    // P5.5 steps 3 and 4: the privileged functions write their own audit rows; their transactions are one operation
-    // each (the branch-or-role writes: one of a constant map's two functions).
+    // P5.5 steps 3–5: the privileged functions write their own audit rows; their transactions are one operation each
+    // (the branch-or-role writes: one of a constant map's two functions; acceptance: admission records #14).
     expect(byClass('T1')).toEqual([
+      'InvitationService.accept',
       'InvitationService.create',
       'InvitationService.revoke',
       'MembershipService.change',

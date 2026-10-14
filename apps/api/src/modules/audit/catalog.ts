@@ -63,7 +63,10 @@ export const AUDIT_CATALOG = [
   atomicB('auth.mfa_enrollment_confirmed', 'success', {}),
   atomicB('auth.mfa_verify', 'success', { method: { type: 'string', max: 32 } }),
   // atomic, pattern A — database-owned (the tenancy and platform ones are transitional until P5.5)
-  atomicA('auth.invitation_accepted', {}),
+  atomicA('auth.invitation_accepted', {
+    path: { type: 'string', max: 32 },
+    kind,
+  }),
   atomicA('platform.super_admin_bootstrapped', { additional: flag }),
   atomicA('merchant.profile_updated', { name }),
   atomicA('merchant.branch_created', { name }),
@@ -145,22 +148,6 @@ type PairOf<E> = E extends { identifier: infer I; outcome: infer O } ? { action:
 export type PatternBPair = PairOf<Extract<Entries, { class: 'atomic'; pattern: 'B' }>>;
 /** Pairs written by recordBestEffort, in their own transaction. */
 export type BestEffortPair = PairOf<Extract<Entries, { class: 'best_effort' }>>;
-
-/**
- * P5.3a's closed transitional list (§10 P5.3a): P4's tenancy and platform pattern-A pairs, still written by P4's code
- * with recordWithin(tx) in the change's own transaction until their definer functions write them (P5.5). P5.5 empties
- * this list and deletes it; nothing else may use recordWithin.
- */
-export const TRANSITIONAL_PAIRS = [
-  'auth.invitation_accepted/success',
-  // P5.5 step 3: the member, invitation, lifecycle and transfer successes are written by their functions (pattern A);
-  // step 4: the profile, branch and role successes too.
-] as const;
-type IdentifierOf<K> = K extends `${infer I}/success` ? I : never;
-export type TransitionalPair = Extract<
-  PairOf<Extract<Entries, { class: 'atomic'; pattern: 'A' }>>,
-  { action: IdentifierOf<(typeof TRANSITIONAL_PAIRS)[number]> }
->;
 
 const BY_PAIR: ReadonlyMap<string, CatalogEntry> = new Map(
   AUDIT_CATALOG.map((e) => [`${e.identifier}/${e.outcome}`, e]),

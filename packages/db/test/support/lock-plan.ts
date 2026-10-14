@@ -30,7 +30,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.accept_invitation': {
     class: 'operation',
     planned: ['2:S', '4:NKU', '6:S', '7:S', '8:S', '+3'],
-    writes: ['tenancy.merchant_memberships', 'tenancy.invitations'],
+    writes: ['tenancy.merchant_memberships', 'tenancy.invitations', 'audit.audit_events'],
   },
   'identity.complete_account_setup': {
     class: 'operation',
@@ -41,6 +41,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
       'identity.sessions',
       'tenancy.merchant_memberships',
       'tenancy.invitations',
+      'audit.audit_events',
     ],
   },
   'tenancy.set_merchant_status': {
@@ -87,10 +88,11 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['6:NKU', '+6', '+1'],
     writes: ['identity.identities', 'identity.platform_memberships', 'audit.audit_events'],
   },
-  // admission, inside accept_invitation and complete_account_setup: waits for nothing (L6, P5.5 step 2)
+  // admission, inside accept_invitation and complete_account_setup: waits for nothing (L6, P5.5 step 2); records
+  // each acceptance (#14, pattern A, P5.5 step 5)
   'tenancy.admit_invitation_locked': {
     class: 'locked',
-    writes: ['tenancy.merchant_memberships', 'tenancy.invitations'],
+    writes: ['tenancy.merchant_memberships', 'tenancy.invitations', 'audit.audit_events'],
   },
 
   // ── identity flows of the table: the categories each may wait for ──
@@ -254,10 +256,7 @@ export const BASELINE: readonly string[] = [
  * no longer occurs fails until it is deleted here in the same commit — the list only shrinks. P5.5 cannot close
  * until it is empty and the tolerance mechanism is deleted.
  */
-export const TOLERATED: readonly string[] = [
-  // the identity lock and the account separation: step 5
-  'footprint identity.bootstrap_super_admin',
-];
+export const TOLERATED: readonly string[] = [];
 
 /**
  * The nested-writer table (R27): the one T2 flow allowed to reach pattern-A audit inserts inside its definer call.
@@ -278,15 +277,10 @@ export const NESTED_WRITERS: readonly { flow: string; fn: string; pair: string }
  * the settings writes (direct writes, step 4) and the member, invitation, lifecycle and transfer flows (written with
  * recordWithin until their functions write their own audit rows, steps 3 and 7). The list only shrinks.
  */
-export const TRANSACTIONS_TOLERATED: readonly string[] = [
-  // the settings writes classify T1 since step 4; acceptance still writes with recordWithin (step 7)
-  'InvitationService.accept',
-];
+export const TRANSACTIONS_TOLERATED: readonly string[] = [];
 
 /** Nested-writer entries whose function does not exist yet (step 5 creates tenancy.admit_invitation_locked). */
-export const NESTED_WRITERS_TOLERATED: readonly string[] = [
-  'PasswordService.completeSetup → tenancy.admit_invitation_locked',
-];
+export const NESTED_WRITERS_TOLERATED: readonly string[] = [];
 
 /**
  * The classes the baseline reconciliation was made under (the P4 definitions at 5d8904b, the plan's rows as at

@@ -21,9 +21,7 @@ const TENANT_SELF_SCOPING = ['modules/audit/audit-log.ts'];
 const SETS_TENANT = [
   'platform/tenant.ts', // withTenant
   'modules/audit/audit-log.ts', // a tenant event recorded on its own
-  // Capability flow without a tenant session: the invitation-link acceptance's audit row, in the business just joined,
-  // committed with the admission (P5.3a — atomic until P5.5's pattern-A function writes it in the database).
-  'modules/tenancy/invitations.ts',
+  // (P5.5 step 5: the invitation-link acceptance no longer sets it — admission records #14 in the database.)
 ];
 
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
@@ -92,7 +90,7 @@ describe('tenant data only through scoped repositories (T14)', () => {
     }
   });
 
-  it('only withTenant, the audit log and the lifecycle service set app.merchant_id', () => {
+  it('only withTenant and the audit log set app.merchant_id', () => {
     const setters = files.filter(({ text }) => text.includes(`'app.merchant_id'`)).map((f) => f.file);
     expect(setters.sort()).toEqual([...SETS_TENANT].sort());
   });

@@ -102,11 +102,18 @@ export class IdentityRepository {
     return row?.id ?? null;
   }
 
-  /** First password through the setup link; also verifies the email (it was sent there). */
-  async completeAccountSetup(tokenHash: string, passwordHash: string): Promise<string | null> {
+  /**
+   * First password through the setup link; also verifies the email (it was sent there) and admits the person's
+   * pending invitations, each recording its own acceptance (#14) with the request context as given (P5.5).
+   */
+  async completeAccountSetup(
+    tokenHash: string,
+    passwordHash: string,
+    ctx: { ip: string; userAgent: string | null; requestId: string },
+  ): Promise<string | null> {
     const [row] = await this.db.query<{ id: string | null }>(
-      `SELECT identity.complete_account_setup($1, $2) AS id`,
-      [tokenHash, passwordHash],
+      `SELECT identity.complete_account_setup($1, $2, $3, $4, $5) AS id`,
+      [tokenHash, passwordHash, ctx.ip, ctx.userAgent, ctx.requestId],
     );
     return row?.id ?? null;
   }

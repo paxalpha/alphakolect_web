@@ -6,13 +6,14 @@ import pg from 'pg';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import type { AuditLog } from '../../src/modules/audit/audit-log.js';
-import { AUDIT_CATALOG, catalogEntry, TRANSITIONAL_PAIRS } from '../../src/modules/audit/catalog.js';
+import { AUDIT_CATALOG, catalogEntry } from '../../src/modules/audit/catalog.js';
 
 // The writer guard and the coverage guard (P5.3a; P5 plan §8.1). Every audit writer in the code is found — TypeScript
 // call sites of the three entry points, resolved through the compiler to the exact (identifier, outcome) pairs they
 // can write, and SQL inserts into the activity record, resolved by their literals — and each is accepted only if the
 // pair's class and writer pattern match the writer: mutateAudited only pattern-B atomic pairs, recordBestEffort only
-// best-effort pairs, recordWithin only the transitional list (at its listed files), SQL only pattern-A atomic pairs.
+// best-effort pairs, SQL only pattern-A atomic pairs. recordWithin, P5.3a's transitional writer, was removed at P5.5
+// (R32): the guard still looks for it, and any call is rejected.
 // The coverage guard then compares the catalog with the plan's inventory in both directions and requires exactly one
 // writer per atomic pair; coverage.test.ts proves each atomic pair commits with its change and rolls back with it.
 
@@ -47,7 +48,11 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
     writer: 'MfaService.confirmEnrollment',
   },
   'auth.mfa_verify/success': { class: 'atomic', pattern: 'B', writer: 'MfaService.verifyChallenge' },
-  'auth.invitation_accepted/success': { class: 'atomic', pattern: 'A', writer: 'InvitationService.accept' },
+  'auth.invitation_accepted/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'tenancy.admit_invitation_locked',
+  },
   'platform.super_admin_bootstrapped/success': {
     class: 'atomic',
     pattern: 'A',
@@ -134,8 +139,6 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
 
 const ENTRY_POINTS = ['mutateAudited', 'recordBestEffort', 'recordWithin'] as const;
 type EntryPoint = (typeof ENTRY_POINTS)[number];
-/** Where the transitional writers live (§10 P5.3a); P5.5 empties the list. */
-const TRANSITIONAL_FILES = ['src/modules/tenancy/invitations.ts'];
 
 type Site = { writer: EntryPoint | 'sql'; where: string; file: string; pairs: string[] | null };
 
@@ -152,13 +155,8 @@ function problemsOf(site: Site): string[] {
         : site.writer === 'recordBestEffort'
           ? entry?.class === 'best_effort'
           : site.writer === 'recordWithin'
-            ? entry?.class === 'atomic' &&
-              entry.pattern === 'A' &&
-              (TRANSITIONAL_PAIRS as readonly string[]).includes(pair) &&
-              TRANSITIONAL_FILES.includes(site.file)
-            : entry?.class === 'atomic' &&
-              entry.pattern === 'A' &&
-              !(TRANSITIONAL_PAIRS as readonly string[]).includes(pair);
+            ? false
+            : entry?.class === 'atomic' && entry.pattern === 'A';
     return accepted ? [] : [`${site.where}: ${site.writer} may not write ${pair}`];
   });
 }
@@ -295,7 +293,7 @@ describe('the writer guard', () => {
 
   it('finds the writers (sanity: the guard is looking at the real code)', () => {
     const writers = new Set(sites.map((s) => s.writer));
-    expect(writers).toEqual(new Set(['mutateAudited', 'recordBestEffort', 'recordWithin', 'sql']));
+    expect(writers).toEqual(new Set(['mutateAudited', 'recordBestEffort', 'sql']));
     expect(sites.length).toBeGreaterThan(40);
   });
 

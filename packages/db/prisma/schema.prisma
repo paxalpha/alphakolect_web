@@ -532,6 +532,19 @@ model RateLimitCounter {
   @@schema("util")
 }
 
+/// The containment switch (P5 plan §11.1, P5.5): exactly one row (the CHECK on id lives in SQL). While a flag is set,
+/// the resolver and every write-time re-check ignore grant rows of that kind. Changed only by the operator function
+/// util.set_authorization_containment, which records #39; no app or reporting grant.
+model AuthorizationContainment {
+  id                      Boolean  @id @default(true)
+  merchantGrantsSuspended Boolean  @default(false) @map("merchant_grants_suspended")
+  platformGrantsSuspended Boolean  @default(false) @map("platform_grants_suspended")
+  updatedAt               DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@map("authorization_containment")
+  @@schema("util")
+}
+
 /// P4.6 (ADR-15 T10, T11): an invitation until accepted — no membership exists before. Single use, expiring,
 /// revocable; the token is stored hashed and the app cannot read it. Written only by SECURITY DEFINER functions.
 /// Partial unique index (one open invitation per business and email) and CHECKs live in SQL.

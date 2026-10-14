@@ -58,6 +58,11 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
     pattern: 'A',
     writer: 'identity.bootstrap_super_admin',
   },
+  'platform.authorization_containment_set/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'util.set_authorization_containment',
+  },
   'merchant.profile_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_profile' },
   'merchant.branch_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_branch' },
   'merchant.branch_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_branch' },

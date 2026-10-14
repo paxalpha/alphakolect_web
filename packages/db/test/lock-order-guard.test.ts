@@ -99,6 +99,8 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
       'tenancy.merchant_memberships(merchant_id) partial',
       'tenancy.merchant_memberships(merchant_id, identity_id)',
       'tenancy.roles(merchant_id, <expr>) partial',
+      // P5.5 step 6: the containment switch's one-row key (updated only, never inserted by a function)
+      'util.authorization_containment(id)',
       'util.rate_limit_counters(key, window_start)',
     ]);
   });

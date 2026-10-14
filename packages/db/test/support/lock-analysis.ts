@@ -21,6 +21,8 @@ import type pg from 'pg';
 /** The global category order (§7.2 "Categories (global order)"). */
 export const CATEGORY: Readonly<Record<string, number>> = {
   'audit.purge_reservation': 0,
+  // the containment switch's one row (§11.1): operator-only, like the purge reservation; no request path locks it
+  'util.authorization_containment': 0,
   'identity.platform_memberships': 1,
   'tenancy.merchants': 2,
   'tenancy.merchant_memberships': 3,

@@ -82,6 +82,12 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:S+NKU'],
     writes: ['tenancy.roles', 'audit.audit_events'],
   },
+  // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
+  'util.set_authorization_containment': {
+    class: 'operation',
+    planned: ['0:NKU'],
+    writes: ['util.authorization_containment', 'audit.audit_events'],
+  },
   // operator only (§7.4, rev 14)
   'identity.bootstrap_super_admin': {
     class: 'operation',

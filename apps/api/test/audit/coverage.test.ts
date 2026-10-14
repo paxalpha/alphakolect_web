@@ -865,7 +865,10 @@ const CASES: Case[] = [
 /** The atomic pairs this file covers. */
 const COVERED_PAIRS = [...new Set(CASES.map((c) => c.pair))];
 /** Atomic pairs written in SQL outside any API route (operator functions): their tagged tests are in packages/db. */
-const DATABASE_COVERED = ['platform.super_admin_bootstrapped/success'];
+const DATABASE_COVERED = [
+  'platform.super_admin_bootstrapped/success',
+  'platform.authorization_containment_set/success', // P5.5 step 6: containment.test.ts (db)
+];
 
 describe('the coverage guard: every atomic pair has its two tests', () => {
   it('this file covers every atomic pair the API writes, and packages/db the operator ones', () => {

@@ -49,6 +49,7 @@ const TABLES = [
   'tenancy.merchants',
   'tenancy.role_permissions',
   'tenancy.roles',
+  'util.authorization_containment',
   'util.rate_limit_counters',
 ];
 

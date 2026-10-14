@@ -68,6 +68,11 @@ export const AUDIT_CATALOG = [
     kind,
   }),
   atomicA('platform.super_admin_bootstrapped', { additional: flag }),
+  atomicA('platform.authorization_containment_set', {
+    merchantGrantsSuspended: flag,
+    platformGrantsSuspended: flag,
+    reason: { type: 'string', max: 500 },
+  }),
   atomicA('merchant.profile_updated', { name }),
   atomicA('merchant.branch_created', { name }),
   atomicA('merchant.branch_updated', { name, status: status16 }),

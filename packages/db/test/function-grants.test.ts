@@ -116,6 +116,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'util.rate_limit_hit(text, integer, integer)': APP,
   'util.uuid_v7()': APP,
   'util.reject_modification()': OWNER_ONLY,
+  'util.set_authorization_containment(boolean, boolean, text)': OWNER_ONLY, // P5.5 step 6: operator only (§11.1)
 };
 
 /** Functions whose body writes a grant table or the catalog. None in P5.1. */

@@ -735,3 +735,76 @@ describe('(i) account setup admitting two invitations of two businesses against 
     }
   }, 600_000);
 });
+
+// ── P5.5 step 5: the account separation (§7.4) ─────────────────────────────────────────────────────────────────────
+
+describe('admission of an invitation against the bootstrap of the same email, in both orders (§7.4)', () => {
+  let op: pg.Client; // the operator's connection: the bootstrap is owner-only
+  let opPid = 0;
+  beforeAll(async () => {
+    op = await connectAs('migrator');
+    opPid = await pidOf(op);
+  });
+  afterAll(() => op.end());
+
+  it(`never deadlocks: ${RUNS} staged runs; the identity ends in one audience — the one that reached it first`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const b = await business();
+      const roleId = await role(b.merchantId);
+      const {
+        rows: [person],
+      } = await owner.query(
+        `INSERT INTO identity.identities (email, email_verified_at, password_hash) VALUES ($1, now(), $2) RETURNING id, email`,
+        [email('race-both-ways'), ARGON],
+      );
+      const token = hash();
+      await t1.query(`SELECT * FROM tenancy.issue_invitation($1, $2, 'staff', $3, NULL, $4, $5, 86400)`, [
+        b.ownerSession,
+        person.email,
+        roleId,
+        token,
+        hash(),
+      ]);
+      const admit = {
+        c: t1,
+        pid: pid.t1,
+        run: () => t1.query(`SELECT * FROM tenancy.accept_invitation($1, $2)`, [token, person.id]),
+      };
+      const boot = {
+        c: op,
+        pid: opPid,
+        run: () => op.query(`SELECT identity.bootstrap_super_admin($1, true) AS outcome`, [person.email]),
+      };
+      let results: Settled[];
+      if (i % 2 === 0) {
+        // Admission first: it holds the identity (FOR SHARE) and waits for the role; the bootstrap waits for the
+        // identity, then finds the new merchant membership and refuses.
+        results = await staged({ table: 'tenancy.roles', id: roleId }, [admit, boot]);
+        expect(results[0]!.code, `run ${i}: admission`).toBeNull();
+        expect(results[0]!.rows![0]!.outcome).toBe('ok');
+        expect(results[1]!.code, `run ${i}: bootstrap`).toBe('23514');
+      } else {
+        // The bootstrap first: both queue for the identity; the bootstrap takes it, adds the platform membership and
+        // commits; admission then finds a platform account — the generic refusal.
+        results = await staged({ table: 'identity.identities', id: person.id }, [boot, admit]);
+        expect(results[0]!.code, `run ${i}: bootstrap`).toBeNull();
+        expect(results[1]!.code, `run ${i}: admission`).toBeNull();
+        expect(results[1]!.rows![0]!.outcome).toBe('identity_ineligible');
+      }
+      expect(
+        results.map((r) => r.code),
+        `run ${i}`,
+      ).not.toContain(DEADLOCK);
+      const {
+        rows: [audiences],
+      } = await owner.query(
+        `SELECT (SELECT count(*)::int FROM identity.platform_memberships WHERE identity_id = $1) AS platform,
+                (SELECT count(*)::int FROM tenancy.merchant_memberships WHERE identity_id = $1) AS business`,
+        [person.id],
+      );
+      expect(audiences, `run ${i}`).toEqual(
+        i % 2 === 0 ? { platform: 0, business: 1 } : { platform: 1, business: 0 },
+      );
+    }
+  }, 600_000);
+});

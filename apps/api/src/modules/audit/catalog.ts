@@ -10,7 +10,14 @@ export type EventClass = 'atomic' | 'best_effort' | 'sensitive_read';
 export type FieldRule =
   | { readonly type: 'string'; readonly max: number; readonly nullable?: true }
   | { readonly type: 'integer'; readonly nullable?: true }
-  | { readonly type: 'boolean'; readonly nullable?: true };
+  | { readonly type: 'boolean'; readonly nullable?: true }
+  /** A JSON array of at most maxItems strings, each at most max characters (P5.6). */
+  | {
+      readonly type: 'string_list';
+      readonly maxItems: number;
+      readonly max: number;
+      readonly nullable?: true;
+    };
 
 export type CatalogEntry = {
   readonly identifier: string;

@@ -96,6 +96,70 @@ describe('the validation trigger refuses an invalid row — as the app and as th
   });
 });
 
+describe('the list rule (string_list, P5.6): a bounded list of short strings, nothing else', () => {
+  /** A scratch pair with one list field (at most 3 items of at most 10 characters) and one nullable list field. */
+  async function withListPair(fn: (tx: pg.Client) => Promise<void>) {
+    await inTenantTx(owner, A.merchantId, async (tx) => {
+      await tx.query(
+        `INSERT INTO audit.event_catalog (identifier, outcome, class, writer_pattern, summary_allowlist)
+         VALUES ('test.list_probe', 'success', 'best_effort', NULL, $1)`,
+        [
+          JSON.stringify({
+            items: { type: 'string_list', maxItems: 3, max: 10 },
+            maybe: { type: 'string_list', maxItems: 3, max: 10, nullable: true },
+          }),
+        ],
+      );
+      await fn(tx);
+    });
+  }
+  const attempt = async (tx: pg.Client, summary: unknown) => {
+    await tx.query('SAVEPOINT probe');
+    try {
+      await insert(tx, 'test.list_probe', 'success', summary);
+      return null;
+    } catch (err) {
+      return err as pg.DatabaseError;
+    } finally {
+      await tx.query('ROLLBACK TO SAVEPOINT probe');
+    }
+  };
+
+  it.each([
+    ['an empty list', { items: [] }],
+    ['a list at both bounds', { items: ['a'.repeat(10), 'b', 'c'] }],
+    ['null where nullable', { maybe: null }],
+  ])('accepts %s', async (_label, summary) => {
+    await withListPair(async (tx) => {
+      expect(await attempt(tx, summary)).toBeNull();
+    });
+  });
+
+  it.each([
+    ['too many items', { items: ['a', 'b', 'c', 'd'] }],
+    ['an item over its bound', { items: ['a'.repeat(11)] }],
+    ['a number in the list', { items: ['a', 1] }],
+    ['an object in the list', { items: [{ secret: SECRET }] }],
+    ['a nested list', { items: [['a']] }],
+    ['a string where a list belongs', { items: 'a' }],
+    ['null where not nullable', { items: null }],
+    ['a list where a string belongs', { reason: ['a'] }],
+  ])('refuses %s, naming the field, never echoing the value', async (_label, summary) => {
+    await withListPair(async (tx) => {
+      const err = await attempt(tx, summary);
+      expect(err?.code).toBe(SQLSTATE.checkViolation);
+      expect(err?.constraint).toBe('audit_event_catalog');
+      expect(`${err?.message} ${err?.detail ?? ''}`).not.toContain(SECRET);
+    });
+  });
+
+  it('a list where a string belongs is refused on a real pair too', async () => {
+    await inTenantTx(owner, A.merchantId, async (tx) => {
+      await refused(insert(tx, 'auth.login', 'failure', { reason: ['wrong_password'] }));
+    });
+  });
+});
+
 describe('audit.event_catalog', () => {
   it('declares a writer pattern exactly for atomic pairs, and no P5 pair carries a retention override', async () => {
     const { rows } = await owner.query(

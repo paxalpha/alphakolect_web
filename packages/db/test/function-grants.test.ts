@@ -218,3 +218,28 @@ describe('the permission storage of P5.1 has no writer yet', () => {
     expect(writers).toEqual(GRANT_TABLE_WRITERS);
   });
 });
+
+describe('every SECURITY DEFINER function pins its search_path (plan §10 P5.5, "grants and pinned search_path")', () => {
+  /** Each definer function of a module schema with its search_path setting, normalised (quotes and spaces dropped). */
+  async function definers() {
+    const { rows } = await owner.query<{ fn: string; search_path: string | null }>(
+      `SELECT n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS fn,
+              (SELECT replace(replace(substr(c, length('search_path=') + 1), '"', ''), ' ', '')
+                 FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%') AS search_path
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.prosecdef AND n.nspname = ANY ($1)
+        ORDER BY 1`,
+      [MODULE_SCHEMAS],
+    );
+    return rows;
+  }
+
+  it('finds the definer functions (sanity: it is looking at the real catalog)', async () => {
+    expect((await definers()).length).toBeGreaterThan(50);
+  });
+
+  it('each one runs with search_path = pg_catalog, pg_temp — nothing a caller could shadow', async () => {
+    const unpinned = (await definers()).filter((d) => d.search_path !== 'pg_catalog,pg_temp');
+    expect(unpinned).toEqual([]);
+  });
+});

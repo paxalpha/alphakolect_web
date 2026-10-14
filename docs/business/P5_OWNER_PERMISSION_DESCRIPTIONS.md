@@ -1,5 +1,8 @@
 # AlphaKolect: How Each Permission Is Described
 
+> **Superseded on 14 October 2026 — please do not answer this form.** Its questions are included unchanged in
+> `P5_OWNER_REMAINING_QUESTIONS.md`, which gathers every remaining owner decision for this stage in one place.
+
 **For:** the owner of AlphaKolect
 **Prepared:** 14 October 2026
 **Why:** In the next stage, a business owner will be able to give their staff permissions through roles, for example

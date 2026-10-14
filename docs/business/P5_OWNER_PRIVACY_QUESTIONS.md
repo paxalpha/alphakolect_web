@@ -1,5 +1,8 @@
 # AlphaKolect: Three Questions for the Privacy Rule
 
+> **Superseded on 14 October 2026 — please do not answer this form.** Its questions are included unchanged in
+> `P5_OWNER_REMAINING_QUESTIONS.md`, which gathers every remaining owner decision for this stage in one place.
+
 **For:** the owner of AlphaKolect
 **Prepared:** 12 October 2026
 **Why:** You decided that internet addresses and device details are kept for two years and then deleted, and that only

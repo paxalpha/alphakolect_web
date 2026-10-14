@@ -2272,6 +2272,70 @@ independent of the permission catalog); it is listed with them so it is complete
   failure row records that reason; (3) the migration carries today's date (`20261014…`); (4) the bootstrap of a business
   owner's email, which P3 allowed, is now refused — the owner's CF3 decision ("keep them apart both ways"), not a new
   rule.
+- **Progress — step 6 built 2026-10-14 (local, not CI).** Commits `d740d77` (migration `20261014000200_containment`)
+  and `a897faa` (the operator command). `util.authorization_containment` holds one row (`id boolean`, the one-row key
+  of §8.6) with `merchant_grants_suspended` and `platform_grants_suspended`; no app or reporting grant.
+  `util.set_authorization_containment(merchant, platform, reason)` — operator-only — locks the row, sets both flags
+  (each required; a reason of 1–500 characters) and records #39 `platform.authorization_containment_set` in the same
+  transaction (no actor; summary: both flags and the reason; the catalog gains the pair). `identity.permissions_of`
+  (same signature) reads the flags without a lock: while one is set, every grant row of that kind counts for nothing,
+  in the per-request resolver and in every write-time re-check; the owner's and the super admin's fixed sets are
+  unaffected; a missing row counts as suspended (fail closed). `admin:containment` (`apps/api/scripts/containment.ts`,
+  logic in `apps/api/src/platform/containment.ts`, migrator connection, as `admin:bootstrap`): `--status`, or
+  `--merchant on|off --platform on|off --reason "…"` — both flags always given, so lifting one never lifts the other.
+  **Tests:** `containment.test.ts` (db, 9) — the app can neither call the switch nor read or write the table, the
+  reporting role has nothing; one row; a reason and both flags required; with the merchant flag, staff lose every
+  granted permission on the next request while the owner and platform staff keep theirs, the re-check agrees, lifting
+  restores; the platform flag likewise for platform staff and the super admin; **a write already waiting for its
+  re-check when the flag is set is refused and writes nothing**; a missing row fails closed; #39 commits with the change
+  and an injected failure of its insert leaves the flags unchanged (the coverage guard's two tests). The CLI core (API,
+  3, in rolled-back transactions — the API test database is shared by four workers): read, set with a reason (recorded),
+  a blank reason refused with its safe message, the API role refused. Smoke-run by hand against a throwaway migrated
+  database: status, set, status, two refused usages, lift, status. **Sabotage:** the resolver ignoring either flag, a
+  missing row counted as not suspended, the switch recording the wrong flag — each fails. **Judgement calls:** (1) the
+  plan gives the containment row a footprint (the one row, NKU) but no category; it is placed in category 0, beside the
+  purge reservation — operator-only one-row tables that no request path locks — so the guard (which fails closed on a
+  table without a category) checks it as `0:NKU`; (2) #39's actor audience is NULL as well as its identity (an
+  operator has no session; the bootstrap's older row keeps `platform`); (3) **a defect found and fixed outside the
+  package** (`9d408bf`): pnpm passes the `--` separator through to a script, so `admin:bootstrap -- --email …` — the
+  documented invocation since P3 — failed in `parseArgs`; the smoke run of `admin:containment` showed it, it was
+  reproduced in isolation (the bootstrap itself was not run), and both scripts now drop one leading `--`.
+- **Progress — step 7 and enforcing mode, 2026-10-14 (local, not CI).** `89deb89`: the transitional-writer gate (R32),
+  each item a test — (1) the catalog exports no transitional list and no source names one; (2) no `recordWithin` call
+  in `apps/api/src` (through the compiler and in the text) and no such method on `AuditLog`; (3) for each of the 14
+  pairs the list held (`FORMER_TRANSITIONAL_PAIRS`, as at `3add9ea`) a re-added `recordWithin` call fails the
+  writer guard and makes the coverage guard count two writers; (4) each of the 14 has exactly one designated pattern-A
+  writer, its database function, and its co-commit and injected-rollback tests in `coverage.test.ts`; (5) the full
+  gate. Sabotage: a `recordWithin` method put back on `AuditLog` fails (2). `0278b38`: **enforcing mode** — the
+  tolerated lists (`TOLERATED`, `TRANSACTIONS_TOLERATED`, `NESTED_WRITERS_TOLERATED`, `AUTHORITY_TOLERATED`) were
+  all empty and every P5.5 planned footprint exists and is met, so they are deleted: the SQL guard fails on any finding,
+  the authority guard compares with the data rules alone, every repository transaction must classify and every
+  nested-writer entry be reachable; a test fails if the plan data exports a tolerated list again (sabotage: adding one
+  back fails it). The baseline control stays (it is the reconciliation record, not tolerance). Two tests the P5.5 list
+  asked for and the steps had not written: `351c827` — **every `SECURITY DEFINER` function pins
+  `search_path = pg_catalog, pg_temp`** (the "pinned search_path guard"; all already did; sabotage: a temporary
+  migration adding an unpinned definer fails it); `74bf1ca` — **the settings writers' §8.2a refusal contract at the
+  service**: a refusal by the database alone (the tenant context claims the permission, the session's role holds none)
+  is 403 with nothing changed and one best-effort denial with the actor and `{reason: 'forbidden'}`; with that insert
+  failing, the same 403 and one `audit_denial_write_failure` signal; another business's item 404 with no event; an
+  exception inside the function is not a refusal — an operational error, nothing changed, no denial.
+- **Built 2026-10-14 — awaiting review at the P5.5 gate.** **Gate on `74bf1ca`** (local, not CI; one run at a time):
+  `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 580, api 642,
+  all passing, 394 s wall with 0.8 GB of 7.7 GB free (db 311 s, of which 144 s running tests; API 65 s); oasdiff 1.32.1
+  against `origin/main` (`5d8904b`): 0 errors, 0 warnings, 2 info — the `permissions` field P5.4 added to the two
+  membership responses; `openapi/v1.json` has not changed during P5.5. gitleaks staged scan before every commit, nothing
+  found. **Test budget (§9.3):** the two-connection suites are 11 tests × 50 staged runs = 550 runs in 86 s (the
+  estimate was 400 runs ≈ 56 s; P5.5 added (b)'s staff half, (i) and the §7.4 race to the eight planned suites); wall
+  times this package ranged 236–394 s with the machine under memory pressure — the decision stands (suites in
+  `pnpm test`, 50 runs each), to be re-checked at P5.6 as recorded. **Done when (this section):** no hard-coded owner or
+  super-admin authority outside the resolver — the SQL authority guard holds 22 data rules and nothing else, in
+  enforcing mode; API and database agree — the P4 isolation matrix and route parity pass unchanged with the database
+  now deciding every permission-gated read and write a second time; R32 holds, each item a test. **Open for the
+  reviewer:** (a) the step-by-step judgement calls recorded above (steps 3–6); (b) step 5 deleted `recordWithin` and
+  step 7 holds the R32 tests — the plan's order put both in step 7; (c) two items the P5.5 list named were missing
+  until the gate and were added there (`351c827`, `74bf1ca`); (d) the `admin:bootstrap` argument fix (`9d408bf`)
+  is outside the package; (e) the P5.6 hard gate is unchanged — the broader source guard and its mutation tests come
+  first, and no grant writer exists.
 - **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
   (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
   revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
@@ -2665,6 +2729,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 46 | 2026-10-14 | **P5.5 built; awaiting review at its gate.** Step 6 (`d740d77`, `a897faa`): the containment switch — one-row table, operator-only `util.set_authorization_containment` with #39, read by the resolver and every re-check, fail closed, `admin:containment`. Step 7 (`89deb89`): the R32 gate tests. Enforcing mode (`0278b38`): the tolerance lists deleted, a test fails if one returns. Added at the gate: the definer `search_path` guard (`351c827`) and the settings writers' §8.2a refusal tests (`74bf1ca`). Outside the package: `admin:bootstrap` accepts its documented `--` (`9d408bf`). Gate on `74bf1ca` passed locally (contracts 62, db 580, api 642; oasdiff 0 errors). |
 | 45 | 2026-10-14 | **P5.5 step 5 built** (`383e749`, `efee310`, `6dc4a70`, `d025f0e`): admission records `auth.invitation_accepted` on both paths with the capability-based actor (the setup path's gap closed); platform and business accounts kept apart both ways (admission and the replaced bootstrap, serialized on the identity row); `recordWithin` and the transitional list deleted with their last user; nothing tolerated by any guard list; the R27 nested-writer and rollback tests and the §7.4 separation tests and race pass. Gate passed locally (db 568, api 600). |
 | 44 | 2026-10-13 | **P5.5 step 4 built** (`bb53c29`, `b555f1f`, `2591c5d`, `95214bf`): the enforcement boundary — five settings writers on their planned footprints writing their own audit rows, six read functions (B1's five and the self read `read_own_membership`), and the app's direct access to merchants, branches, roles and invitations revoked in the same migration; the mixed-version test (the 11 statements of `4319177`, each `insufficient_privilege`); races (b) staff half and (i) pass 50 staged runs each. Gate passed locally (db 551, api 598). |
 | 43 | 2026-10-13 | **P5.5 step 3 built** (`88eff08`, `50bcdc8`, `843c102`, `1302ec8`): authority from the resolver in the five privileged operations and `list_members`; each success writes its own audit row (pattern A; eight pairs off the transitional list); the SQL authority guard holds 22 data rules and tolerates nothing; the actor's own row is shown held; races (a), (b), (d), (f), (g), (j) pass 50 staged runs each. Gate passed locally (db 496, api 597). |

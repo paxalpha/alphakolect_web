@@ -29,6 +29,7 @@ import type { AuthContext } from '../src/platform/http/authenticate.js';
 import { errorHandler } from '../src/platform/http/error-handler.js';
 import { resolveRequestId } from '../src/platform/http/request-id.js';
 import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
+import { apiProgram, authorityFlows, type Finding as FlowFinding } from './support/authority-flow.js';
 import { auditRows, markerRequestId } from './support/audit.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 
@@ -529,5 +530,155 @@ describe('the source guard: authority is decided only by the policy module (P5.4
     expect(
       probe(`type Kind = 'owner' | 'staff'; const k: Kind = 'owner'; const s = new Set(['owner']);`),
     ).toEqual([]);
+  });
+});
+
+// ── the strengthened source guard (P5.6 precondition; the reviewer's condition at the P5.4 gate) ──────────────────────
+
+/**
+ * Indirect authority decisions the type-aware guard allows, each with its reason. Matched by file and expression text;
+ * an entry that no longer occurs fails, so the list cannot go stale.
+ */
+const ALLOWED_FLOWS = [
+  {
+    file: 'src/platform/tenant.ts',
+    text: 'MEMBERSHIP_KINDS.has(auth.kind)',
+    // tenantContextOf refuses a session that is not a merchant membership — a validation of the context it builds,
+    // not a grant: every permission still comes from the resolver.
+  },
+];
+
+const PROBE_DIR = path.join(apiRoot, 'test/__authority_probes__');
+const PROBE_HEADER = `
+  import type { AuthContext } from '../../src/platform/http/authenticate.js';
+  import type { MembershipKind, TenantContext } from '../../src/platform/tenant.js';
+  declare const someString: string;
+  declare function decide(kind: string): boolean;
+`;
+/** Each indirect form the guard must catch: probe name → its code and the form it is reported as. */
+const CAUGHT: Record<string, { code: string; form: string }> = {
+  'comparison through a constant': {
+    code: `const OWNER = 'owner'; export const f = (t: TenantContext) => t.kind === OWNER;`,
+    form: 'comparison',
+  },
+  'comparison through a copied variable': {
+    code: `export function f(a: AuthContext) { const k = a.kind; return k === someString; }`,
+    form: 'comparison',
+  },
+  'comparison through destructuring': {
+    code: `export function f(t: TenantContext) { const { kind } = t; return kind !== 'agent'; }`,
+    form: 'comparison',
+  },
+  'lookup table keyed by kind': {
+    code: `const ALLOWED: Record<string, boolean> = { owner: true }; export const f = (a: AuthContext) => ALLOWED[a.kind];`,
+    form: 'lookup key',
+  },
+  'lookup through a template key': {
+    code: 'const T: Record<string, boolean> = {}; export const f = (a: AuthContext) => T[`${a.kind}`];',
+    form: 'lookup key',
+  },
+  'map get': {
+    code: `const M = new Map<string, number>([['owner', 1]]); export const f = (a: AuthContext) => M.get(a.kind);`,
+    form: 'call argument',
+  },
+  'set has': {
+    code: `const S = new Set<string>(['owner']); export const f = (t: TenantContext) => S.has(t.kind);`,
+    form: 'call argument',
+  },
+  'array includes through a variable': {
+    code: `const ADMIN: string[] = ['owner']; export const f = (a: AuthContext) => ADMIN.includes(a.kind);`,
+    form: 'call argument',
+  },
+  'in operator': {
+    code: `const T = { owner: 1 }; export const f = (a: AuthContext) => a.kind in T;`,
+    form: 'in',
+  },
+  switch: {
+    code: `export function f(t: TenantContext) { switch (t.kind) { case 'staff': return 1; default: return 0; } }`,
+    form: 'switch',
+  },
+  'helper that returns the kind': {
+    code: `const kindOf = (a: AuthContext) => a.kind; export const f = (a: AuthContext) => kindOf(a) === someString;`,
+    form: 'comparison',
+  },
+  'helper that returns a table': {
+    code: `const table = (): Record<string, boolean> => ({ owner: true }); export const f = (a: AuthContext) => table()[a.kind];`,
+    form: 'lookup key',
+  },
+  'helper that decides': {
+    code: `export const f = (a: AuthContext) => decide(a.kind);`,
+    form: 'call argument',
+  },
+  'a value typed with the kinds, from elsewhere': {
+    code: `export const f = (k: MembershipKind) => k === someString;`,
+    form: 'comparison',
+  },
+  'the platform role through a constant': {
+    code: `const SA = 'super_admin'; export const f = (a: AuthContext) => a.kind === SA;`,
+    form: 'comparison',
+  },
+  'element access by name': {
+    code: `export const f = (a: AuthContext) => a['kind'] === someString;`,
+    form: 'comparison',
+  },
+  'an untyped kind (not assumed safe)': {
+    code: `export const f = (row: any) => row.kind === someString;`,
+    form: 'comparison',
+  },
+};
+/** What the guard must leave alone. */
+const CONTROLS: Record<string, string> = {
+  'an unrelated discriminant': `type R = { kind: 'session' } | { kind: 'other' }; export const f = (r: R) => r.kind === 'session';`,
+  'a copy into data': `export const f = (t: TenantContext) => Object.freeze({ kind: t.kind, id: t.membershipId });`,
+  'a type assertion into data': `export const f = (a: AuthContext) => ({ kind: a.kind as MembershipKind });`,
+  'the audience': `export const f = (a: AuthContext) => a.audience === 'merchant';`,
+  'the permissions': `export const f = (a: AuthContext) => a.permissions.includes('merchant.roles.read');`,
+  'a kind type without owner': `export const f = (r: { kind: 'staff' | 'agent' }) => r.kind === 'staff';`,
+  'a type': `export type K = TenantContext['kind'];`,
+};
+
+describe('the strengthened source guard: no indirect authority by kind or role (P5.6 precondition)', () => {
+  const probeFile = (name: string) => path.join(PROBE_DIR, `${name.replace(/[^a-z0-9]+/gi, '-')}.ts`);
+  const relOf = (name: string) => path.relative(apiRoot, probeFile(name)).replace(/\\/g, '/');
+  let findings: FlowFinding[];
+  let probeErrors: string[];
+  beforeAll(() => {
+    const probes = Object.fromEntries(
+      [...Object.entries(CAUGHT).map(([n, p]) => [n, p.code] as const), ...Object.entries(CONTROLS)].map(
+        ([n, code]) => [probeFile(n), `${PROBE_HEADER}\n${code}\n`],
+      ),
+    );
+    const program = apiProgram(apiRoot, probes);
+    probeErrors = ts
+      .getPreEmitDiagnostics(program)
+      .filter((d) => d.file && path.resolve(d.file.fileName).startsWith(PROBE_DIR))
+      .map(
+        (d) => `${path.basename(d.file!.fileName)}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`,
+      );
+    findings = authorityFlows(
+      program,
+      apiRoot,
+      (f) => f.startsWith('src/') || f.startsWith('test/__authority_probes__/'),
+      new Set([POLICY_MODULE]),
+    );
+  }, 120_000);
+
+  it('the probes type-check (a typed guard is only proven by typed code)', () => {
+    expect(probeErrors).toEqual([]);
+  });
+
+  it('the API source holds no indirect authority decision outside the policy module — only the listed ones', () => {
+    const real = findings
+      .filter((f) => f.file.startsWith('src/'))
+      .map((f) => ({ file: f.file, text: f.text }));
+    expect(real).toEqual(ALLOWED_FLOWS.map(({ file, text }) => ({ file, text })));
+  });
+
+  it.each(Object.entries(CAUGHT))('catches %s', (name, { form }) => {
+    expect(findings.filter((f) => f.file === relOf(name)).map((f) => f.form)).toContain(form);
+  });
+
+  it.each(Object.keys(CONTROLS))('leaves %s alone', (name) => {
+    expect(findings.filter((f) => f.file === relOf(name))).toEqual([]);
   });
 });

@@ -2,12 +2,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyse, loadCatalog, type Catalog, type FnClass, type FnRow } from '@alphakolect/db/lock-analysis';
-import {
-  CLASSES,
-  NESTED_WRITERS,
-  NESTED_WRITERS_TOLERATED,
-  TRANSACTIONS_TOLERATED,
-} from '@alphakolect/db/lock-plan';
+import { CLASSES, NESTED_WRITERS } from '@alphakolect/db/lock-plan';
 import pg from 'pg';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -28,8 +23,8 @@ import {
 // P5.7), T5 best-effort audit (one insert into the activity record). A class is decided on the complete call graph:
 // a definer the SQL guard finds reaching an unapproved write cannot anchor one (R22).
 //
-// Report mode (R34): TRANSACTIONS_TOLERATED match no class until the P5.5 step that rewrites them; every other
-// transaction must be classified, and a tolerated one that becomes classified fails until it is deleted from the list.
+// Enforcing mode (R34, since P5.5 step 7): every transaction must be classified and every nested-writer entry
+// reachable — nothing is tolerated (the lock-order guard fails if a tolerated list is exported again).
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const SCHEMAS = ['identity', 'tenancy', 'audit', 'util'];
@@ -84,7 +79,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(() => owner.end());
 
-describe('report mode (R34, R17): every repository transaction matches exactly one class', () => {
+describe('enforcing mode (R34, R17): every repository transaction matches exactly one class', () => {
   let transactions: RepoTransaction[];
   beforeAll(() => {
     const { program: p, sources } = program();
@@ -100,15 +95,9 @@ describe('report mode (R34, R17): every repository transaction matches exactly o
     );
   });
 
-  it('every transaction is classified, except the tolerated ones — and every tolerated one still fails', () => {
-    const results = transactions.map((t) => classify(t, rules));
-    const unclassified = results.filter((r) => r.cls === null);
-    const unexpected = unclassified.filter((r) => !TRANSACTIONS_TOLERATED.includes(r.tx.name));
-    expect(unexpected.map((r) => `${r.tx.name} (${r.tx.at}): ${r.problems.join('; ')}`)).toEqual([]);
-    expect(
-      TRANSACTIONS_TOLERATED.filter((name) => !unclassified.some((r) => r.tx.name === name)),
-      'tolerated transactions that are now classified: delete them from TRANSACTIONS_TOLERATED',
-    ).toEqual([]);
+  it('every transaction is classified', () => {
+    const unclassified = transactions.map((t) => classify(t, rules)).filter((r) => r.cls === null);
+    expect(unclassified.map((r) => `${r.tx.name} (${r.tx.at}): ${r.problems.join('; ')}`)).toEqual([]);
   });
 
   it('the classes, as found', () => {
@@ -138,10 +127,8 @@ describe('report mode (R34, R17): every repository transaction matches exactly o
     ]);
   });
 
-  it('R27: every nested-writer entry is reachable from its flow — except the tolerated ones', () => {
-    const unreachable = unreachableNestedWriters(transactions, rules).map((s) => s.split(' (')[0]!);
-    expect(unreachable.filter((u) => !NESTED_WRITERS_TOLERATED.includes(u))).toEqual([]);
-    expect(NESTED_WRITERS_TOLERATED.filter((u) => !unreachable.includes(u))).toEqual([]);
+  it('R27: every nested-writer entry is reachable from its flow', () => {
+    expect(unreachableNestedWriters(transactions, rules)).toEqual([]);
   });
 });
 

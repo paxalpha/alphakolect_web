@@ -16,24 +16,17 @@ import {
   type FnClass,
   type FnRow,
 } from './support/lock-analysis.js';
-import {
-  AUTHORITY_DATA_RULES,
-  AUTHORITY_TOLERATED,
-  BASELINE,
-  BASELINE_CLASSES,
-  CLASSES,
-  RESOLVER,
-  TOLERATED,
-} from './support/lock-plan.js';
+import * as plan from './support/lock-plan.js';
+import { AUTHORITY_DATA_RULES, BASELINE, BASELINE_CLASSES, CLASSES, RESOLVER } from './support/lock-plan.js';
 
 // The lock-order guard (P5.5 step 1; P5 plan §7.2 — L1–L6, the category order, the planned footprints and the
-// authority rule, "What the guard can analyse, and failing closed outside it", R34 report mode). It reads every
+// authority rule, "What the guard can analyse, and failing closed outside it", R34). It reads every
 // function of the identity, tenancy, audit and util schemas from the migrated catalog, computes each one's waiting
 // footprint (recursively, triggers included) and checks it against its class (test/support/lock-plan.ts).
 //
-// Report mode (R34): a finding listed in TOLERATED is reported and tolerated; any other finding fails at once, and a
-// tolerated entry that no longer occurs fails until it is deleted from the list in the same commit. P5.5 cannot close
-// in report mode. The baseline control runs the same analysis on the P4 definitions (5d8904b, kept as a fixture) and
+// Enforcing mode (R34, since P5.5 step 7): every finding fails. The report mode the guard ran in from step 1 — a
+// tolerated list that could only shrink — ended when the list was empty; the mechanism is deleted and a test fails if
+// it reappears. The baseline control runs the same analysis on the P4 definitions (5d8904b, kept as a fixture) and
 // must report exactly the baseline reconciliation. The mutation and fail-closed self-tests install scratch functions
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
@@ -53,7 +46,7 @@ beforeAll(async () => {
 });
 afterAll(() => owner.end());
 
-describe('report mode (R34): only tolerated findings, and every tolerated finding still occurs', () => {
+describe('enforcing mode (R34): no finding at all', () => {
   it('analyses every function of the four schemas (sanity: it is looking at the real code)', () => {
     const { footprints } = analyse(catalog, CLASSES, SCHEMAS);
     expect(catalog.functions.length).toBeGreaterThanOrEqual(59);
@@ -62,21 +55,19 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
     expect(footprints.get('identity.rotate_refresh_token')).toEqual(['5:NKU', '10:NKU']);
   });
 
-  it('reports nothing that is not tolerated, and nothing tolerated has stopped occurring', () => {
+  it('reports nothing: every function meets its class and every planned footprint is met', () => {
     const { findings } = analyse(catalog, CLASSES, SCHEMAS);
-    const found = keys(findings);
-    const unexpected = findings.filter((f) => !TOLERATED.includes(findingKey(f)));
-    expect(unexpected, report(unexpected)).toEqual([]);
-    expect(
-      TOLERATED.filter((k) => !found.includes(k)),
-      'tolerated entries that no longer occur: delete them from TOLERATED',
-    ).toEqual([]);
+    expect(findings, report(findings)).toEqual([]);
+  });
+
+  it('the tolerance mechanism is gone and cannot come back: the plan data exports no tolerated list', () => {
+    expect(Object.keys(plan).filter((name) => /TOLERAT/i.test(name))).toEqual([]);
   });
 
   it('every function of the four schemas is classified, and nothing classified is missing', () => {
     const names = new Set(catalog.functions.map((f) => `${f.schema}.${f.name}`));
     expect([...names].filter((n) => !CLASSES[n])).toEqual([]);
-    // A class for a function that does not exist is allowed only for one the planned footprints still add.
+    // …and no class names a function that does not exist.
     expect(Object.keys(CLASSES).filter((n) => !names.has(n))).toEqual([]);
   });
 
@@ -117,10 +108,8 @@ describe('report mode (R34): only tolerated findings, and every tolerated findin
 });
 
 describe('the SQL authority guard (§10 P5.5): authority comes only from the resolver', () => {
-  it('every kind or role literal outside the resolver is a listed data rule — or tolerated until step 3 — exactly', () => {
-    expect(authorityLiterals(catalog.functions, RESOLVER)).toEqual(
-      [...AUTHORITY_DATA_RULES, ...AUTHORITY_TOLERATED].sort(),
-    );
+  it('every kind or role literal outside the resolver is a listed data rule, exactly', () => {
+    expect(authorityLiterals(catalog.functions, RESOLVER)).toEqual([...AUTHORITY_DATA_RULES].sort());
   });
 
   it('sanity: the resolver itself decides by kind and role, and is the one exemption', () => {
@@ -342,8 +331,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
       `${s}.decides_by_kind: v.kind = 'owner'`,
     ]);
     // Neither is on the list, so the guard's exact comparison fails for each.
-    for (const l of scratchLiterals)
-      expect([...AUTHORITY_DATA_RULES, ...AUTHORITY_TOLERATED]).not.toContain(l);
+    for (const l of scratchLiterals) expect(AUTHORITY_DATA_RULES).not.toContain(l);
   });
 
   it('fails closed: dynamic SQL, an unqualified call, an unclassified function, a call outside the analysed schemas', () => {

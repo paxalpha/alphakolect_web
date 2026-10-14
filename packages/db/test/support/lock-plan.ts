@@ -1,8 +1,10 @@
 import type { FnClass } from './lock-analysis.js';
 
 // The lock-order guard's plan data (P5 plan §7.2): how every function of the identity, tenancy, audit and util schemas
-// is checked, the planned footprints as token sequences, the baseline reconciliation (R34) and the report-mode
-// tolerated list. Kept here and in the plan; a change to either is a change to both.
+// is checked, the planned footprints as token sequences, the baseline reconciliation (R34), the nested-writer table
+// (R27) and the SQL authority guard's data rules. Kept here and in the plan; a change to either is a change to both.
+// Enforcing mode since P5.5 closed its steps: no finding is tolerated, and no tolerance list may be added back (the
+// lock-order guard fails if one is exported).
 //
 // Tokens, in acquisition order: `<category>:<mode>` for a waiting acquisition — S (FOR SHARE), NKU (FOR NO KEY UPDATE;
 // a FOR UPDATE is reported under L1 and compared as NKU), W (the implicit lock of an UPDATE or DELETE of rows not
@@ -258,13 +260,6 @@ export const BASELINE: readonly string[] = [
 ];
 
 /**
- * Report mode (R34): these findings are reported and tolerated; any other finding fails at once, and an entry that
- * no longer occurs fails until it is deleted here in the same commit — the list only shrinks. P5.5 cannot close
- * until it is empty and the tolerance mechanism is deleted.
- */
-export const TOLERATED: readonly string[] = [];
-
-/**
  * The nested-writer table (R27): the one T2 flow allowed to reach pattern-A audit inserts inside its definer call.
  * Account setup's transaction (PasswordService.completeSetup) calls identity.complete_account_setup, which admits each
  * pending invitation through tenancy.admit_invitation_locked, writing one #14 per admission (0..n per transaction).
@@ -277,16 +272,6 @@ export const NESTED_WRITERS: readonly { flow: string; fn: string; pair: string }
     pair: 'auth.invitation_accepted/success',
   },
 ];
-
-/**
- * Report mode for repository transactions (R34, R17): these match no class until the P5.5 step that rewrites them —
- * the settings writes (direct writes, step 4) and the member, invitation, lifecycle and transfer flows (written with
- * recordWithin until their functions write their own audit rows, steps 3 and 7). The list only shrinks.
- */
-export const TRANSACTIONS_TOLERATED: readonly string[] = [];
-
-/** Nested-writer entries whose function does not exist yet (step 5 creates tenancy.admit_invitation_locked). */
-export const NESTED_WRITERS_TOLERATED: readonly string[] = [];
 
 /**
  * The classes the baseline reconciliation was made under (the P4 definitions at 5d8904b, the plan's rows as at
@@ -345,6 +330,3 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   "tenancy.transfer_ownership: kind = 'staff'",
   "tenancy.transfer_ownership: kind = 'owner'",
 ];
-
-/** Authority still decided by a literal — removed when step 3 takes authority from the resolver. The list only shrinks. */
-export const AUTHORITY_TOLERATED: readonly string[] = [];

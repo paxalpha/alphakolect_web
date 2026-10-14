@@ -106,10 +106,15 @@ async function member(b: Business, kind: 'staff' | 'agent', permissions: string[
         ])
       : null;
   if (roleId && permissions.length) {
-    await owner.query(
-      `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) SELECT $1, $2, unnest($3::text[])`,
-      [b.merchantId, roleId, permissions],
-    );
+    // Granted as the owner grants them, through tenancy.set_role_permissions (P5.6; the P5.5 fixture repeated).
+    const {
+      rows: [set],
+    } = await app.query(`SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3)`, [
+      b.ownerSession,
+      roleId,
+      permissions,
+    ]);
+    expect(set.outcome).toBe('ok');
   }
   const identityId = await one(
     `INSERT INTO identity.identities (email, email_verified_at, password_hash) VALUES ($1, now(), $2) RETURNING id`,

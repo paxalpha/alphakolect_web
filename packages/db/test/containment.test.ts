@@ -77,10 +77,16 @@ async function business(granted: string[]) {
       `Role ${hash().slice(0, 6)}`,
     ])
   ).id as string;
-  await op.query(
-    `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) SELECT $1, $2, unnest($3::text[])`,
-    [merchantId, roleId, granted],
-  );
+  // Granted as the owner grants them, through tenancy.set_role_permissions (P5.6; the P5.5 fixture repeated).
+  const ownerSession = await session(s.identity_id, 'merchant', ownerMembership);
+  const {
+    rows: [set],
+  } = await app.query(`SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3)`, [
+    ownerSession,
+    roleId,
+    granted,
+  ]);
+  expect(set.outcome).toBe('ok');
   const branchId = (
     await one(`INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
       merchantId,
@@ -102,7 +108,7 @@ async function business(granted: string[]) {
   return {
     merchantId,
     branchId,
-    ownerSession: await session(s.identity_id, 'merchant', ownerMembership),
+    ownerSession,
     staffSession: await session(staffIdentity, 'merchant', staffMembership),
   };
 }

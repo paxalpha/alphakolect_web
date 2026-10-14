@@ -126,14 +126,19 @@ async function platformMember(role: string) {
   };
 }
 
-/** Every grantable merchant permission, granted to `roleId` as the table owner (a fixture; no app path grants yet). */
+/** Every grantable merchant permission, granted to `roleId` by the owner through tenancy.set_role_permissions (P5.6). */
 async function grantEverything(b: Business, roleId: string) {
-  await owner.query(
-    `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission)
-     SELECT $1, $2, c.identifier FROM identity.permission_catalog c
-      WHERE c.scope = 'merchant' AND c.grantable AND c.status = 'active'`,
-    [b.merchantId, roleId],
+  const { rows } = await owner.query(
+    `SELECT identifier FROM identity.permission_catalog WHERE scope = 'merchant' AND grantable AND status = 'active'`,
   );
+  const {
+    rows: [set],
+  } = await app.query(`SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3)`, [
+    b.ownerSession,
+    roleId,
+    rows.map((r) => r.identifier),
+  ]);
+  expect(set.outcome).toBe('ok');
 }
 
 const auditOf = async (requestId: string) =>

@@ -147,6 +147,12 @@ const WRITES = [
     'role',
     (c: RequestContext) => settings.update(f.staff, 'roles', f.roleId, { status: 'archived' }, c),
   ],
+  // P5.6: the role grant writer — merchant.roles.manage is the owner's alone, whatever the context claims
+  [
+    'merchant.role_permissions_set',
+    'role',
+    (c: RequestContext) => settings.setRolePermissions(f.staff, f.roleId, ['merchant.profile.read'], c),
+  ],
 ] as const;
 
 describe('a refusal by the database alone (§8.2a rule 5)', () => {

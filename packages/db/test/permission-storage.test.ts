@@ -58,7 +58,9 @@ async function retiredPermission(db: pg.Client, scope: 'merchant' | 'platform') 
     .replace(/[0-9]/g, (d) => 'ghijklmnop'[Number(d)]!);
   const identifier = `${scope}.test_${letters}.read`;
   await db.query(
-    `INSERT INTO identity.permission_catalog (identifier, scope, grantable, status) VALUES ($1, $2, true, 'retired')`,
+    // A description, as every merchant permission needs one since P5.6 (the CHECK is not what these tests are about).
+    `INSERT INTO identity.permission_catalog (identifier, scope, grantable, status, description)
+     VALUES ($1, $2, true, 'retired', 'A test permission.')`,
     [identifier, scope],
   );
   return identifier;
@@ -107,7 +109,9 @@ describe('identity.permission_catalog', () => {
     await asOwner((db) =>
       expectSqlState(
         db.query(
-          `INSERT INTO identity.permission_catalog (identifier, scope, grantable, status) VALUES ($1, $2, true, $3)`,
+          // With a description, so the only rule broken is the one the case names.
+          `INSERT INTO identity.permission_catalog (identifier, scope, grantable, status, description)
+           VALUES ($1, $2, true, $3, 'A test permission.')`,
           [identifier, scope, status],
         ),
         SQLSTATE.checkViolation,

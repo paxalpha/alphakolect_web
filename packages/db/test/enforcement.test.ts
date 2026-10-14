@@ -303,15 +303,17 @@ describe('the read functions: the business from the session, the permission from
     expect(await read.invitations(onlyBranches.session)).toEqual([]);
   });
 
-  it('the permission catalog: the active merchant permissions with their grantable flag, for role editing', async () => {
+  it('the permission catalog: the active merchant permissions with their description and grantable flag, for role editing', async () => {
     const catalog = await read.catalog(a.ownerSession);
     const { rows: expected } = await owner.query(
-      `SELECT identifier, grantable FROM identity.permission_catalog
+      `SELECT identifier, description, grantable FROM identity.permission_catalog
         WHERE scope = 'merchant' AND status = 'active' ORDER BY identifier`,
     );
     expect(catalog).toEqual(expected);
     expect(catalog.find((c) => c.identifier === 'merchant.roles.manage')).toEqual({
       identifier: 'merchant.roles.manage',
+      description:
+        "Create, rename, archive and restore roles, and choose each role's permissions. Owner only.",
       grantable: false,
     });
   });

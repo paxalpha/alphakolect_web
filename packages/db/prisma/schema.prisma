@@ -278,13 +278,15 @@ model PlatformMembership {
 /// protection trigger (identifier, scope and grantable never change; retire, never delete) and the seed live in SQL.
 /// No app or readonly privilege: read through database functions only (B1).
 model Permission {
-  identifier String   @id
+  identifier  String   @id
   /// merchant | platform
-  scope      String
-  grantable  Boolean
+  scope       String
+  grantable   Boolean
+  /// What the permission allows, in the owner-approved wording (P5.6, O13); required for merchant permissions (CHECK)
+  description String?
   /// active | retired
-  status     String   @default("active")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  status      String   @default("active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   rolePermissions RolePermission[]
   platformGrants  PlatformMembershipGrant[]

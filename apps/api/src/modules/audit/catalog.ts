@@ -37,6 +37,8 @@ const nullableUuid = { type: 'string', max: 36, nullable: true } as const;
 const flag = { type: 'boolean' } as const;
 const denial = { reason, kind } as const;
 const member = { kind, status: status16, roleId: nullableUuid, branchId: nullableUuid } as const;
+/** A role's permission set (P5.6, the list rule): at most 32 catalog identifiers. */
+const permissionList = { type: 'string_list', maxItems: 32, max: 100 } as const;
 
 const atomicB = <I extends string, O extends Outcome, S extends Record<string, FieldRule>>(
   identifier: I,
@@ -85,6 +87,7 @@ export const AUDIT_CATALOG = [
   atomicA('merchant.branch_updated', { name, status: status16 }),
   atomicA('merchant.role_created', { name }),
   atomicA('merchant.role_updated', { name, status: status16 }),
+  atomicA('merchant.role_permissions_set', { before: permissionList, after: permissionList }),
   atomicA('merchant.member_assigned', member),
   atomicA('merchant.member_deactivated', member),
   atomicA('merchant.member_reactivated', member),
@@ -130,6 +133,8 @@ export const AUDIT_CATALOG = [
   bestEffort('merchant.branch_updated', 'denied', denial),
   bestEffort('merchant.role_created', 'denied', denial),
   bestEffort('merchant.role_updated', 'denied', denial),
+  bestEffort('merchant.role_permissions_set', 'denied', denial),
+  bestEffort('merchant.role_permissions_set', 'failure', { reason }),
   bestEffort('merchant.member_assigned', 'denied', denial),
   bestEffort('merchant.member_assigned', 'failure', { reason }),
   bestEffort('merchant.member_deactivated', 'denied', denial),

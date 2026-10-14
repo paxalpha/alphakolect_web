@@ -2,12 +2,13 @@ import type {
   Branch,
   CurrentMembership,
   MerchantProfile,
+  PermissionCatalog,
   Role,
   UpdateCatalogItemRequest,
 } from '@alphakolect/contracts';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
-import { withTenant, type TenantContext } from '../../platform/tenant.js';
+import { withTenant, type TenantContext, type TenantTx } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import type { RequestContext } from '../identity/sessions.js';
 import {
@@ -32,7 +33,10 @@ import {
 const ITEM: Record<CatalogTable, 'branch' | 'role'> = { branches: 'branch', roles: 'role' };
 
 /** The audit identifiers of these settings (P5.3a: literal types, so each writer accepts only catalog pairs). */
-type SettingsAction = 'merchant.profile_updated' | `merchant.${'branch' | 'role'}_${'created' | 'updated'}`;
+type SettingsAction =
+  | 'merchant.profile_updated'
+  | `merchant.${'branch' | 'role'}_${'created' | 'updated'}`
+  | 'merchant.role_permissions_set';
 
 const notFound = (table: CatalogTable) =>
   new AppError(404, 'NOT_FOUND', table === 'branches' ? 'Branch not found' : 'Role not found');
@@ -49,7 +53,11 @@ const toItem = (row: CatalogRow) => ({
   archivedAt: row.archived_at?.toISOString() ?? null,
 });
 export const toBranch = (row: CatalogRow): Branch => ({ branchId: row.id, ...toItem(row) });
-export const toRole = (row: CatalogRow): Role => ({ roleId: row.id, ...toItem(row) });
+export const toRole = (row: CatalogRow): Role => {
+  // Every role read carries its permission set (P5.6); a role row without one is a programming error.
+  if (!row.permissions) throw new Error('a role was read without its permissions');
+  return { roleId: row.id, ...toItem(row), permissions: row.permissions };
+};
 
 export class MerchantSettingsService {
   constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
@@ -111,7 +119,9 @@ export class MerchantSettingsService {
   ): Promise<CatalogRow> {
     let result: SettingsWrite<CatalogRow>;
     try {
-      result = await withTenant(this.deps.db, tenant, (tx) => repo.createCatalogItem(tx, table, name, ctx));
+      result = await withTenant(this.deps.db, tenant, async (tx) =>
+        this.withPermissions(tx, table, await repo.createCatalogItem(tx, table, name, ctx)),
+      );
     } catch (err) {
       throw err instanceof NameTakenError ? nameTaken(table) : err;
     }
@@ -129,8 +139,8 @@ export class MerchantSettingsService {
   ): Promise<CatalogRow> {
     let result: SettingsWrite<CatalogRow>;
     try {
-      result = await withTenant(this.deps.db, tenant, (tx) =>
-        repo.updateCatalogItem(tx, table, id, change, ctx),
+      result = await withTenant(this.deps.db, tenant, async (tx) =>
+        this.withPermissions(tx, table, await repo.updateCatalogItem(tx, table, id, change, ctx)),
       );
     } catch (err) {
       throw err instanceof NameTakenError ? nameTaken(table) : err;
@@ -138,6 +148,78 @@ export class MerchantSettingsService {
     const row = await this.settled(tenant, result, `merchant.${ITEM[table]}_updated`, ITEM[table], id, ctx);
     if (!row) throw notFound(table);
     return row;
+  }
+
+  /** The merchant permissions a role can be given, with the owner-approved descriptions (P5.6). */
+  async permissionCatalog(tenant: TenantContext): Promise<PermissionCatalog> {
+    const rows = await withTenant(this.deps.db, tenant, (tx) => repo.permissionCatalog(tx));
+    return {
+      items: rows.map((r) => ({
+        permission: r.identifier,
+        description: r.description,
+        grantable: r.grantable,
+      })),
+    };
+  }
+
+  /**
+   * Replace a role's permission set (P5.6). The database decides authority (the owner's alone), the tenant and every
+   * identifier, and records #21 itself; the answer is the role with its new set, read in the same transaction.
+   */
+  async setRolePermissions(
+    tenant: TenantContext,
+    roleId: string,
+    permissions: readonly string[],
+    ctx: RequestContext,
+  ): Promise<CatalogRow> {
+    type Answer = SettingsWrite<CatalogRow> | { outcome: 'invalid_permissions'; row: null };
+    const result = await withTenant(this.deps.db, tenant, async (tx): Promise<Answer> => {
+      const outcome = await repo.setRolePermissions(tx, roleId, permissions, ctx);
+      if (outcome !== 'ok') return { outcome, row: null };
+      const row = await repo.getCatalogItem(tx, 'roles', roleId);
+      return { outcome, row: row! };
+    });
+    if (result.outcome === 'invalid_permissions') {
+      await this.deps.audit.recordBestEffort({
+        ...this.context(tenant, 'role', roleId, ctx),
+        action: 'merchant.role_permissions_set',
+        outcome: 'failure',
+        summary: { reason: 'invalid_permissions' },
+      });
+      throw new AppError(
+        400,
+        'VALIDATION_ERROR',
+        'Each permission must be a merchant permission a role can be given, listed once',
+      );
+    }
+    const row = await this.settled(tenant, result, 'merchant.role_permissions_set', 'role', roleId, ctx);
+    if (!row) throw notFound('roles');
+    return row;
+  }
+
+  /** A role's answer carries its permission set: after a successful write, the role is read back in the same transaction. */
+  private async withPermissions(
+    tx: TenantTx,
+    table: CatalogTable,
+    result: SettingsWrite<CatalogRow>,
+  ): Promise<SettingsWrite<CatalogRow>> {
+    if (table !== 'roles' || result.outcome !== 'ok') return result;
+    const row = await repo.getCatalogItem(tx, 'roles', result.row.id);
+    return { outcome: 'ok', row: row! };
+  }
+
+  private context(tenant: TenantContext, targetType: string, targetId: string | null, ctx: RequestContext) {
+    return {
+      merchantId: tenant.merchantId,
+      actorIdentityId: tenant.identityId,
+      actorAudience: tenant.audience,
+      actorMembershipId: tenant.membershipId,
+      targetType,
+      targetId,
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+      requestId: ctx.requestId,
+    };
   }
 
   /**

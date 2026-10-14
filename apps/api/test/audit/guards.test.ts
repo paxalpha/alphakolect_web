@@ -70,6 +70,11 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
   'merchant.branch_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_branch' },
   'merchant.role_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_role' },
   'merchant.role_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_role' },
+  'merchant.role_permissions_set/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'tenancy.set_role_permissions',
+  },
   'merchant.member_assigned/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_membership' },
   'merchant.member_deactivated/success': {
     class: 'atomic',
@@ -124,9 +129,15 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
       'auth.password_forgot/failure',
       'auth.verification_resend/success',
       'auth.verification_resend/failure',
-      ...['profile_updated', 'branch_created', 'branch_updated', 'role_created', 'role_updated'].map(
-        (i) => `merchant.${i}/denied`,
-      ),
+      ...[
+        'profile_updated',
+        'branch_created',
+        'branch_updated',
+        'role_created',
+        'role_updated',
+        'role_permissions_set',
+      ].map((i) => `merchant.${i}/denied`),
+      'merchant.role_permissions_set/failure',
       ...[
         'member_assigned',
         'member_deactivated',

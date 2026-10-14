@@ -89,6 +89,8 @@ describe('enforcing mode (R34): no finding at all', () => {
       'tenancy.invitations(merchant_id, email) partial',
       'tenancy.merchant_memberships(merchant_id) partial',
       'tenancy.merchant_memberships(merchant_id, identity_id)',
+      // P5.6: the role grant writer inserts grant rows
+      'tenancy.role_permissions(merchant_id, role_id, permission)',
       'tenancy.roles(merchant_id, <expr>) partial',
       // P5.5 step 6: the containment switch's one-row key (updated only, never inserted by a function)
       'util.authorization_containment(id)',

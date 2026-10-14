@@ -100,6 +100,8 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.update_branch(uuid, uuid, text, text, text, text, text)': APP,
   'tenancy.update_profile(uuid, text, text, text, text)': APP,
   'tenancy.update_role(uuid, uuid, text, text, text, text, text)': APP,
+  // P5.6: the role grant writer (owner only, decided in the function)
+  'tenancy.set_role_permissions(uuid, uuid, text[], text, text, text)': APP,
   'tenancy.admit_invitation_locked(uuid, uuid, text, text, text, text)': OWNER_ONLY, // P5.5 step 2: waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
@@ -120,7 +122,7 @@ const EXPECTED: Record<string, Grantee[]> = {
 };
 
 /** Functions whose body writes a grant table or the catalog. None in P5.1. */
-const GRANT_TABLE_WRITERS: string[] = [];
+const GRANT_TABLE_WRITERS: string[] = ['tenancy.set_role_permissions(uuid, uuid, text[], text, text, text)'];
 
 let owner: pg.Client;
 let app: pg.Client;

@@ -155,7 +155,7 @@ const ownerActor = (b: Awaited<ReturnType<typeof fx.business>>) => ({
 });
 const asOwner = (
   b: Awaited<ReturnType<typeof fx.business>>,
-  method: 'post' | 'patch',
+  method: 'post' | 'patch' | 'put',
   path: string,
   rid: string,
   body?: object,
@@ -708,6 +708,24 @@ const CASES: Case[] = [
       },
     ];
   }),
+  {
+    pair: 'merchant.role_permissions_set/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const res = await asOwner(b, 'put', `/v1/merchant/roles/${b.roleId}/permissions`, rid, {
+        permissions: ['merchant.branches.read'],
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'role', target_id: b.roleId },
+        changed: async () =>
+          (await count(`SELECT count(*)::int AS n FROM tenancy.role_permissions WHERE role_id = $1`, [
+            b.roleId,
+          ])) === 1,
+      };
+    },
+  },
   {
     pair: 'merchant.member_assigned/success',
     status: 200,

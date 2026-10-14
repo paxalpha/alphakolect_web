@@ -84,6 +84,13 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:S+NKU'],
     writes: ['tenancy.roles', 'audit.audit_events'],
   },
+  // role permission management (P5.6): the plan's row — the merchant, the acting member, the edited role, then the
+  // role's grant rows rewritten while it is held (removals, then the contested inserts last, L3)
+  'tenancy.set_role_permissions': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:NKU', '9:W', '+9'],
+    writes: ['tenancy.role_permissions', 'audit.audit_events'],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',

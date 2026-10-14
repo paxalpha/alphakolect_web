@@ -51,6 +51,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (t: Tenant) => object>> = {
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   createRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
   updateRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
+  setRolePermissions: () => ({ permissions: [] }),
   assignMember: (t) => ({ roleId: t.roleId, branchId: null }),
   createInvitation: () => ({ email: uniqueEmail('matrix'), kind: 'agent' }),
 };

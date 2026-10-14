@@ -38,7 +38,15 @@ export type CatalogRow = {
   status: 'active' | 'archived';
   created_at: Date;
   archived_at: Date | null;
+  /** Roles only (P5.6): the permissions the role grants, sorted; present on every role read. */
+  permissions?: string[];
 };
+
+/** One merchant permission of the catalog (tenancy.list_permission_catalog). */
+export type PermissionRow = { identifier: string; description: string; grantable: boolean };
+
+/** tenancy.set_role_permissions' answer: refusals are returned, not raised (§8.2a). */
+export type RolePermissionsOutcome = 'ok' | 'forbidden' | 'not_found' | 'invalid_permissions';
 
 export type CatalogTable = 'branches' | 'roles';
 
@@ -95,6 +103,11 @@ export class NameTakenError extends Error {
 }
 
 const CATALOG_COLUMNS = 'id, name, status, created_at, archived_at';
+/** What a read returns: a role also its permissions (P5.6). */
+const READ_COLUMNS: Readonly<Record<CatalogTable, string>> = {
+  branches: 'id, name, status, created_at, archived_at',
+  roles: 'id, name, status, created_at, archived_at, permissions',
+};
 
 // The function names are never client input: they come from these closed sets and are interpolated only from them.
 const LIST_FUNCTION: Readonly<Record<CatalogTable, string>> = {
@@ -157,16 +170,45 @@ export const tenancyRepository = {
   /** tenancy.list_branches / list_roles: empty unless the session holds the read permission. */
   async listCatalog(tx: TenantTx, table: CatalogTable): Promise<CatalogRow[]> {
     const { sessionId } = scopeOf(tx);
-    return tx.query<CatalogRow>(`SELECT ${CATALOG_COLUMNS} FROM ${LIST_FUNCTION[table]}($1)`, [sessionId]);
+    return tx.query<CatalogRow>(`SELECT ${READ_COLUMNS[table]} FROM ${LIST_FUNCTION[table]}($1)`, [
+      sessionId,
+    ]);
   },
 
   async getCatalogItem(tx: TenantTx, table: CatalogTable, id: string): Promise<CatalogRow | null> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<CatalogRow>(
-      `SELECT ${CATALOG_COLUMNS} FROM ${LIST_FUNCTION[table]}($1, $2)`,
+      `SELECT ${READ_COLUMNS[table]} FROM ${LIST_FUNCTION[table]}($1, $2)`,
       [sessionId, id],
     );
     return row ?? null;
+  },
+
+  /** tenancy.list_permission_catalog: the active merchant permissions; empty unless the session holds roles.read. */
+  async permissionCatalog(tx: TenantTx): Promise<PermissionRow[]> {
+    const { sessionId } = scopeOf(tx);
+    return tx.query<PermissionRow>(
+      `SELECT identifier, description, grantable FROM tenancy.list_permission_catalog($1)`,
+      [sessionId],
+    );
+  },
+
+  /**
+   * tenancy.set_role_permissions (P5.6): replaces the role's permission set. Authority (merchant.roles.manage, the
+   * owner's alone), the tenant and every identifier are decided in the database, which writes #21 (pattern A).
+   */
+  async setRolePermissions(
+    tx: TenantTx,
+    roleId: string,
+    permissions: readonly string[],
+    ctx: RequestContext,
+  ): Promise<RolePermissionsOutcome> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<{ outcome: RolePermissionsOutcome }>(
+      `SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3, $4, $5, $6)`,
+      [sessionId, roleId, permissions, ctx.ip, ctx.userAgent, ctx.requestId],
+    );
+    return row!.outcome;
   },
 
   /**

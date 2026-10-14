@@ -137,7 +137,7 @@ export function tenancyFixtures(
   }
 
   /** A request as the web app makes it: cookie session, plus Origin and CSRF header for state changes. */
-  function call(accessToken: string, method: 'get' | 'post' | 'patch', path: string, body?: object) {
+  function call(accessToken: string, method: 'get' | 'post' | 'patch' | 'put', path: string, body?: object) {
     const client = request(app);
     const req = client[method](path).set(
       'Cookie',

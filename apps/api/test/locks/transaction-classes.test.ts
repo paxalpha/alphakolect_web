@@ -123,6 +123,7 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'MerchantLifecycleService.transferOwnership',
       'MerchantSettingsService.create',
       'MerchantSettingsService.rename',
+      'MerchantSettingsService.setRolePermissions',
       'MerchantSettingsService.update',
     ]);
   });

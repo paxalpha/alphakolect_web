@@ -119,6 +119,8 @@ describe('the merchant row and the caller’s membership', () => {
 });
 
 describe.each(['branches', 'roles'] as const)('%s', (table) => {
+  /** A read of a row just written: a role also carries its permission set (P5.6) — none yet. */
+  const asRead = <R extends object>(row: R) => (table === 'roles' ? { ...row, permissions: [] } : row);
   it('creates, lists and reads within the tenant only', async () => {
     const mine = ok(await as(a, (tx) => repo.createCatalogItem(tx, table, `Main ${table}`, CTX)));
     const theirs = ok(await as(b, (tx) => repo.createCatalogItem(tx, table, `Main ${table}`, CTX))); // same name: fine
@@ -128,7 +130,7 @@ describe.each(['branches', 'roles'] as const)('%s', (table) => {
     expect(listed.map((r) => r.id)).toContain(mine.id);
     expect(listed.map((r) => r.id)).not.toContain(theirs.id);
 
-    expect(await as(a, (tx) => repo.getCatalogItem(tx, table, mine.id))).toEqual(mine);
+    expect(await as(a, (tx) => repo.getCatalogItem(tx, table, mine.id))).toEqual(asRead(mine));
     expect(await as(a, (tx) => repo.getCatalogItem(tx, table, theirs.id))).toBeNull();
   });
 
@@ -139,7 +141,7 @@ describe.each(['branches', 'roles'] as const)('%s', (table) => {
         repo.updateCatalogItem(tx, table, theirs.id, { name: 'Hijacked', status: 'archived' }, CTX),
       ),
     ).toEqual({ outcome: 'not_found', row: null });
-    expect(await as(b, (tx) => repo.getCatalogItem(tx, table, theirs.id))).toEqual(theirs);
+    expect(await as(b, (tx) => repo.getCatalogItem(tx, table, theirs.id))).toEqual(asRead(theirs));
   });
 
   it('refuses a second active item with the same name (case-insensitive), allows reuse after archiving', async () => {

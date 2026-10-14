@@ -294,6 +294,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   createRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
   updateRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
+  setRolePermissions: () => ({ permissions: [] }),
   assignMember: (w) => ({ roleId: w.roleId, branchId: null }),
   createInvitation: () => ({ email: uniqueEmail('policy'), kind: 'agent' }),
   deactivateMerchant: () => ({ reason: 'policy test' }),

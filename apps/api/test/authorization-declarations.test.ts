@@ -50,6 +50,9 @@ const FROZEN: Record<string, unknown> = {
   getRole: perm('merchant.roles.read'),
   createRole: perm('merchant.roles.manage'),
   updateRole: perm('merchant.roles.manage'),
+  // P5.6 (ADR-16's frozen contracts): the permission catalog and a role's permission set
+  listPermissionCatalog: perm('merchant.roles.read'),
+  setRolePermissions: perm('merchant.roles.manage'),
   listMembers: perm('merchant.members.read'),
   getMember: perm('merchant.members.read'),
   assignMember: perm('merchant.members.manage'),
@@ -64,11 +67,11 @@ const FROZEN: Record<string, unknown> = {
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 44 operations, one class each', () => {
+  it('declare exactly the frozen route map: 46 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(44);
+    expect(Object.keys(declared)).toHaveLength(46);
     expect(declared).toEqual(FROZEN);
   });
 

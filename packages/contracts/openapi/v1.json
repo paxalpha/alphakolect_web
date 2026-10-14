@@ -2374,6 +2374,152 @@
         }
       }
     },
+    "/v1/merchant/permissions": {
+      "get": {
+        "operationId": "listPermissionCatalog",
+        "summary": "The merchant permissions a role can be given, with their descriptions",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.roles.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The active merchant permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionCatalog"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/roles/{roleId}/permissions": {
+      "put": {
+        "operationId": "setRolePermissions",
+        "summary": "Replace a role’s permission set (owner)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.roles.manage",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "roleId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetRolePermissionsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The role with its new permission set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Role"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — also an unknown, owner-only, platform or repeated permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — only the business owner (until P5 permissions)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — also for another business’s items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/merchant/members": {
       "get": {
         "operationId": "listMembers",
@@ -3803,6 +3949,23 @@
         ],
         "description": "Archived items keep their history; their name may be reused"
       },
+      "SetRolePermissionsRequest": {
+        "type": "object",
+        "properties": {
+          "permissions": {
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        },
+        "required": [
+          "permissions"
+        ]
+      },
       "AssignMemberRequest": {
         "type": "object",
         "properties": {
@@ -4480,6 +4643,12 @@
                 "type": "null"
               }
             ]
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -4487,10 +4656,47 @@
           "name",
           "status",
           "createdAt",
-          "archivedAt"
+          "archivedAt",
+          "permissions"
         ],
         "additionalProperties": false,
-        "description": "A merchant-defined staff role; permissions attach in P5"
+        "description": "A merchant-defined staff role and the permissions it grants"
+      },
+      "PermissionCatalog": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PermissionCatalogItem"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "description": "The active merchant permissions, by identifier"
+      },
+      "PermissionCatalogItem": {
+        "type": "object",
+        "properties": {
+          "permission": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "grantable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "permission",
+          "description",
+          "grantable"
+        ],
+        "additionalProperties": false
       },
       "MemberList": {
         "type": "object",

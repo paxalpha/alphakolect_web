@@ -14,8 +14,10 @@ import type {
   MerchantLifecycle,
   MerchantProfile,
   OwnershipTransferred,
+  PermissionCatalog,
   Role,
   RoleList,
+  SetRolePermissionsRequest,
   TransferOwnershipRequest,
   UpdateCatalogItemRequest,
   UpdateMerchantProfileRequest,
@@ -161,6 +163,19 @@ export function merchantHandlers({
     res.json(body);
   };
 
+  const listPermissionCatalog: RequestHandler = async (req, res) => {
+    const body: PermissionCatalog = await settings.permissionCatalog(tenant(req));
+    res.json(body);
+  };
+
+  const setRolePermissions: RequestHandler = async (req, res) => {
+    const { permissions } = req.body as SetRolePermissionsRequest;
+    const body: Role = toRole(
+      await settings.setRolePermissions(tenant(req), roleId(req), permissions, contextOf(req)),
+    );
+    res.json(body);
+  };
+
   const listMembers: RequestHandler = async (req, res) => {
     const body: MemberList = { items: (await members.list(tenant(req))).map(toMember), nextCursor: null };
     res.json(body);
@@ -232,6 +247,8 @@ export function merchantHandlers({
     createRole,
     getRole,
     updateRole,
+    listPermissionCatalog,
+    setRolePermissions,
   };
 }
 

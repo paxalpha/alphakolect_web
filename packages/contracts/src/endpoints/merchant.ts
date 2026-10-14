@@ -75,8 +75,13 @@ export const Role = z
     status: CatalogStatus,
     createdAt: Timestamp,
     archivedAt: Timestamp.nullable(),
+    /**
+     * The permissions the role grants its staff, sorted (P5.6, ADR-16). An archived role keeps its set but grants
+     * nothing; restored, it grants the set again at once.
+     */
+    permissions: z.array(z.string()),
   })
-  .meta({ id: 'Role', description: 'A merchant-defined staff role; permissions attach in P5' });
+  .meta({ id: 'Role', description: 'A merchant-defined staff role and the permissions it grants' });
 
 export type Role = z.infer<typeof Role>;
 
@@ -92,6 +97,32 @@ export const RoleList = z
   .object({ items: z.array(Role), nextCursor: z.string().nullable() })
   .meta({ id: 'RoleList' });
 export type RoleList = z.infer<typeof RoleList>;
+
+/** One merchant permission, as the owner chooses a role's permissions (P5.6, ADR-16 PermissionCatalog). */
+export const PermissionCatalogItem = z
+  .object({
+    permission: z.string(),
+    /** What it allows, in the owner-approved wording. */
+    description: z.string(),
+    /** false for the owner-only permissions, which no role can grant. */
+    grantable: z.boolean(),
+  })
+  .meta({ id: 'PermissionCatalogItem' });
+export const PermissionCatalog = z
+  .object({ items: z.array(PermissionCatalogItem) })
+  .meta({ id: 'PermissionCatalog', description: 'The active merchant permissions, by identifier' });
+export type PermissionCatalog = z.infer<typeof PermissionCatalog>;
+
+/** A role's whole new permission set: unique identifiers, at most 32; may be empty. The server checks each one. */
+export const SetRolePermissionsRequest = z
+  .object({
+    permissions: z
+      .array(z.string().min(1).max(100))
+      .max(32)
+      .refine((p) => new Set(p).size === p.length, 'each permission at most once'),
+  })
+  .meta({ id: 'SetRolePermissionsRequest' });
+export type SetRolePermissionsRequest = z.infer<typeof SetRolePermissionsRequest>;
 
 export const CreateCatalogItemRequest = z.object({ name: Name }).meta({ id: 'CreateCatalogItemRequest' });
 
@@ -264,6 +295,35 @@ export const updateRole = defineEndpoint({
     ...ownerOnly,
     ...notFound,
     ...nameTaken,
+  },
+});
+
+export const listPermissionCatalog = defineEndpoint({
+  id: 'listPermissionCatalog',
+  method: 'get',
+  path: '/v1/merchant/permissions',
+  authorization: { class: 'permission', permission: 'merchant.roles.read', branchScope: 'merchant_wide' },
+  ...merchantSession,
+  summary: 'The merchant permissions a role can be given, with their descriptions',
+  responses: {
+    200: { description: 'The active merchant permissions', schema: PermissionCatalog },
+    ...ownerOnly,
+  },
+});
+
+export const setRolePermissions = defineEndpoint({
+  id: 'setRolePermissions',
+  method: 'put',
+  path: '/v1/merchant/roles/{roleId}/permissions',
+  authorization: { class: 'permission', permission: 'merchant.roles.manage', branchScope: 'merchant_wide' },
+  ...merchantSession,
+  summary: 'Replace a role’s permission set (owner)',
+  request: { params: RoleParams, body: SetRolePermissionsRequest },
+  responses: {
+    200: { description: 'The role with its new permission set', schema: Role },
+    400: error('VALIDATION_ERROR — also an unknown, owner-only, platform or repeated permission'),
+    ...ownerOnly,
+    ...notFound,
   },
 });
 

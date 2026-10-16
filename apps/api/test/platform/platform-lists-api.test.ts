@@ -1,4 +1,9 @@
-import { PERMISSIONS, PlatformMemberList, PlatformMerchantList, Session } from '@alphakolect/contracts';
+import {
+  CurrentSession,
+  PERMISSIONS,
+  PlatformMemberList,
+  PlatformMerchantList,
+} from '@alphakolect/contracts';
 import { pino } from 'pino';
 import { afterAll, describe, expect, inject, it } from 'vitest';
 import { AuditLog } from '../../src/modules/audit/audit-log.js';
@@ -192,13 +197,13 @@ describe('a business’s members (#36)', () => {
   });
 });
 
-describe('Session.permissions (GET /v1/auth/session)', () => {
+describe('CurrentSession.permissions (GET /v1/auth/session)', () => {
   it('the super admin: every platform permission; a business owner: every merchant one; a bare staff member: none', async () => {
     const sorted = (prefix: string) => PERMISSIONS.filter((p) => p.startsWith(prefix)).sort();
     const admin = await fx.platformAdmin();
-    expect(Session.parse((await call(admin.token, 'get', '/v1/auth/session')).body).permissions).toEqual(
-      sorted('platform.'),
-    );
+    expect(
+      CurrentSession.parse((await call(admin.token, 'get', '/v1/auth/session')).body).permissions,
+    ).toEqual(sorted('platform.'));
     const b = await fx.business();
     expect((await call(b.owner.token, 'get', '/v1/auth/session')).body.permissions).toEqual(
       sorted('merchant.'),

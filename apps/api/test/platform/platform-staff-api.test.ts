@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto';
 import {
   AUTH_COOKIES,
   CSRF_HEADER,
+  CurrentSession,
   PlatformStaffList,
   PlatformStaffMember,
-  Session,
   TotpEnrollment,
 } from '@alphakolect/contracts';
 import request from 'supertest';
@@ -102,7 +102,7 @@ describe('a staff member’s whole journey (§7.4)', () => {
     const first = await login(address);
     expect(first.body.status).toBe('mfa_enrollment_required');
     const enrolment = jarOf(first);
-    expect(Session.parse((await as(enrolment, 'get', '/v1/auth/session')).body)).toMatchObject({
+    expect(CurrentSession.parse((await as(enrolment, 'get', '/v1/auth/session')).body)).toMatchObject({
       audience: 'platform',
       scope: 'mfa_enrollment',
       permissions: [],
@@ -116,7 +116,7 @@ describe('a staff member’s whole journey (§7.4)', () => {
     let jar = jarOf(confirmed);
 
     // A full session with no permissions (D4: the role is a label): refused everything but itself.
-    expect(Session.parse((await as(jar, 'get', '/v1/auth/session')).body)).toMatchObject({
+    expect(CurrentSession.parse((await as(jar, 'get', '/v1/auth/session')).body)).toMatchObject({
       scope: 'full',
       permissions: [],
     });

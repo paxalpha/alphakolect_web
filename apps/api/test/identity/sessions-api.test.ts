@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import {
   AUTH_COOKIES,
   CSRF_HEADER,
+  CurrentSession,
   ErrorResponse,
   LoginResponse,
   PERMISSIONS,
@@ -197,7 +198,7 @@ describe('POST /v1/auth/login — merchant owner', () => {
     const session = await getSession(jarOf(res));
     expect(session.status).toBe(200);
     // The session endpoint adds the effective permissions (P5.7): an owner holds every merchant permission.
-    expect(Session.parse(session.body)).toEqual({
+    expect(CurrentSession.parse(session.body)).toEqual({
       ...res.body.session,
       permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort(),
     });

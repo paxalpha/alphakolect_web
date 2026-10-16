@@ -12,6 +12,7 @@ import {
   type SelectMembershipRequest,
   type MfaVerified,
   type ResendVerificationRequest,
+  type CurrentSession,
   type Session,
   type SignupRequest,
   type TotpEnrolled,
@@ -126,7 +127,7 @@ export function authHandlers({ sessions, cookies, webOrigins }: AuthHandlerDeps)
 
   const getSession: RequestHandler = (req, res) => {
     // P5.7: with its effective permissions, as resolved for this very request (never cached, never from the token).
-    const body: Session = { ...sessionOf(req.auth!), permissions: [...req.auth!.permissions].sort() };
+    const body: CurrentSession = { ...sessionOf(req.auth!), permissions: [...req.auth!.permissions].sort() };
     res.json(body);
   };
 

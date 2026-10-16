@@ -327,7 +327,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Session"
+                  "$ref": "#/components/schemas/CurrentSession"
                 }
               }
             }
@@ -4928,12 +4928,6 @@
               "full",
               "mfa_enrollment"
             ]
-          },
-          "permissions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           }
         },
         "required": [
@@ -4953,6 +4947,53 @@
           "merchant",
           "agent"
         ]
+      },
+      "CurrentSession": {
+        "type": "object",
+        "properties": {
+          "identityId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "audience": {
+            "$ref": "#/components/schemas/SessionAudience"
+          },
+          "membershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "full",
+              "mfa_enrollment"
+            ]
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "identityId",
+          "audience",
+          "membershipId",
+          "merchantId",
+          "scope",
+          "permissions"
+        ],
+        "additionalProperties": false,
+        "description": "The signed-in session and its effective permissions, as of this request"
       },
       "VerificationPending": {
         "type": "object",

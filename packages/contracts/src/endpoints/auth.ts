@@ -23,17 +23,23 @@ export const Session = z
     merchantId: Id.nullable(),
     /** 'mfa_enrollment': a platform identity that must set up TOTP before anything else (D8). */
     scope: z.enum(['full', 'mfa_enrollment']),
-    /**
-     * The session's effective permissions, resolved by the database on this request and sorted (P5.7, ADR-16): the
-     * platform console and the dashboard build their navigation from them, and the server still decides every
-     * request. Empty for agents and for an mfa_enrollment session. Returned by GET /v1/auth/session; the responses
-     * that create or refresh a session do not carry it.
-     */
-    permissions: z.array(z.string()).optional(),
   })
   .meta({ id: 'Session', description: 'The signed-in session (no tokens: those are in HttpOnly cookies)' });
 
 export type Session = z.infer<typeof Session>;
+
+/**
+ * GET /v1/auth/session: the session with its effective permissions (P5.7; ADR-16's "Session.permissions"),
+ * resolved by the database on this request and sorted. The platform console and the dashboard build their
+ * navigation from them; the server still decides every request. Empty for agents and for an mfa_enrollment session.
+ * The responses that create or refresh a session carry the plain Session, unchanged.
+ */
+export const CurrentSession = Session.extend({ permissions: z.array(z.string()) }).meta({
+  id: 'CurrentSession',
+  description: 'The signed-in session and its effective permissions, as of this request',
+});
+
+export type CurrentSession = z.infer<typeof CurrentSession>;
 
 export const LoginRequest = z
   .object({
@@ -209,7 +215,7 @@ export const getSession = defineEndpoint({
   security: ['cookieSession', 'bearer'],
   sessionScope: 'mfa_enrollment',
   responses: {
-    200: { description: 'The current session', schema: Session },
+    200: { description: 'The current session', schema: CurrentSession },
   },
 });
 

@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SENSITIVE_READS } from '@alphakolect/db/lock-plan';
 import pg from 'pg';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -14,7 +15,7 @@ import { FORMER_TRANSITIONAL_PAIRS } from '../support/audit.js';
 // call sites of the three entry points, resolved through the compiler to the exact (identifier, outcome) pairs they
 // can write, and SQL inserts into the activity record, resolved by their literals — and each is accepted only if the
 // pair's class and writer pattern match the writer: mutateAudited only pattern-B atomic pairs, recordBestEffort only
-// best-effort pairs, SQL only pattern-A atomic pairs. recordWithin, P5.3a's transitional writer, was removed at P5.5
+// best-effort pairs, SQL only pattern-A atomic pairs — and a sensitive read only in its one designated function (P5.7). recordWithin, P5.3a's transitional writer, was removed at P5.5
 // (R32): the guard still looks for it, and any call is rejected.
 // The coverage guard then compares the catalog with the plan's inventory in both directions and requires exactly one
 // writer per atomic pair; coverage.test.ts proves each atomic pair commits with its change and rolls back with it.
@@ -28,7 +29,17 @@ afterAll(() => owner.end());
  * The plan's §8.1 inventory of every pair that exists at this point (P5.3a, P5.4), with each atomic pair's one writer.
  * Each later package adds its pairs here together with its writer and its coverage tests.
  */
-const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A' | 'B'; writer?: string }> = {
+const INVENTORY: Record<
+  string,
+  { class: 'atomic' | 'best_effort' | 'sensitive_read'; pattern?: 'A' | 'B'; writer?: string }
+> = {
+  // P5.7: the sensitive reads, each written only by its designated function (§8.1 #35, #36; R16, R18)
+  ...Object.fromEntries(
+    Object.entries(SENSITIVE_READS).map(([pair, writer]) => [
+      pair,
+      { class: 'sensitive_read' as const, writer },
+    ]),
+  ),
   'auth.signup/success': { class: 'atomic', pattern: 'B', writer: 'AccountService.signup' },
   'auth.email_verify/success': { class: 'atomic', pattern: 'B', writer: 'AccountService.verifyEmail' },
   'auth.login/success': { class: 'atomic', pattern: 'B', writer: 'SessionService.login' },
@@ -172,6 +183,9 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
         'staff_reactivated',
         'grants_set',
       ].flatMap((i) => [`platform.${i}/denied`, `platform.${i}/failure`]),
+      // P5.7: a refused sensitive read (a refusal by the database)
+      'platform.merchant_list_read/denied',
+      'platform.merchant_members_read/denied',
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),
@@ -183,12 +197,15 @@ type EntryPoint = (typeof ENTRY_POINTS)[number];
 
 type Site = { writer: EntryPoint | 'sql'; where: string; file: string; pairs: string[] | null };
 
-/** The coverage guard's count: every writer of each atomic pair (used by the real guard and the R32 mutation). */
+/** One writer per pair: atomic pairs and sensitive reads (§8.1, R18). */
+const singleWriter = (pair: string) =>
+  ['atomic', 'sensitive_read'].includes(catalogEntry(...(pair.split('/') as [string, string]))?.class ?? '');
+/** The coverage guard's count: every writer of each single-writer pair (used by the real guard and its mutations). */
 function writersByPair(sites: Site[]): Record<string, string[]> {
   const writersOf = new Map<string, Set<string>>();
   for (const site of sites) {
     for (const pair of site.pairs ?? []) {
-      if (catalogEntry(...(pair.split('/') as [string, string]))?.class !== 'atomic') continue;
+      if (!singleWriter(pair)) continue;
       const writer = site.writer === 'sql' ? site.where : site.where.split(' ')[1]!;
       writersOf.set(pair, (writersOf.get(pair) ?? new Set()).add(writer));
     }
@@ -198,7 +215,7 @@ function writersByPair(sites: Site[]): Record<string, string[]> {
 const designatedWriters = () =>
   Object.fromEntries(
     Object.entries(INVENTORY)
-      .filter(([, e]) => e.class === 'atomic')
+      .filter(([, e]) => e.class === 'atomic' || e.class === 'sensitive_read')
       .map(([pair, e]) => [pair, [e.writer]]),
   );
 
@@ -234,7 +251,8 @@ function problemsOf(site: Site): string[] {
           ? entry?.class === 'best_effort'
           : site.writer === 'recordWithin'
             ? false
-            : entry?.class === 'atomic' && entry.pattern === 'A';
+            : (entry?.class === 'atomic' && entry.pattern === 'A') ||
+              (entry?.class === 'sensitive_read' && SENSITIVE_READS[pair] === site.where);
     return accepted ? [] : [`${site.where}: ${site.writer} may not write ${pair}`];
   });
 }
@@ -421,7 +439,7 @@ describe('the writer guard', () => {
       expect(catalog).toEqual(inventory);
     });
 
-    it('every atomic pair has exactly one writer, the one the inventory names', () => {
+    it('every atomic and sensitive-read pair has exactly one writer, the one the inventory names', () => {
       expect(writersByPair(sites)).toEqual(designatedWriters());
     });
   });
@@ -529,6 +547,38 @@ describe('the writer guard', () => {
         void audit.mutateAudited(null as never, { action: 'merchant.member_assigned', outcome: 'success' });
       };
       expect(typeof _compileTimeOnly).toBe('function');
+    });
+
+    it('(4) a sensitive read is written only by its designated function: a second SQL writer and any TypeScript writer are rejected', async () => {
+      // P5.7 (§8.1 R16, R18): a scratch second function writing platform.merchant_list_read, found by the real SQL scan.
+      const schema = `test_writer_guard_${randomBytes(4).toString('hex')}`;
+      await owner.query(`CREATE SCHEMA ${schema}`);
+      try {
+        await owner.query(
+          `CREATE FUNCTION ${schema}.second_merchant_list() RETURNS void LANGUAGE sql AS $fn$
+             INSERT INTO audit.audit_events (action, outcome) VALUES ('platform.merchant_list_read', 'success');
+           $fn$`,
+        );
+        const found = await sqlSites(`n.nspname = '${schema}'`);
+        expect(found.map((s) => s.pairs)).toEqual([['platform.merchant_list_read/success']]);
+        expect(found.flatMap(problemsOf)).toHaveLength(1);
+        expect(writersByPair([...sites, ...found])['platform.merchant_list_read/success']).toHaveLength(2);
+      } finally {
+        await owner.query(`DROP SCHEMA ${schema} CASCADE`);
+      }
+      expect(problemsOf(site('recordBestEffort', ['platform.merchant_members_read/success']))).toHaveLength(
+        1,
+      );
+      expect(problemsOf(site('mutateAudited', ['platform.merchant_list_read/success']))).toHaveLength(1);
+      // The designated function itself is accepted.
+      expect(
+        problemsOf({
+          writer: 'sql',
+          file: 'tenancy.platform_list_merchants',
+          where: 'tenancy.platform_list_merchants',
+          pairs: ['platform.merchant_list_read/success'],
+        }),
+      ).toEqual([]);
     });
 
     it('an unresolvable identifier (a plain string) is rejected', () => {

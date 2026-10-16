@@ -49,6 +49,8 @@ import { deactivateMerchant, reactivateMerchant, transferOwnership } from './end
 import {
   createPlatformStaff,
   deactivatePlatformStaff,
+  listPlatformMerchantMembers,
+  listPlatformMerchants,
   listPlatformStaff,
   reactivatePlatformStaff,
   setPlatformStaffPermissions,
@@ -105,6 +107,8 @@ export const endpoints = {
   deactivateMember,
   reactivateMember,
   transferOwnership,
+  listPlatformMerchants,
+  listPlatformMerchantMembers,
   listPlatformStaff,
   createPlatformStaff,
   deactivatePlatformStaff,

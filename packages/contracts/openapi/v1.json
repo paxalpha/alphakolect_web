@@ -3051,6 +3051,191 @@
         }
       }
     },
+    "/v1/platform/merchants": {
+      "get": {
+        "operationId": "listPlatformMerchants",
+        "summary": "Every business, newest first (each page is recorded in the activity record)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.merchants.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of businesses",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformMerchantList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.merchants.read; a super admin can give it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/merchants/{merchantId}/members": {
+      "get": {
+        "operationId": "listPlatformMerchantMembers",
+        "summary": "One business’s members, newest first (each page is recorded, in that business’s record too)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.merchants.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "merchantId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the business’s members",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformMemberList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list, or of another business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.merchants.read; a super admin can give it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/platform/staff": {
       "get": {
         "operationId": "listPlatformStaff",
@@ -5286,6 +5471,77 @@
           "formerOwnerMembershipId"
         ],
         "additionalProperties": false
+      },
+      "PlatformMerchantList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlatformMerchant"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Newest first"
+      },
+      "PlatformMerchant": {
+        "type": "object",
+        "properties": {
+          "merchantId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/MerchantStatus"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "merchantId",
+          "name",
+          "status",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "A business, as the platform team sees it"
+      },
+      "PlatformMemberList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Member"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "One business’s members (owner, staff and agents), newest first"
       },
       "PlatformStaffList": {
         "type": "object",

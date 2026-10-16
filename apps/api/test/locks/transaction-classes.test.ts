@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyse, loadCatalog, type Catalog, type FnClass, type FnRow } from '@alphakolect/db/lock-analysis';
-import { CLASSES, NESTED_WRITERS } from '@alphakolect/db/lock-plan';
+import { CLASSES, NESTED_WRITERS, SENSITIVE_READS } from '@alphakolect/db/lock-plan';
 import pg from 'pg';
 import ts from 'typescript';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -19,8 +19,8 @@ import {
 // `db.transaction` / `withTenant` body in apps/api/src is followed through everything it calls with the transaction
 // (test/support/transaction-classes.ts) and must match exactly one class: T1 privileged write (one planned
 // operation), T2 pattern-B audited write (identity definer calls and mutateAudited for pattern-B pairs; nested
-// pattern-A inserts only as the nested-writer table lists), T3 read-only, T4 sensitive read (none exist before
-// P5.7), T5 best-effort audit (one insert into the activity record). A class is decided on the complete call graph:
+// pattern-A inserts only as the nested-writer table lists), T3 read-only, T4 sensitive read (one call of one designated
+// read function, from P5.7), T5 best-effort audit (one insert into the activity record). A class is decided on the complete call graph:
 // a definer the SQL guard finds reaching an unapproved write cannot anchor one (R22).
 //
 // Enforcing mode (R34, since P5.5 step 7): every transaction must be classified and every nested-writer entry
@@ -47,6 +47,7 @@ function rulesFor(c: Catalog, classes: Readonly<Record<string, FnClass>>, schema
     ),
     nestedWriters: NESTED_WRITERS,
     pairOf,
+    sensitiveReads: new Set(Object.values(SENSITIVE_READS)),
   };
 }
 
@@ -110,6 +111,11 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
     expect(byClass('T5')).toEqual(['AuditLog.recordBestEffort']);
     expect(byClass('T3')).toContain('MembershipService.list');
     expect(byClass('T3')).toContain('PlatformStaffService.list');
+    // P5.7: the platform team's view of the businesses — each page one call of its designated read function
+    expect(byClass('T4')).toEqual([
+      'PlatformMerchantListService.members',
+      'PlatformMerchantListService.merchants',
+    ]);
     expect(byClass('T2')).toEqual(
       expect.arrayContaining(['PasswordService.completeSetup', 'SessionService.refresh']),
     );

@@ -107,6 +107,10 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.set_platform_staff_status(uuid, uuid, text, text, text, text)': APP,
   'identity.set_platform_grants(uuid, uuid, text[], text, text, text)': APP,
   'identity.list_platform_staff(uuid, uuid, integer, timestamp with time zone, uuid)': APP,
+  // P5.7: the platform team's sensitive reads (platform.merchants.read, decided and recorded in each function)
+  'tenancy.platform_list_merchants(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
+  'tenancy.platform_list_merchant_members(uuid, uuid, integer, timestamp with time zone, uuid, text, text, text)':
+    APP,
   'tenancy.admit_invitation_locked(uuid, uuid, text, text, text, text)': OWNER_ONLY, // P5.5 step 2: waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,

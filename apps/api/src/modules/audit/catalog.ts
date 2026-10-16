@@ -47,6 +47,9 @@ const atomicB = <I extends string, O extends Outcome, S extends Record<string, F
 ) => ({ identifier, outcome, class: 'atomic', pattern: 'B', summary }) as const;
 const atomicA = <I extends string, S extends Record<string, FieldRule>>(identifier: I, summary: S) =>
   ({ identifier, outcome: 'success', class: 'atomic', pattern: 'A', summary }) as const;
+/** A sensitive read (§8.1 #33–#36): written only by its designated database function, never from TypeScript. */
+const sensitiveRead = <I extends string, S extends Record<string, FieldRule>>(identifier: I, summary: S) =>
+  ({ identifier, outcome: 'success', class: 'sensitive_read', pattern: null, summary }) as const;
 const bestEffort = <I extends string, O extends Outcome, S extends Record<string, FieldRule>>(
   identifier: I,
   outcome: O,
@@ -119,6 +122,9 @@ export const AUDIT_CATALOG = [
     formerOwnerRoleId: uuid,
     formerOwnerDeactivated: flag,
   }),
+  // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
+  sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
+  sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
   // best effort — identity failures, and the link-issuing successes of O6
   bestEffort('auth.signup', 'failure', { reason }),
   bestEffort('auth.email_verify', 'failure', { reason }),
@@ -167,6 +173,8 @@ export const AUDIT_CATALOG = [
   bestEffort('platform.staff_reactivated', 'failure', { reason }),
   bestEffort('platform.grants_set', 'denied', { reason }),
   bestEffort('platform.grants_set', 'failure', { reason }),
+  bestEffort('platform.merchant_list_read', 'denied', { reason }),
+  bestEffort('platform.merchant_members_read', 'denied', { reason }),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

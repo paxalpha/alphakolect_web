@@ -1,12 +1,15 @@
 import type {
   CreatePlatformStaffRequest,
   PageQuery,
+  PlatformMemberList,
+  PlatformMerchantList,
   PlatformStaffList,
   PlatformStaffMember,
   SetPlatformStaffPermissionsRequest,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import type { RequestContext } from '../identity/sessions.js';
+import type { PlatformMerchantListService } from './merchant-lists.js';
 import type { PlatformStaffService } from './staff.js';
 
 // /v1/platform/staff… (contracts: packages/contracts/src/endpoints/platform-team.ts). Path and query parameters and
@@ -73,4 +76,30 @@ export function platformStaffHandlers({ staff }: { staff: PlatformStaffService }
     reactivatePlatformStaff,
     setPlatformStaffPermissions,
   };
+}
+
+// GET /v1/platform/merchants and …/{merchantId}/members — the policy middleware has checked platform.merchants.read;
+// each page is a sensitive read the database records (P5.7).
+export function platformMerchantListHandlers({ lists }: { lists: PlatformMerchantListService }) {
+  const listPlatformMerchants: RequestHandler = async (req, res) => {
+    // The validator replaced req.query with the contract's parsed values (limit coerced, its default applied).
+    const body: PlatformMerchantList = await lists.merchants(
+      req.auth!,
+      req.query as unknown as PageQuery,
+      contextOf(req),
+    );
+    res.json(body);
+  };
+
+  const listPlatformMerchantMembers: RequestHandler = async (req, res) => {
+    const body: PlatformMemberList = await lists.members(
+      req.auth!,
+      String(req.params.merchantId),
+      req.query as unknown as PageQuery,
+      contextOf(req),
+    );
+    res.json(body);
+  };
+
+  return { listPlatformMerchants, listPlatformMerchantMembers };
 }

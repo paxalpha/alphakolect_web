@@ -118,6 +118,18 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['A1:S+NKU', '9:W', '+9'],
     writes: ['identity.platform_membership_grants', 'audit.audit_events'],
   },
+  // sensitive reads (P5.7, §7.2 rows #35 and #36): the actor's platform membership (S) — the authority lock — then the
+  // read event, then the rows (one SELECT, no row locks)
+  'tenancy.platform_list_merchants': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
+  'tenancy.platform_list_merchant_members': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -294,6 +306,17 @@ export const BASELINE: readonly string[] = [
   'L3 tenancy.issue_invitation',
   'L3 identity.complete_account_setup',
 ];
+
+/**
+ * The designated sensitive-read functions (P5 plan §8.1 #33–#36, R16, R18): each read pair has exactly one writer, the
+ * function that checks the reader's authority under its locks and returns the rows in the same transaction. Read by
+ * the API's writer guard (a read pair written anywhere else is rejected) and its transaction classes (T4: one call of
+ * one of these functions).
+ */
+export const SENSITIVE_READS: Readonly<Record<string, string>> = {
+  'platform.merchant_list_read/success': 'tenancy.platform_list_merchants',
+  'platform.merchant_members_read/success': 'tenancy.platform_list_merchant_members',
+};
 
 /**
  * The nested-writer table (R27): the one T2 flow allowed to reach pattern-A audit inserts inside its definer call.

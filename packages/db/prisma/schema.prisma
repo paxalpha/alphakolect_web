@@ -51,6 +51,8 @@ model Merchant {
   roles             Role[]
   invitations       Invitation[]
 
+  /// P5.7: the platform list of businesses, newest first (chosen from recorded query plans)
+  @@index([createdAt, id], map: "merchants_created_at_id_idx")
   @@map("merchants")
   @@schema("tenancy")
 }
@@ -515,6 +517,8 @@ model MerchantMembership {
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
+  /// P5.7: one business's members, newest first, for the platform team (chosen from recorded query plans)
+  @@index([merchantId, createdAt, id], map: "merchant_memberships_merchant_id_created_at_id_idx")
   @@map("merchant_memberships")
   @@schema("tenancy")
 }

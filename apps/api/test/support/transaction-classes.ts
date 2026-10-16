@@ -364,6 +364,8 @@ export type ClassRules = {
   nestedWriters: readonly { flow: string; fn: string; pair: string }[];
   /** An audit pair's class and writer pattern (the event catalog). */
   pairOf: (pair: string) => { class: string; pattern: string | null } | undefined;
+  /** The designated sensitive-read functions (lock-plan SENSITIVE_READS): a T4 transaction calls one of them. */
+  sensitiveReads: ReadonlySet<string>;
 };
 
 export type Classification = {
@@ -408,6 +410,12 @@ export function classify(tx: RepoTransaction, rules: ClassRules): Classification
   const oneOperation =
     writingStatements.length === 1 &&
     writingStatements[0]!.every((c) => c.length === 1 && classOf(c[0]!) === 'operation');
+  // A sensitive read is an operation by its locks (the reader's authority row) and its one write (the read event), but
+  // a class of its own: one call of one designated function, nothing else in the transaction (P5.7).
+  const sensitiveRead =
+    oneOperation &&
+    writingStatements[0]!.every((c) => rules.sensitiveReads.has(c[0]!)) &&
+    definers.size === 1;
   const audits = tx.audit;
   for (const a of audits) {
     if (!a.pairs) problems.push(`${a.at}: an audit pair the guard cannot resolve`);
@@ -431,7 +439,16 @@ export function classify(tx: RepoTransaction, rules: ClassRules): Classification
   )
     fits.push('T5');
   // T1 — privileged write: one planned operation, its audit rows written by itself (pattern A).
-  if (audits.length === 0 && directWrites.length === 0 && !locks && oneOperation) fits.push('T1');
+  if (
+    audits.length === 0 &&
+    directWrites.length === 0 &&
+    !locks &&
+    oneOperation &&
+    !writingStatements[0]!.some((c) => rules.sensitiveReads.has(c[0]!))
+  )
+    fits.push('T1');
+  // T4 — sensitive read: one call of one designated read function, which records the read and returns the rows.
+  if (audits.length === 0 && directWrites.length === 0 && !locks && sensitiveRead) fits.push('T4');
   // T2 — pattern-B audited write: identity definer calls and mutateAudited for approved pattern-B pairs.
   if (
     only('mutateAudited') &&

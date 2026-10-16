@@ -70,14 +70,17 @@ const FROZEN: Record<string, unknown> = {
   deactivatePlatformStaff: perm('platform.staff.manage'),
   reactivatePlatformStaff: perm('platform.staff.manage'),
   setPlatformStaffPermissions: perm('platform.staff.manage'),
+  // P5.7: the businesses and their members, for the platform team (sensitive reads)
+  listPlatformMerchants: perm('platform.merchants.read'),
+  listPlatformMerchantMembers: perm('platform.merchants.read'),
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 51 operations, one class each', () => {
+  it('declare exactly the frozen route map: 53 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(51);
+    expect(Object.keys(declared)).toHaveLength(53);
     expect(declared).toEqual(FROZEN);
   });
 

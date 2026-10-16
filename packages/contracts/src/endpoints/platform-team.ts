@@ -2,13 +2,18 @@ import { z } from 'zod';
 import { ErrorResponse, Id } from '../primitives.js';
 import { defineEndpoint } from '../registry.js';
 import { Email } from './auth.js';
-import { MembershipStatus, Timestamp } from './merchant.js';
+import { Member, MembershipStatus, Timestamp } from './merchant.js';
+import { MerchantStatus } from './platform.js';
 
 // /v1/platform/staff — the AlphaKolect platform team (P5.7; TARGET_ARCHITECTURE ADR-16 §3.5, frozen contracts; P5 plan
 // §7.4). Only the super admin manages the team (platform.staff.manage, reserved, D4); the database decides it from the
 // caller's session. A staff member's role is a label that grants nothing: what they may do comes only from the
 // permissions the super admin gives them, person by person. The super admin is not platform staff: the staff
 // operations neither list nor manage that membership (404).
+//
+// /v1/platform/merchants (GET) — the businesses and one business's members, for the platform team (P5.7; closes P4
+// limitation 1). platform.merchants.read is a permission the super admin can give. Every page is a sensitive read: the
+// database records it before returning the rows, and returns nothing if it cannot (§8.2a rule 7).
 
 const error = (description: string) => ({ description, schema: ErrorResponse });
 
@@ -146,5 +151,67 @@ export const setPlatformStaffPermissions = defineEndpoint({
     ...forbidden,
     ...notStaff,
     409: error('INVALID_LIFECYCLE_TRANSITION — the staff member is deactivated'),
+  },
+});
+
+// ── the businesses and their members (sensitive reads, #35 and #36) ──
+
+export const PlatformMerchant = z
+  .object({ merchantId: Id, name: z.string(), status: MerchantStatus, createdAt: Timestamp })
+  .meta({ id: 'PlatformMerchant', description: 'A business, as the platform team sees it' });
+export type PlatformMerchant = z.infer<typeof PlatformMerchant>;
+
+export const PlatformMerchantList = z
+  .object({ items: z.array(PlatformMerchant), nextCursor: z.string().nullable() })
+  .meta({ id: 'PlatformMerchantList', description: 'Newest first' });
+export type PlatformMerchantList = z.infer<typeof PlatformMerchantList>;
+
+export const PlatformMemberList = z
+  .object({ items: z.array(Member), nextCursor: z.string().nullable() })
+  .meta({
+    id: 'PlatformMemberList',
+    description: 'One business’s members (owner, staff and agents), newest first',
+  });
+export type PlatformMemberList = z.infer<typeof PlatformMemberList>;
+
+const merchantsRead = {
+  class: 'permission',
+  permission: 'platform.merchants.read',
+  branchScope: 'merchant_wide',
+} as const;
+const readRefused = {
+  403: error('FORBIDDEN — the caller does not hold platform.merchants.read; a super admin can give it'),
+};
+
+export const listPlatformMerchants = defineEndpoint({
+  id: 'listPlatformMerchants',
+  method: 'get',
+  path: '/v1/platform/merchants',
+  authorization: merchantsRead,
+  audience: 'platform',
+  summary: 'Every business, newest first (each page is recorded in the activity record)',
+  security: ['cookieSession'],
+  request: { query: PageQuery },
+  responses: {
+    200: { description: 'One page of businesses', schema: PlatformMerchantList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list'),
+    ...readRefused,
+  },
+});
+
+export const listPlatformMerchantMembers = defineEndpoint({
+  id: 'listPlatformMerchantMembers',
+  method: 'get',
+  path: '/v1/platform/merchants/{merchantId}/members',
+  authorization: merchantsRead,
+  audience: 'platform',
+  summary: 'One business’s members, newest first (each page is recorded, in that business’s record too)',
+  security: ['cookieSession'],
+  request: { params: z.object({ merchantId: Id }), query: PageQuery },
+  responses: {
+    200: { description: 'One page of the business’s members', schema: PlatformMemberList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list, or of another business'),
+    ...readRefused,
+    404: error('NOT_FOUND — no such business'),
   },
 });

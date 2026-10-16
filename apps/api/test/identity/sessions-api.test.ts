@@ -4,6 +4,7 @@ import {
   CSRF_HEADER,
   ErrorResponse,
   LoginResponse,
+  PERMISSIONS,
   Session,
   type LoginRequest,
 } from '@alphakolect/contracts';
@@ -195,7 +196,11 @@ describe('POST /v1/auth/login — merchant owner', () => {
 
     const session = await getSession(jarOf(res));
     expect(session.status).toBe(200);
-    expect(Session.parse(session.body)).toEqual(res.body.session);
+    // The session endpoint adds the effective permissions (P5.7): an owner holds every merchant permission.
+    expect(Session.parse(session.body)).toEqual({
+      ...res.body.session,
+      permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort(),
+    });
   });
 
   it('answers a wrong password and an unknown email identically (D12, exit criterion 8)', async () => {

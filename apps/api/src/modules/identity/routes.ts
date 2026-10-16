@@ -125,7 +125,8 @@ export function authHandlers({ sessions, cookies, webOrigins }: AuthHandlerDeps)
   };
 
   const getSession: RequestHandler = (req, res) => {
-    const body: Session = sessionOf(req.auth!);
+    // P5.7: with its effective permissions, as resolved for this very request (never cached, never from the token).
+    const body: Session = { ...sessionOf(req.auth!), permissions: [...req.auth!.permissions].sort() };
     res.json(body);
   };
 

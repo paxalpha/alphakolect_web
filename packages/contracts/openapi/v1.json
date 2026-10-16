@@ -4928,6 +4928,12 @@
               "full",
               "mfa_enrollment"
             ]
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [

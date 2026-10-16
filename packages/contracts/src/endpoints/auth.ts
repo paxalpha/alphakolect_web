@@ -23,6 +23,13 @@ export const Session = z
     merchantId: Id.nullable(),
     /** 'mfa_enrollment': a platform identity that must set up TOTP before anything else (D8). */
     scope: z.enum(['full', 'mfa_enrollment']),
+    /**
+     * The session's effective permissions, resolved by the database on this request and sorted (P5.7, ADR-16): the
+     * platform console and the dashboard build their navigation from them, and the server still decides every
+     * request. Empty for agents and for an mfa_enrollment session. Returned by GET /v1/auth/session; the responses
+     * that create or refresh a session do not carry it.
+     */
+    permissions: z.array(z.string()).optional(),
   })
   .meta({ id: 'Session', description: 'The signed-in session (no tokens: those are in HttpOnly cookies)' });
 

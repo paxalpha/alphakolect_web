@@ -912,3 +912,210 @@ describe('(k) a staff write against the owner editing that staff member’s role
     }
   }, 600_000);
 });
+
+// ── P5.7: platform staff (§7.5) ──────────────────────────────────────────────────────────────────────────────────────
+
+/** A platform member with a confirmed second factor, its grants, and a full session. */
+async function platformMember(role: 'super_admin' | 'support', grants: string[] = []) {
+  const {
+    rows: [i],
+  } = await owner.query(
+    `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+    [email(role)],
+  );
+  const {
+    rows: [m],
+  } = await owner.query(
+    `INSERT INTO identity.platform_memberships (identity_id, role) VALUES ($1, $2) RETURNING id`,
+    [i.id, role],
+  );
+  await owner.query(
+    `INSERT INTO identity.totp_credentials (identity_id, secret_ciphertext, secret_key_id, confirmed_at)
+     VALUES ($1, '\\x00', 'k1', now())`,
+    [i.id],
+  );
+  for (const g of grants)
+    await owner.query(
+      `INSERT INTO identity.platform_membership_grants (platform_membership_id, permission) VALUES ($1, $2)`,
+      [m.id, g],
+    );
+  return { membershipId: m.id as string, session: await session(i.id, 'platform', m.id) };
+}
+
+/**
+ * A sensitive read waits for nothing after its one lock, so it is held inside its footprint by a test trigger: its
+ * read-event insert takes an advisory lock keyed by its request id, which x holds. The trigger function lives in a
+ * scratch schema and both are dropped after the races.
+ */
+let holdSchema = '';
+beforeAll(async () => {
+  holdSchema = `race_hold_${randomBytes(4).toString('hex')}`;
+  await owner.query(`CREATE SCHEMA ${holdSchema}`);
+  await owner.query(
+    `CREATE FUNCTION ${holdSchema}.hold() RETURNS trigger LANGUAGE plpgsql AS $fn$
+     BEGIN
+       IF NEW.request_id LIKE 'race-hold-%' THEN PERFORM pg_advisory_xact_lock(hashtext(NEW.request_id)); END IF;
+       RETURN NEW;
+     END $fn$`,
+  );
+  await owner.query(
+    `CREATE TRIGGER race_hold BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION ${holdSchema}.hold()`,
+  );
+});
+afterAll(async () => {
+  await owner.query(`DROP TRIGGER IF EXISTS race_hold ON audit.audit_events`);
+  await owner.query(`DROP SCHEMA IF EXISTS ${holdSchema} CASCADE`);
+});
+
+/** Like `staged`, holding the first racer in its read-event insert (the advisory lock of its request id). */
+async function stagedOnEvent(requestId: string, racers: Racer[]): Promise<Settled[]> {
+  await x.query('BEGIN');
+  await x.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [requestId]);
+  const pending: Promise<Settled>[] = [];
+  for (const r of racers) {
+    await r.c.query('BEGIN');
+    pending.push(inTransaction(r.c, r.run()));
+    await waitsForALock(r.pid);
+  }
+  await x.query('ROLLBACK');
+  return Promise.all(pending);
+}
+
+const readList = (c: pg.Client, sessionId: string, merchantId: string | null, requestId: string) =>
+  merchantId
+    ? c.query(
+        `SELECT outcome FROM tenancy.platform_list_merchant_members($1, $2, 10, NULL, NULL, NULL, NULL, $3)`,
+        [sessionId, merchantId, requestId],
+      )
+    : c.query(`SELECT outcome FROM tenancy.platform_list_merchants($1, 10, NULL, NULL, NULL, NULL, $2)`, [
+        sessionId,
+        requestId,
+      ]);
+const readEvents = async (requestId: string) =>
+  Number(
+    (
+      await owner.query(`SELECT count(*)::int AS n FROM audit.audit_events WHERE request_id = $1`, [
+        requestId,
+      ])
+    ).rows[0].n,
+  );
+const platformGrantsOf = async (membershipId: string) =>
+  (
+    await owner.query(
+      `SELECT permission FROM identity.platform_membership_grants WHERE platform_membership_id = $1 ORDER BY 1`,
+      [membershipId],
+    )
+  ).rows.map((r) => r.permission as string);
+const holdRequestId = () => `race-hold-${randomBytes(6).toString('hex')}`;
+
+describe('(e) a platform grant revocation against a platform read, in both orders (§7.2, §7.5)', () => {
+  it(`never deadlocks: ${RUNS} staged runs over both lists; the read returns data when it ran first, nothing when the revocation did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const admin = await platformMember('super_admin');
+      const reader = await platformMember('support', ['platform.merchants.read']);
+      // Alternate the two lists: every other pair of runs reads one business's members.
+      const merchantId = i % 4 < 2 ? null : (await business()).merchantId;
+      const requestId = holdRequestId();
+      const read = { c: t1, pid: pid.t1, run: () => readList(t1, reader.session, merchantId, requestId) };
+      const revoke = {
+        c: t2,
+        pid: pid.t2,
+        run: () =>
+          t2.query(`SELECT outcome FROM identity.set_platform_grants($1, $2, '{}')`, [
+            admin.session,
+            reader.membershipId,
+          ]),
+      };
+      if (i % 2 === 0) {
+        // The read first: it holds the reader's platform membership (S) and waits in its event insert (x); the
+        // revocation waits for that membership (NKU). The read was authorized when it ran, and is recorded.
+        const results = await stagedOnEvent(requestId, [read, revoke]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await readEvents(requestId)).toBe(1);
+      } else {
+        // The revocation first: it holds the membership (NKU) and waits to delete the grant row (x); the read waits
+        // for the membership, then its re-check finds no permission — refused, no row, no event.
+        const results = await stagedOn(
+          `SELECT 1 FROM identity.platform_membership_grants WHERE platform_membership_id = $1`,
+          [reader.membershipId],
+          [revoke, read],
+        );
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+        expect(await readEvents(requestId)).toBe(0);
+      }
+      expect(await platformGrantsOf(reader.membershipId)).toEqual([]);
+    }
+  }, 600_000);
+});
+
+describe('staff deactivation against that staff member’s read, in both orders (§7.5)', () => {
+  it(`never deadlocks: ${RUNS} staged runs; the read returns data when it ran first, nothing when the deactivation did`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const admin = await platformMember('super_admin');
+      const reader = await platformMember('support', ['platform.merchants.read']);
+      const requestId = holdRequestId();
+      const read = { c: t1, pid: pid.t1, run: () => readList(t1, reader.session, null, requestId) };
+      const deactivate = {
+        c: t2,
+        pid: pid.t2,
+        run: () =>
+          t2.query(`SELECT outcome FROM identity.set_platform_staff_status($1, $2, 'deactivate')`, [
+            admin.session,
+            reader.membershipId,
+          ]),
+      };
+      if (i % 2 === 0) {
+        const results = await stagedOnEvent(requestId, [read, deactivate]);
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'ok']);
+        expect(await readEvents(requestId)).toBe(1);
+      } else {
+        // The deactivation holds the membership and waits to remove the grants (x); the read then finds the
+        // membership deactivated and the session revoked.
+        const results = await stagedOn(
+          `SELECT 1 FROM identity.platform_membership_grants WHERE platform_membership_id = $1`,
+          [reader.membershipId],
+          [deactivate, read],
+        );
+        expect(outcomes(results), `run ${i}`).toEqual(['ok', 'forbidden']);
+        expect(await readEvents(requestId)).toBe(0);
+      }
+      const state = (
+        await owner.query(`SELECT status FROM identity.platform_memberships WHERE id = $1`, [
+          reader.membershipId,
+        ])
+      ).rows[0].status;
+      expect(state).toBe('deactivated');
+    }
+  }, 600_000);
+});
+
+describe('two creations of one platform staff email at once (§7.4, O8(a))', () => {
+  it(`never deadlocks: ${RUNS} staged runs; exactly one is created, the other is refused as an email in use`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const [a, b] = [await platformMember('super_admin'), await platformMember('super_admin')];
+      const to = email('same');
+      const requestId = holdRequestId();
+      // The first holds the new identity's email (an uncommitted insert) and waits in its event insert (x); the second
+      // found no identity, and waits on the first's key; then finds it taken.
+      const create = (c: pg.Client, sessionId: string, rid: string | null) =>
+        c.query(
+          `SELECT outcome FROM identity.create_platform_staff($1, $2, 'support', $3, 86400, NULL, NULL, $4)`,
+          [sessionId, to, hash(), rid],
+        );
+      const [first, second] = i % 2 === 0 ? [a, b] : [b, a];
+      const results = await stagedOnEvent(requestId, [
+        { c: t1, pid: pid.t1, run: () => create(t1, first.session, requestId) },
+        { c: t2, pid: pid.t2, run: () => create(t2, second.session, null) },
+      ]);
+      expect(outcomes(results), `run ${i}`).toEqual(['ok', 'email_in_use']);
+      const created = (
+        await owner.query(
+          `SELECT count(*)::int AS n FROM identity.identities i JOIN identity.platform_memberships pm ON pm.identity_id = i.id
+            WHERE i.email = $1`,
+          [to],
+        )
+      ).rows[0].n;
+      expect(created).toBe(1);
+    }
+  }, 600_000);
+});

@@ -2548,6 +2548,68 @@ independent of the permission catalog); it is listed with them so it is complete
   the platform lists behave as specified.
 - **Go 2026-10-15** (project lead, §14), after the reviewer approved the technical plan of P5.7–P5.10 with its hold
   points. P5.7 stops at its own gate; any owner decision it needs is asked in a questionnaire in `docs/business/`.
+- **Built 2026-10-16 — awaiting review at the P5.7 gate.** No owner question arose: every choice below follows an
+  earlier owner decision (D4, O3, O8(a), O8(b), CF3, CF5) or is technical. Commits, in order:
+  `d51caea` (**platform staff**, migration `20261015000100_platform_staff`): `eligible_memberships` admits every
+  active platform membership (the authority guard's temporary `super_admin` allowance is gone); four functions —
+  `identity.create_platform_staff` (passwordless identity, membership with no grants, setup token; an email with an
+  identity refused before the inserts and again by the identity insert's key; #30), `identity.set_platform_staff_status`
+  (deactivate: grants removed, every session of the membership revoked, #31 listing the grants removed and the sessions
+  revoked; reactivate: active with no grants, #37), `identity.set_platform_grants` (#32, before and after), and the B1
+  reader `identity.list_platform_staff`; each writer on its planned footprint (`A1:S`, `+6`, `+1`; `A1:S+NKU`, `9:W`,
+  `10:W`; `A1:S+NKU`, `9:W`, `+9`), `platform.staff.manage` checked by `assert_authority` under the locks; the five
+  staff endpoints of ADR-16's frozen contracts; cursor pagination (`src/platform/pagination.ts`: the position in
+  microseconds and a digest of the list and its filters; another list's cursor is `400 INVALID_CURSOR`). `2e2e03d`
+  (**the platform lists**, migration `20261015000200_platform_lists`): `tenancy.platform_list_merchants` (#35) and
+  `tenancy.platform_list_merchant_members` (#36), the designated and only writers of their read events — the reader's
+  platform membership FOR SHARE, the permission under it, the event, then one page; `lock-plan` `SENSITIVE_READS`; the
+  writer guard accepts a read pair only in its function (a scratch second writer, `recordBestEffort` and
+  `mutateAudited` are rejected); the transaction classes gain **T4** (one call of one designated read function); two
+  indexes chosen from recorded query plans (below). `2c758a2` and `668a230` (**the session's permissions**): `GET
+  /v1/auth/session` answers `CurrentSession` — `Session` plus `permissions`, required, as the database resolved them
+  for that request. `c7db7b4` (**tests**): `platform-staff.test.ts` (db, 20), `platform-lists.test.ts` (db, 9, with the
+  read-consistency tests (a)–(c)), three new races in `lock-races.test.ts` (`test:concurrency`, 50 staged runs each:
+  (e) grant revocation against a read, both orders and both lists — which is (d) for the two lists; staff deactivation
+  against that member's read, both orders; two creations of one email), and `apps/api/test/platform` (12: the whole
+  journey from creation through the setup link, password, forced MFA enrolment, exactly the grants given, deactivation
+  and reactivation; refusals and their records; pagination and cursors; the read events; a refusal by the database
+  alone; `CurrentSession.permissions` for each kind of caller). The route map has 53 operations.
+  **Query plans behind the indexes** (a throwaway database: 20,000 businesses in groups of seven sharing a timestamp,
+  110,000 memberships with one business holding 50,000; `EXPLAIN (ANALYZE, BUFFERS)` of generic prepared plans, which a
+  function reuses): without indexes every page sorts its table (businesses 5–11 ms; the largest business's members
+  87–514 ms); with `merchants (created_at, id)` and `merchant_memberships (merchant_id, created_at, id)` a page — first
+  or three quarters down — is a backward index scan of about one page (0.07–0.09 ms, 3–6 buffers; members 0.12–0.24 ms,
+  18–211 buffers). One statement serving both the first page and continuations ("no cursor, or the tuple predicate")
+  cannot use the position as an index condition in a generic plan: its deep pages filtered out 15,001 and 37,501 rows
+  (3.6 and 13 ms). So each list has a first-page statement and a continuation statement — still one statement a page.
+  **Sabotage:** the businesses list without its read event (2 tests fail), without its authority lock (the lock-order
+  guard and race (e) fail), and deactivation keeping the grants (2 tests fail). **Gate on `668a230`:** one step at a time (0.42 GB free of 7.7 GB at the start, 0.40 GB at the end; local, not CI): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 633 (121 s), API 720, all passing, exit 0, 266 s wall, no worker timeout; `pnpm test:concurrency` — 16 races (13 and P5.7's three), 50 staged runs each, passing, 191 s wall; oasdiff 1.32.1 against `origin/main` (`5d8904b`): 0 errors, 0 warnings, 16 info (the seven endpoints added, `CurrentSession`, and the earlier packages' additions). Earlier, on `2e2e03d`, the API suite under memory pressure ended 700 passed and 8 failed in four files, with Vitest RPC timeouts and dropped connections; rerun serially as §9.3 requires, those four files passed, 152 of 152.
+  **Judgement calls:** (1) the session's permissions are a schema of their own, `CurrentSession`, on `GET
+  /v1/auth/session`, the one endpoint ADR-16's row names; first built as an optional `Session.permissions` (`2c758a2`),
+  but two of the login response's `oneOf` variants embed `Session`, and oasdiff matches variants by their content, so
+  any change inside them reads as variants removed and added — a breaking error the CI gate would fail on; the plain
+  `Session` of login, refresh, MFA, selection and the agent flows is unchanged; (2) the super admin is not platform
+  staff: the team list leaves that membership out and the staff writers answer it "not found" (the frozen contract's 404,
+  "the super admin included"); (3) #36 is recorded against the business whose members were read (merchant and target),
+  as the platform team's other actions on a business are (#27–#29), so it belongs to that business's record (O3) and is
+  shown there without the platform actor's IP address and device (CF5); #35 has no business; (4) a read event's summary
+  is the page asked for (`limit`, `continued`), not a row count: the event is written before the rows (§8.2a rule 7);
+  (5) each list function returns one row more than the page, which tells the API whether a cursor follows without a
+  second query, and is never sent; (6) the team list keeps the single-statement form — the team is small and unindexed;
+  (7) the setup token is inserted by `create_platform_staff` itself, not through `issue_one_time_token`, whose update of
+  the identity's earlier tokens would be a wait after the contested inserts (L3) — a new identity has none; (8) an
+  existing email is a recorded **denial** (`platform.staff_created`/denied, reason `email_in_use`), as O8(a) says; the
+  other refusals are denials (forbidden) or failures, as P4 records them; (9) deactivation revokes every session of the
+  membership, the enrolment-only ones included; (10) "a grant to one platform membership never authorizes another
+  membership of the same identity": an identity holds at most one platform membership (`UNIQUE (identity_id)`) and CF3
+  keeps platform identities out of businesses, so the test shows that a grant authorizes only its own membership's
+  sessions and that a second platform membership of the identity cannot exist; (11) **open for the reviewer:** §8.5
+  describes a lock-order-guard check that a tenant-table query in a merchant-scoped definer function carries the
+  session-merchant predicate (R19); it was never built — the B1 readers rely on their tests — and the platform reads are
+  cross-tenant by design; it could be built with P5.8's first merchant-scoped sensitive read, or recorded as not needed;
+  (12) no rate limit is added (§5: every new operation needs a session and a permission; creation, the only one that
+  sends email, is the super admin's); (13) the machine rebooted twice on 2026-10-16; each time Docker Desktop was started
+  again and only `alphakolect-postgres-1` with it.
 
 ### P5.8 — Audit reads (and O9 list pagination)
 
@@ -2885,6 +2947,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 59 | 2026-10-16 | **P5.7 built; awaiting review at its gate.** Platform staff (`d51caea`: sign-in for every active platform membership, creation, deactivation, reactivation and grants, each the super admin's; the team list), the platform lists as sensitive reads with their indexes chosen from recorded plans (`2e2e03d`), the session's permissions (`2c758a2`, then `CurrentSession` in `668a230` after oasdiff flagged the login response), and the tests (`c7db7b4`): 29 database tests, 12 API tests, three races of 50 runs. Thirteen judgement calls; one open for the reviewer (the R19 guard check of §8.5 was never built). No owner question arose. |
 | 58 | 2026-10-15 | **P5.7–P5.10 plan approved (technical direction) and the go for P5.7** (§14): the reviewer approved the plan with its hold points enforced — P5.7's own gate, Part 2 before P5.8 step (a), the O4 spike and decision before the audit-read contracts, the D9 policy before P5.10 — and asked that the P5.10 containment runbook make O16 operational (added to §10 P5.10); the project lead gave the go for P5.7. |
 | 57 | 2026-10-14 | **P5.6 gate approved** by the independent reviewer ("P5.6 approved to close"; the owner's signed wording matches the implementation exactly; 80 focused API tests re-run serially; the full gate, the concurrency run and CI not re-run). Recorded in §14. P5.7 needs its own reviewer approval and the project lead's go. |
 | 56 | 2026-10-14 | **O18 signed; the owner's characters** (the reviewer's re-review: technically approved, not closed): the owner signed `docs/business/P5_OWNER_REFUSAL_MESSAGES.md` (`feea3d4`), so O18 is his own decision (R33); the two new messages match his signed answers character for character, straight apostrophe included, with a test against the form (`3d53835`); the kept messages unchanged. P5.6 returns for closure; P5.7 stays gated. |

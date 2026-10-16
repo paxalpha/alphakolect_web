@@ -2615,6 +2615,15 @@ independent of the permission catalog); it is listed with them so it is complete
   answers 500 instead of the documented `400 INVALID_CURSOR`; the decoder must check the calendar value, with a
   regression test. Judgement call 11 (R19) decided: carried into P5.8 as a condition (§10 P5.8). Everything else traced
   was found consistent with the plan.
+- **The finding fixed (`8913290`), 2026-10-16.** The decoder now requires a real instant: a real date and time of day in
+  years 1–9999, parsed and required to come back unchanged (JavaScript rolls some impossible dates forward — 30
+  February to 2 March, hour 24 to the next midnight); a leap second is refused too. **Tests:** `pagination.test.ts`
+  (new, 13) — positions round-trip to the microsecond, edge dates included (a leap day, years 1 and 9999); ten
+  impossible timestamps with the digest kept are `400 INVALID_CURSOR`; another list's cursor, forged shapes and garbage
+  are refused; every accepted value is one the database reads, and the impossible dates are ones it could not;
+  `platform-lists-api` — a real cursor of each list (the businesses, a business's members, the team) with its month
+  changed to 99 is `400 INVALID_CURSOR` and records no read. **Sabotage:** without the check the ten cases fail and the
+  API answers `500 INTERNAL_ERROR`, the reviewer's finding exactly (11 tests). **Gate on `8913290`:** one step at a time (0.44 GB free of 7.7 GB at the start; local, not CI): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 633 (132 s), API 734, all passing, exit 0, 281 s wall, no worker timeout; `pnpm test:concurrency` — 16 races, 50 staged runs each, passing, 380 s wall (the machine short of memory); the contracts are unchanged since `668a230`, so its oasdiff result stands (0 errors, 0 warnings).
 
 ### P5.8 — Audit reads (and O9 list pagination)
 
@@ -2958,6 +2967,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 61 | 2026-10-16 | **The P5.7 finding fixed** (`8913290`): an impossible timestamp in a cursor is `400 INVALID_CURSOR` before any query, with a decoder test and an API regression test for each list; without the check the API answers 500, as the reviewer found. P5.7 returns for its gate review; P5.8 waits for the reviewer's approval and the project lead's go, and its merchant-scoped reads for the R19 guard check. |
 | 60 | 2026-10-16 | **P5.7 gate: changes requested** (reviewer, §14): an impossible timestamp in a cursor must answer `400 INVALID_CURSOR`, not 500, with a regression test. R19 (judgement call 11) decided: the guard's merchant-predicate check is a condition of P5.8, before any merchant-scoped definer read; the platform lists need none. |
 | 59 | 2026-10-16 | **P5.7 built; awaiting review at its gate.** Platform staff (`d51caea`: sign-in for every active platform membership, creation, deactivation, reactivation and grants, each the super admin's; the team list), the platform lists as sensitive reads with their indexes chosen from recorded plans (`2e2e03d`), the session's permissions (`2c758a2`, then `CurrentSession` in `668a230` after oasdiff flagged the login response), and the tests (`c7db7b4`): 29 database tests, 12 API tests, three races of 50 runs. Thirteen judgement calls; one open for the reviewer (the R19 guard check of §8.5 was never built). No owner question arose. |
 | 58 | 2026-10-15 | **P5.7–P5.10 plan approved (technical direction) and the go for P5.7** (§14): the reviewer approved the plan with its hold points enforced — P5.7's own gate, Part 2 before P5.8 step (a), the O4 spike and decision before the audit-read contracts, the D9 policy before P5.10 — and asked that the P5.10 containment runbook make O16 operational (added to §10 P5.10); the project lead gave the go for P5.7. |

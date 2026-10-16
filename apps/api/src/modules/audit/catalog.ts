@@ -37,7 +37,7 @@ const nullableUuid = { type: 'string', max: 36, nullable: true } as const;
 const flag = { type: 'boolean' } as const;
 const denial = { reason, kind } as const;
 const member = { kind, status: status16, roleId: nullableUuid, branchId: nullableUuid } as const;
-/** A role's permission set (P5.6, the list rule): at most 32 catalog identifiers. */
+/** A role's or a platform staff member's permission set (P5.6, the list rule): at most 32 catalog identifiers. */
 const permissionList = { type: 'string_list', maxItems: 32, max: 100 } as const;
 
 const atomicB = <I extends string, O extends Outcome, S extends Record<string, FieldRule>>(
@@ -103,6 +103,14 @@ export const AUDIT_CATALOG = [
     reason: { type: 'string', max: 500 },
   }),
   atomicA('platform.merchant_reactivated', { status: { type: 'string', max: 32 } }),
+  // the platform team (P5.7): #30, #31, #32, #37
+  atomicA('platform.staff_created', { role: { type: 'string', max: 16 } }),
+  atomicA('platform.staff_deactivated', {
+    grantsRemoved: permissionList,
+    sessionsRevoked: { type: 'integer' },
+  }),
+  atomicA('platform.staff_reactivated', {}),
+  atomicA('platform.grants_set', { before: permissionList, after: permissionList }),
   atomicA('platform.ownership_transferred', {
     formerOwnerIdentityId: uuid,
     formerOwnerMembershipId: uuid,
@@ -151,6 +159,14 @@ export const AUDIT_CATALOG = [
   bestEffort('platform.merchant_reactivated', 'failure', { reason }),
   bestEffort('platform.ownership_transferred', 'denied', { reason }),
   bestEffort('platform.ownership_transferred', 'failure', { reason }),
+  bestEffort('platform.staff_created', 'denied', { reason }),
+  bestEffort('platform.staff_created', 'failure', { reason }),
+  bestEffort('platform.staff_deactivated', 'denied', { reason }),
+  bestEffort('platform.staff_deactivated', 'failure', { reason }),
+  bestEffort('platform.staff_reactivated', 'denied', { reason }),
+  bestEffort('platform.staff_reactivated', 'failure', { reason }),
+  bestEffort('platform.grants_set', 'denied', { reason }),
+  bestEffort('platform.grants_set', 'failure', { reason }),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

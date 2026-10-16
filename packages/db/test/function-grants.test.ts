@@ -102,6 +102,11 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.update_role(uuid, uuid, text, text, text, text, text)': APP,
   // P5.6: the role grant writer (owner only, decided in the function)
   'tenancy.set_role_permissions(uuid, uuid, text[], text, text, text)': APP,
+  // P5.7: platform staff (super admin only, decided in each function) and the team list (B1 reader)
+  'identity.create_platform_staff(uuid, text, text, text, integer, text, text, text)': APP,
+  'identity.set_platform_staff_status(uuid, uuid, text, text, text, text)': APP,
+  'identity.set_platform_grants(uuid, uuid, text[], text, text, text)': APP,
+  'identity.list_platform_staff(uuid, uuid, integer, timestamp with time zone, uuid)': APP,
   'tenancy.admit_invitation_locked(uuid, uuid, text, text, text, text)': OWNER_ONLY, // P5.5 step 2: waits for nothing (L6)
   'tenancy.assert_authority(uuid, text)': OWNER_ONLY, // P5.2: nested write-time re-check (L6), definer callers only
   'tenancy.merchant_keeps_one_owner()': OWNER_ONLY,
@@ -121,8 +126,14 @@ const EXPECTED: Record<string, Grantee[]> = {
   'util.set_authorization_containment(boolean, boolean, text)': OWNER_ONLY, // P5.5 step 6: operator only (§11.1)
 };
 
-/** Functions whose body writes a grant table or the catalog. None in P5.1. */
-const GRANT_TABLE_WRITERS: string[] = ['tenancy.set_role_permissions(uuid, uuid, text[], text, text, text)'];
+/** Functions whose body writes a grant table or the catalog (none in P5.1), in name order. */
+const GRANT_TABLE_WRITERS: string[] = [
+  // P5.7: a staff member's grants are set, and removed at deactivation
+  'identity.set_platform_grants(uuid, uuid, text[], text, text, text)',
+  'identity.set_platform_staff_status(uuid, uuid, text, text, text, text)',
+  // P5.6: a role's permission set
+  'tenancy.set_role_permissions(uuid, uuid, text[], text, text, text)',
+];
 
 let owner: pg.Client;
 let app: pg.Client;
@@ -212,8 +223,8 @@ describe('execute-grant inventory (plan §9.1, R31)', () => {
   });
 });
 
-describe('the permission storage of P5.1 has no writer yet', () => {
-  it('no function writes the catalog or a grant table (writers arrive in P5.6 and P5.7)', async () => {
+describe('the permission storage of P5.1 has only its planned writers', () => {
+  it('no function but the listed ones writes the catalog or a grant table (the writers of P5.6 and P5.7)', async () => {
     const write =
       /\b(insert\s+into|update|delete\s+from|merge\s+into|truncate(\s+table)?)\s+(only\s+)?("?(identity|tenancy)"?\s*\.\s*)?"?(permission_catalog|role_permissions|platform_membership_grants)\b/i;
     const writers = (await moduleFunctions()).filter((f) => write.test(f.src)).map((f) => f.fn);

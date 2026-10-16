@@ -64,14 +64,20 @@ const FROZEN: Record<string, unknown> = {
   deactivateMerchant: perm('platform.merchants.lifecycle'),
   reactivateMerchant: perm('platform.merchants.lifecycle'),
   transferOwnership: perm('platform.merchants.transfer_ownership'),
+  // P5.7 (ADR-16's frozen contracts): the platform team, super admin only
+  listPlatformStaff: perm('platform.staff.manage'),
+  createPlatformStaff: perm('platform.staff.manage'),
+  deactivatePlatformStaff: perm('platform.staff.manage'),
+  reactivatePlatformStaff: perm('platform.staff.manage'),
+  setPlatformStaffPermissions: perm('platform.staff.manage'),
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 46 operations, one class each', () => {
+  it('declare exactly the frozen route map: 51 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(46);
+    expect(Object.keys(declared)).toHaveLength(51);
     expect(declared).toEqual(FROZEN);
   });
 

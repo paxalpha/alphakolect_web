@@ -11,7 +11,7 @@ import { MerchantStatus } from './platform.js';
 // management (profile, branches, roles) is for the owner only — staff get 403 FORBIDDEN (T9); agents use their own
 // audience and cannot call these at all.
 
-const Timestamp = z.iso.datetime().meta({ id: 'Timestamp', description: 'ISO 8601, UTC' });
+export const Timestamp = z.iso.datetime().meta({ id: 'Timestamp', description: 'ISO 8601, UTC' });
 
 export const MembershipKind = z.enum(['owner', 'staff', 'agent']).meta({ id: 'MembershipKind' });
 

@@ -109,6 +109,7 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
         .sort();
     expect(byClass('T5')).toEqual(['AuditLog.recordBestEffort']);
     expect(byClass('T3')).toContain('MembershipService.list');
+    expect(byClass('T3')).toContain('PlatformStaffService.list');
     expect(byClass('T2')).toEqual(
       expect.arrayContaining(['PasswordService.completeSetup', 'SessionService.refresh']),
     );
@@ -125,6 +126,9 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'MerchantSettingsService.rename',
       'MerchantSettingsService.setRolePermissions',
       'MerchantSettingsService.update',
+      'PlatformStaffService.create',
+      'PlatformStaffService.setPermissions',
+      'PlatformStaffService.setStatus',
     ]);
   });
 

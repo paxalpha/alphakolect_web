@@ -306,6 +306,7 @@ const PARAMS: Record<string, (w: World) => string> = {
   membershipId: (w) => w.target.membershipId,
   invitationId: (w) => w.invitationId,
   merchantId: (w) => w.merchantId,
+  platformMembershipId: (w) => w.support.membershipId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   updateMerchantProfile: () => ({ name: `Policy ${randomBytes(3).toString('hex')}` }),
@@ -317,6 +318,8 @@ const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   assignMember: (w) => ({ roleId: w.roleId, branchId: null }),
   createInvitation: () => ({ email: uniqueEmail('policy'), kind: 'agent' }),
   deactivateMerchant: () => ({ reason: 'policy test' }),
+  createPlatformStaff: () => ({ email: uniqueEmail('policy-staff'), role: 'support' }),
+  setPlatformStaffPermissions: () => ({ permissions: [] }),
   transferOwnership: (w) => ({
     newOwnerMembershipId: w.target.membershipId,
     formerOwnerRoleId: w.roleId,

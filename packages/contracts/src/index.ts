@@ -46,6 +46,13 @@ import {
   updateRole,
 } from './endpoints/merchant.js';
 import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
+import {
+  createPlatformStaff,
+  deactivatePlatformStaff,
+  listPlatformStaff,
+  reactivatePlatformStaff,
+  setPlatformStaffPermissions,
+} from './endpoints/platform-team.js';
 
 export * from './auth.js';
 export * from './permissions.js';
@@ -55,6 +62,7 @@ export * from './endpoints/auth.js';
 export * from './endpoints/merchant.js';
 export * from './endpoints/agent.js';
 export * from './endpoints/platform.js';
+export * from './endpoints/platform-team.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
 /** Every endpoint of the v1 API, keyed by operation id. Add new endpoints here. */
@@ -97,6 +105,11 @@ export const endpoints = {
   deactivateMember,
   reactivateMember,
   transferOwnership,
+  listPlatformStaff,
+  createPlatformStaff,
+  deactivatePlatformStaff,
+  reactivatePlatformStaff,
+  setPlatformStaffPermissions,
   listInvitations,
   createInvitation,
   revokeInvitation,

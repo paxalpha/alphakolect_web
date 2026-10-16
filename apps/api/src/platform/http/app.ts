@@ -16,6 +16,8 @@ import {
   selectionHandlers,
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
+import { platformStaffHandlers } from '../../modules/platform/routes.js';
+import { PlatformStaffService } from '../../modules/platform/staff.js';
 import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
 import { MerchantSettingsService } from '../../modules/tenancy/merchant-settings.js';
 import { InvitationService } from '../../modules/tenancy/invitations.js';
@@ -126,6 +128,7 @@ export function createApp({
     ...mfaHandlers({ mfa, cookies }),
     ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
+    ...platformStaffHandlers({ staff: new PlatformStaffService({ db, audit, mailer, webAppUrl }) }),
     ...merchantHandlers({
       settings,
       members: new MembershipService({ db, audit }),

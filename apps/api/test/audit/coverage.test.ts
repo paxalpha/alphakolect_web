@@ -878,6 +878,94 @@ const CASES: Case[] = [
       };
     },
   },
+  // P5.7: the platform team (#30, #31, #32, #37) — the super admin's changes, each recorded by its function
+  {
+    pair: 'platform.staff_created/success',
+    status: 201,
+    run: async (rid) => {
+      const admin = await fx.platformAdmin();
+      const staffEmail = uniqueEmail('cov-staff');
+      const res = await fx
+        .call(admin.token, 'post', '/v1/platform/staff', { email: staffEmail, role: 'support' })
+        .set('X-Request-ID', rid);
+      return {
+        res,
+        expected: {
+          merchant_id: null,
+          actor_identity_id: admin.identityId,
+          actor_audience: 'platform',
+          actor_membership_id: admin.membershipId,
+          target_type: 'platform_membership',
+          target_id: res.body.platformMembershipId,
+        },
+        changed: async () =>
+          (await count(`SELECT count(*)::int AS n FROM identity.identities WHERE email = $1`, [
+            staffEmail,
+          ])) === 1,
+      };
+    },
+  },
+  ...(['deactivate', 'reactivate'] as const).map((action): Case => ({
+    pair: `platform.staff_${action}d/success`,
+    status: 200,
+    run: async (rid) => {
+      const admin = await fx.platformAdmin();
+      const member = await fx.platformAdmin('support');
+      if (action === 'reactivate') {
+        await owner.query(
+          `UPDATE identity.platform_memberships SET status = 'deactivated', deactivated_at = now() WHERE id = $1`,
+          [member.membershipId],
+        );
+      }
+      const res = await fx
+        .call(admin.token, 'post', `/v1/platform/staff/${member.membershipId}/${action}`)
+        .set('X-Request-ID', rid);
+      const want = action === 'deactivate' ? 'deactivated' : 'active';
+      return {
+        res,
+        expected: {
+          merchant_id: null,
+          actor_identity_id: admin.identityId,
+          actor_audience: 'platform',
+          actor_membership_id: admin.membershipId,
+          target_type: 'platform_membership',
+          target_id: member.membershipId,
+        },
+        changed: async () =>
+          (await one(`SELECT status FROM identity.platform_memberships WHERE id = $1`, [member.membershipId]))
+            .status === want,
+      };
+    },
+  })),
+  {
+    pair: 'platform.grants_set/success',
+    status: 200,
+    run: async (rid) => {
+      const admin = await fx.platformAdmin();
+      const member = await fx.platformAdmin('support');
+      const res = await fx
+        .call(admin.token, 'put', `/v1/platform/staff/${member.membershipId}/permissions`, {
+          permissions: ['platform.merchants.read'],
+        })
+        .set('X-Request-ID', rid);
+      return {
+        res,
+        expected: {
+          merchant_id: null,
+          actor_identity_id: admin.identityId,
+          actor_audience: 'platform',
+          actor_membership_id: admin.membershipId,
+          target_type: 'platform_membership',
+          target_id: member.membershipId,
+        },
+        changed: async () =>
+          (await count(
+            `SELECT count(*)::int AS n FROM identity.platform_membership_grants WHERE platform_membership_id = $1`,
+            [member.membershipId],
+          )) === 1,
+      };
+    },
+  },
 ];
 
 /** The atomic pairs this file covers. */

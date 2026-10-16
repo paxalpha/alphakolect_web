@@ -82,6 +82,8 @@ describe('enforcing mode (R34): no finding at all', () => {
       .sort();
     expect(contested).toEqual([
       'identity.identities(email)',
+      // P5.7: the platform grant writer inserts grant rows
+      'identity.platform_membership_grants(platform_membership_id, permission)',
       'identity.platform_memberships(identity_id)',
       'identity.totp_credentials(identity_id)',
       // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))

@@ -65,6 +65,23 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
     pattern: 'A',
     writer: 'util.set_authorization_containment',
   },
+  // P5.7: the platform team
+  'platform.staff_created/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'identity.create_platform_staff',
+  },
+  'platform.staff_deactivated/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'identity.set_platform_staff_status',
+  },
+  'platform.staff_reactivated/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'identity.set_platform_staff_status',
+  },
+  'platform.grants_set/success': { class: 'atomic', pattern: 'A', writer: 'identity.set_platform_grants' },
   'merchant.profile_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_profile' },
   'merchant.branch_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_branch' },
   'merchant.branch_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_branch' },
@@ -145,10 +162,16 @@ const INVENTORY: Record<string, { class: 'atomic' | 'best_effort'; pattern?: 'A'
         'invitation_issued',
         'invitation_revoked',
       ].flatMap((i) => [`merchant.${i}/denied`, `merchant.${i}/failure`]),
-      ...['merchant_deactivated', 'merchant_reactivated', 'ownership_transferred'].flatMap((i) => [
-        `platform.${i}/denied`,
-        `platform.${i}/failure`,
-      ]),
+      ...[
+        'merchant_deactivated',
+        'merchant_reactivated',
+        'ownership_transferred',
+        // P5.7: the platform team
+        'staff_created',
+        'staff_deactivated',
+        'staff_reactivated',
+        'grants_set',
+      ].flatMap((i) => [`platform.${i}/denied`, `platform.${i}/failure`]),
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

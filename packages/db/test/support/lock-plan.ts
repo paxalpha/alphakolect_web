@@ -91,6 +91,33 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:NKU', '9:W', '+9'],
     writes: ['tenancy.role_permissions', 'audit.audit_events'],
   },
+  // platform staff (P5.7, §7.4, §7.5): the actor's platform membership first (S), with the target (NKU) in the same
+  // sorted call; creation's contested inserts last (L3); deactivation removes the grant rows and ends the sessions
+  'identity.create_platform_staff': {
+    class: 'operation',
+    planned: ['A1:S', '+6', '+1'],
+    writes: [
+      'identity.identities',
+      'identity.platform_memberships',
+      'identity.one_time_tokens',
+      'audit.audit_events',
+    ],
+  },
+  'identity.set_platform_staff_status': {
+    class: 'operation',
+    planned: ['A1:S+NKU', '9:W', '10:W'],
+    writes: [
+      'identity.platform_memberships',
+      'identity.platform_membership_grants',
+      'identity.sessions',
+      'audit.audit_events',
+    ],
+  },
+  'identity.set_platform_grants': {
+    class: 'operation',
+    planned: ['A1:S+NKU', '9:W', '+9'],
+    writes: ['identity.platform_membership_grants', 'audit.audit_events'],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -214,6 +241,8 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.list_roles': { class: 'reader' },
   'tenancy.read_own_membership': { class: 'reader' },
   'tenancy.read_profile': { class: 'reader' },
+  // the platform team (P5.7): B1 reader of platform.staff.manage
+  'identity.list_platform_staff': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -310,8 +339,12 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   "identity.active_membership: mm.kind in ('owner', 'staff')",
   "identity.eligible_memberships: mm.kind = 'agent'",
   "identity.eligible_memberships: mm.kind in ('owner', 'staff')",
-  // platform sign-in eligibility — until P5.7 replaces it; from then the guard fails if it remains
-  "identity.eligible_memberships: pm.role = 'super_admin'",
+  // platform staff (P5.7): the label a new member is given, never super_admin; and the super admin is not staff —
+  // neither managed by the staff functions nor listed with the team
+  "identity.create_platform_staff: p_role not in ('support', 'verification', 'finance')",
+  "identity.set_platform_staff_status: v_target.role = 'super_admin'",
+  "identity.set_platform_grants: v_target.role = 'super_admin'",
+  "identity.list_platform_staff: pm.role <> 'super_admin'",
   // the bootstrap creates the super admin (operator only; §7.4)
   "identity.bootstrap_super_admin: pm.role = 'super_admin'",
   // the businesses an identity owns, activated by its email verification (BR-2.2; added at P5.5 step 2)

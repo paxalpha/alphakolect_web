@@ -21,6 +21,19 @@ export const POSITION_AT = `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T
 const AT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * Whether a position's timestamp is a real instant the database can read: a real date and time of day (no month 99,
+ * no 30 February, no hour 24, no leap second) in years 1–9999. The shape alone is not enough: an impossible value with
+ * its list's digest kept would reach the database's timestamptz cast and fail there, a 500 instead of INVALID_CURSOR
+ * (the reviewer's finding at the P5.7 gate). JavaScript rolls some impossible dates forward (30 February becomes
+ * 2 March), so the value must come back unchanged.
+ */
+function isRealInstant(at: string): boolean {
+  if (Number(at.slice(0, 4)) < 1) return false;
+  const ms = Date.parse(`${at.slice(0, 23)}Z`);
+  return !Number.isNaN(ms) && new Date(ms).toISOString().slice(0, 23) === at.slice(0, 23);
+}
+
 /** The list and its normalised filters, e.g. `listPlatformMerchantMembers|merchantId=…`. */
 const digest = (scope: string) => createHash('sha256').update(scope).digest('base64url').slice(0, 22);
 const invalid = () => new AppError(400, 'INVALID_CURSOR', 'This cursor does not belong to this list');
@@ -42,7 +55,8 @@ export function decodeCursor(raw: string | undefined, scope: string): Position |
   }
   if (typeof value !== 'object' || value === null) throw invalid();
   const { at, id, d } = value as Record<string, unknown>;
-  if (typeof at !== 'string' || !AT.test(at) || typeof id !== 'string' || !UUID.test(id)) throw invalid();
+  if (typeof at !== 'string' || !AT.test(at) || !isRealInstant(at)) throw invalid();
+  if (typeof id !== 'string' || !UUID.test(id)) throw invalid();
   if (d !== digest(scope)) throw invalid();
   return { at, id };
 }

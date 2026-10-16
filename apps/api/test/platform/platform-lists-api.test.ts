@@ -13,7 +13,7 @@ import { AppError } from '../../src/platform/errors.js';
 import type { AuthContext } from '../../src/platform/http/authenticate.js';
 import { createTestApp } from '../support/app.js';
 import { auditRows, failAuditInsert, markerRequestId } from '../support/audit.js';
-import { expectError, tenancyFixtures } from '../support/tenancy.js';
+import { expectError, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The platform team's view of the businesses through the real app (P5.7; closes P4 limitation 1; §8.1 #35, #36;
 // §8.2a rule 7): every page is a sensitive read the database records before returning the rows. Other test files
@@ -103,6 +103,36 @@ describe('the businesses (#35)', () => {
       JSON.stringify({ at: '2099-01-01T00:00:00.000000Z', id: a.merchantId, d: 'x' }),
     ).toString('base64url');
     expectError(await get(reader.token, `/v1/platform/merchants?cursor=${forged}`), 400, 'INVALID_CURSOR');
+  });
+
+  it('a real cursor whose timestamp is changed to an impossible date (digest kept) is 400 INVALID_CURSOR, not 500', async () => {
+    // The reviewer's finding at the P5.7 gate: the decoder checked the shape only, and the database's cast failed.
+    const admin = await fx.platformAdmin();
+    const a = await fx.business();
+    await fx.member(a, 'agent');
+    for (const tag of ['cursor-a', 'cursor-b'])
+      await call(admin.token, 'post', '/v1/platform/staff', { email: uniqueEmail(tag), role: 'support' });
+    const month99 = (cursor: string) => {
+      const value = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')) as { at: string };
+      value.at = value.at.replace(/^(\d{4})-\d{2}/, '$1-99');
+      return Buffer.from(JSON.stringify(value)).toString('base64url');
+    };
+    for (const path of [
+      '/v1/platform/merchants',
+      `/v1/platform/merchants/${a.merchantId}/members`,
+      '/v1/platform/staff',
+    ]) {
+      const cursor = (await get(admin.token, `${path}?limit=1`)).body.nextCursor as string;
+      expect(cursor, path).toBeTruthy();
+      const rid = markerRequestId('month99');
+      expectError(
+        await get(admin.token, `${path}?limit=1&cursor=${month99(cursor)}`, rid),
+        400,
+        'INVALID_CURSOR',
+      );
+      // Refused before any query: no read was recorded.
+      expect(await auditRows(owner, rid)).toEqual([]);
+    }
   });
 
   it('if the read cannot be recorded, the request fails and returns no data (§8.2a rule 7)', async () => {

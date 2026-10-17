@@ -6,7 +6,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { errorHandler } from '../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../src/platform/http/request-id.js';
+import { honourRequestId } from './support/request-id.js';
 import { validateRequest } from '../src/platform/http/validate.js';
 
 // Contract-driven request validation (§17). Synthetic endpoints isolate the middleware.
@@ -26,7 +26,7 @@ const endpoint = defineEndpoint({
 
 const app = express();
 app.use(express.json());
-app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
 app.post(endpoint.path, validateRequest(endpoint), (req, res) => {
   res.json(req.body);
 });
@@ -83,7 +83,7 @@ describe('path parameter validation', () => {
     responses: { 200: { description: 'ok' } },
   });
   const paramsApp = express();
-  paramsApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+  paramsApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
   paramsApp.get('/v1/test/things/:thingId', validateRequest(withParams), (req, res) => {
     res.json({ thingId: req.params.thingId });
   });
@@ -137,7 +137,7 @@ describe('query parameter validation (P5.3)', () => {
 
   let handlerRuns = 0;
   const queryApp = express();
-  queryApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+  queryApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
   for (const e of [listing, plain]) {
     queryApp.get(e.path, validateRequest(e), (req, res) => {
       handlerRuns += 1;

@@ -11,7 +11,7 @@ import { clearSessionCookies, setSessionCookies } from '../../src/modules/identi
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { LIMITS, RateLimiter } from '../../src/modules/identity/rate-limits.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../../src/platform/http/request-id.js';
+import { honourRequestId } from '../support/request-id.js';
 import { createTestApp } from '../support/app.js';
 import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
@@ -119,7 +119,7 @@ describe('RateLimiter (D13)', () => {
     await inOneWindow(window, LIMITS.mfa.windowSeconds, async () => {
       const id = `retry-${randomBytes(4).toString('hex')}@example.test`;
       const app = express();
-      app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+      app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
       app.post('/try', async (_req, res, next) => {
         try {
           await limiter.enforce('mfa', '198.51.100.1', id);

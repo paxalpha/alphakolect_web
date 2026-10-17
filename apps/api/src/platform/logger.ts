@@ -1,8 +1,11 @@
-import { pino, type DestinationStream, type Logger } from 'pino';
+import { pino, stdSerializers, type DestinationStream, type Logger } from 'pino';
 import type { Config } from './config.js';
 
-// Structured JSON logs with redaction (TARGET_ARCHITECTURE §28).
-// Anything that could carry a credential or personal financial identifier is removed.
+// Structured JSON logs (TARGET_ARCHITECTURE §28). From P5.8 (P5 plan §8.6, R49, R50) a request is logged by an
+// **allowlist**: its id, method and path, and its status code — no header, no query string and no remote address, so
+// no IP address or user agent (D9: the AlphaKolect team cannot see them; the activity record keeps them under the D9
+// rules). A database error is logged as its structural fields only. The redaction list stays, as defence in depth for
+// credentials.
 export const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
@@ -26,11 +29,54 @@ export const REDACT_PATHS = [
   '*.nin',
 ];
 
+/** The request line: the id, the method and the path — never the query string, a header or the remote address. */
+const requestLine = (req: { id?: unknown; method?: unknown; url?: unknown }) => ({
+  id: req.id,
+  method: req.method,
+  url: typeof req.url === 'string' ? req.url.split('?')[0] : undefined,
+});
+
+/** The response line: the status code — never a header. */
+const responseLine = (res: { statusCode?: unknown }) => ({ statusCode: res.statusCode });
+
+/** The structural fields of a PostgreSQL error: none can hold a value of a row or of the input. */
+const DATABASE_ERROR_FIELDS = [
+  'code',
+  'severity',
+  'constraint',
+  'schema',
+  'table',
+  'column',
+  'routine',
+] as const;
+
+/**
+ * An error, for a log line. A database error — a SQLSTATE code and a severity — is logged as its structural fields
+ * only, under a fixed message: its message, detail, where, hint and stack can print a row's values or the input (a
+ * failed session insert's "Failing row contains (…)" holds its IP address and user agent). Any other error keeps its
+ * type, message and stack: the IP address and user agent reach code only as request context passed to SQL.
+ */
+export function logError(err: unknown): unknown {
+  if (err !== null && typeof err === 'object') {
+    const e = err as Record<string, unknown>;
+    if (typeof e.code === 'string' && /^[0-9A-Z]{5}$/.test(e.code) && typeof e.severity === 'string') {
+      const out: Record<string, unknown> = { type: 'DatabaseError', message: `database error ${e.code}` };
+      for (const field of DATABASE_ERROR_FIELDS) if (typeof e[field] === 'string') out[field] = e[field];
+      return out;
+    }
+  }
+  return stdSerializers.err(err as Error);
+}
+
+/** The request logger's serializers (pino-http): the allowlist above. */
+export const HTTP_LOG_SERIALIZERS = { req: requestLine, res: responseLine, err: logError };
+
 export function createLogger(config: Pick<Config, 'logLevel'>, destination?: DestinationStream): Logger {
   return pino(
     {
       level: config.logLevel,
       base: { service: 'api' },
+      serializers: { err: logError },
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
       timestamp: pino.stdTimeFunctions.isoTime,
     },

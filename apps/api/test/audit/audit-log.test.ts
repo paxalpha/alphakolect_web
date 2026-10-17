@@ -8,7 +8,7 @@ import { AuditLog, AuditUsageError, type AuditContext } from '../../src/modules/
 import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
 import { createDb } from '../../src/platform/db.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../../src/platform/http/request-id.js';
+import { honourRequestId } from '../support/request-id.js';
 import { auditRows, failAuditInsert, markerRequestId } from '../support/audit.js';
 
 // P5.3a (ADR-16 §3.5; P5 plan §8.1, §8.2, §9.4): the three audit entry points against the real database, each row of
@@ -200,7 +200,7 @@ describe('recordBestEffort — best effort: programming errors throw, data and s
 describe('the HTTP status of the request in hand', () => {
   // A synthetic endpoint: a programming error in an audit call fails the request (500), whatever the entry point.
   const app = express();
-  app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+  app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
   app.get('/probe/:which', async (req, res, next) => {
     try {
       const requestId = String(req.id);

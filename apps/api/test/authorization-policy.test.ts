@@ -27,7 +27,7 @@ import {
 } from '../src/platform/authorization.js';
 import type { AuthContext } from '../src/platform/http/authenticate.js';
 import { errorHandler } from '../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../src/platform/http/request-id.js';
+import { honourRequestId } from './support/request-id.js';
 import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
 import { apiProgram, authorityFlows, type Finding as FlowFinding } from './support/authority-flow.js';
 import { auditRows, markerRequestId } from './support/audit.js';
@@ -157,7 +157,7 @@ describe('the middleware (synthetic endpoints)', () => {
 
   function appWith(deps: AuthorizeDeps, auth: AuthContext | null = AUTH) {
     const app = express();
-    app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+    app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
     app.use((req, _res, next) => {
       if (auth) req.auth = auth;
       next();

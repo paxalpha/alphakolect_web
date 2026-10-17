@@ -17,7 +17,7 @@ import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { authenticate, knownPermissions } from '../../src/platform/http/authenticate.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../../src/platform/http/request-id.js';
+import { honourRequestId } from '../support/request-id.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 
 // The authentication middleware (ADR-14 D6, D7; P3 exit criteria 6, 9, 10) against real sessions in the real
@@ -71,7 +71,7 @@ const E = {
 
 const app = express();
 app.use(express.json());
-app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
 for (const e of Object.values(E)) {
   app[e.method](e.path, authenticate(e, { ...auth, logger: pino({ level: 'silent' }) }), (req, res) => {
     res.json(req.auth);

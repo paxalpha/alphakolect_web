@@ -33,9 +33,10 @@ import { authorize } from '../authorization.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { Mailer, type EmailSender } from '../email.js';
+import { HTTP_LOG_SERIALIZERS } from '../logger.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
-import { resolveRequestId } from './request-id.js';
+import { serverRequestId, type RequestIdSource } from './request-id.js';
 import { API_PREFIX, buildV1Router } from './routes.js';
 
 export type AppDeps = {
@@ -54,6 +55,8 @@ export type AppDeps = {
   mfaEncryption: { current: EncryptionKey; previous?: EncryptionKey | undefined };
   /** D14: CAPTCHA hook for signup (P15). */
   signupGuard?: SignupGuard;
+  /** How a request gets its id: the server's own, always (§8.6). Only the tests' app passes another. */
+  requestId?: RequestIdSource;
 };
 
 export function createApp({
@@ -66,6 +69,7 @@ export function createApp({
   webAppUrl,
   signupGuard,
   mfaEncryption,
+  requestId = serverRequestId,
 }: AppDeps): Express {
   const app = express();
   // An array of addresses/subnets (never a hop count): see TrustedProxies.
@@ -76,7 +80,9 @@ export function createApp({
   app.use(
     pinoHttp({
       logger,
-      genReqId: resolveRequestId,
+      genReqId: requestId,
+      // The allowlist (§8.6): id, method, path and status — no header, query string or remote address.
+      serializers: HTTP_LOG_SERIALIZERS,
       // Health probes are frequent and uninteresting.
       autoLogging: { ignore: (req) => req.url === '/v1/health' },
     }),

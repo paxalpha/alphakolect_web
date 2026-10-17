@@ -332,3 +332,168 @@ describe('no secret leaves through a response, a log line or the audit log (exit
     expect(leaks).toEqual([]);
   });
 });
+
+// ── D9 (P5 plan §8.6, P5.8; R49, R50): no IP address or user agent in a log line, a response or a stored request id ──
+// The server as production builds it — its own request ids — with its real logger at trace level. Distinctive
+// addresses ride in every header a proxy or client could use, a distinctive user agent in every request, a forged
+// X-Request-ID holding an address, and an address in a query string; and a database failure is injected whose message
+// and detail print the new session's IP address and user agent. The activity record keeps the IP address and user agent
+// (D9); nothing else may.
+const d9Lines: string[] = [];
+const d9Stream = new Writable({
+  write(chunk, _enc, done) {
+    d9Lines.push(String(chunk));
+    done();
+  },
+});
+const served = await createTestApp({
+  serverRequestIds: true,
+  logger: createLogger({ logLevel: 'trace' }, d9Stream),
+});
+
+describe('no IP address or user agent reaches a log line, a response or a stored request id (D9, §8.6)', () => {
+  const octet = () => 1 + (randomBytes(1)[0]! % 250);
+  const address = () => `198.18.${octet()}.${octet()}`;
+  const v = {
+    forwardedFor: address(),
+    realIp: address(),
+    forwarded: address(),
+    cloudflare: address(),
+    trueClient: address(),
+    custom: address(),
+    forgedRequestId: address(),
+    query: address(),
+    failingIp: address(),
+    userAgent: `d9-sweep-agent/${randomBytes(4).toString('hex')}`,
+    failingAgent: `d9-failing-agent/${randomBytes(4).toString('hex')}`,
+  };
+  const values = Object.values(v);
+  const responses: request.Response[] = [];
+  const headed = (req: request.Test, ip = v.forwardedFor, agent = v.userAgent) =>
+    req
+      .set('X-Forwarded-For', ip)
+      .set('X-Real-IP', v.realIp)
+      .set('Forwarded', `for=${v.forwarded}`)
+      .set('CF-Connecting-IP', v.cloudflare)
+      .set('True-Client-IP', v.trueClient)
+      .set('X-Client-Address', v.custom)
+      .set('X-Request-ID', v.forgedRequestId)
+      .set('User-Agent', agent)
+      .set('Origin', TEST_WEB_ORIGIN);
+  const keepRes = async (req: request.Test) => {
+    const res = await req;
+    responses.push(res);
+    return res;
+  };
+  const failSchema = `d9_fail_${randomBytes(4).toString('hex')}`;
+
+  it('sends the journeys: sign-up, verification, sign-in, a session read, a query string, a 404, and a failing sign-in', async () => {
+    const who = `d9-sweep-${randomBytes(5).toString('hex')}@example.test`;
+    const password = 'a d9 sweep passphrase';
+    await keepRes(
+      headed(request(served.app).post('/v1/auth/signup')).send({
+        email: who,
+        password,
+        businessName: 'D9 Sweep Ltd',
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(served.email.to(who).some((m) => m.template === 'email_verification')).toBe(true),
+    );
+    const token = /#token=([A-Za-z0-9_-]{43})/.exec(
+      served.email.to(who).find((m) => m.template === 'email_verification')!.text,
+    )![1]!;
+    await keepRes(headed(request(served.app).post('/v1/auth/email/verify')).send({ token }));
+    const login = await keepRes(
+      headed(request(served.app).post('/v1/auth/login')).send({ email: who, password, audience: 'merchant' }),
+    );
+    expect(login.status, JSON.stringify(login.body)).toBe(200);
+    const access = ((login.headers['set-cookie'] as unknown as string[]) ?? [])
+      .map((c) => c.split(';')[0]!)
+      .find((c) => c.startsWith(`${AUTH_COOKIES.access}=`))!;
+    await keepRes(headed(request(served.app).get('/v1/auth/session')).set('Cookie', access));
+    await keepRes(headed(request(served.app).get(`/v1/health?addr=${v.query}&agent=${v.userAgent}`)));
+    await keepRes(headed(request(served.app).get(`/v1/nowhere?addr=${v.query}`)));
+
+    // A database failure whose message and detail print the new session's IP address and user agent.
+    await migrator.query(`CREATE SCHEMA ${failSchema}`);
+    try {
+      await migrator.query(
+        `CREATE FUNCTION ${failSchema}.fail() RETURNS trigger LANGUAGE plpgsql AS $fn$
+         BEGIN
+           IF NEW.user_agent = '${v.failingAgent}' THEN
+             RAISE EXCEPTION 'session from % with %', NEW.created_ip, NEW.user_agent
+               USING ERRCODE = 'XX000', DETAIL = format('Failing row contains (%s, %s)', NEW.created_ip, NEW.user_agent),
+                     HINT = NEW.user_agent;
+           END IF;
+           RETURN NEW;
+         END $fn$`,
+      );
+      await migrator.query(
+        `CREATE TRIGGER d9_fail BEFORE INSERT ON identity.sessions FOR EACH ROW EXECUTE FUNCTION ${failSchema}.fail()`,
+      );
+      const failed = await keepRes(
+        headed(request(served.app).post('/v1/auth/login'), v.failingIp, v.failingAgent).send({
+          email: who,
+          password,
+          audience: 'merchant',
+        }),
+      );
+      expect(failed.status).toBe(500);
+    } finally {
+      await migrator.query(`DROP TRIGGER IF EXISTS d9_fail ON identity.sessions`);
+      await migrator.query(`DROP SCHEMA ${failSchema} CASCADE`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50)); // let the last log lines land
+  });
+
+  it('the server’s own request id answers every request; the forged one is ignored', () => {
+    for (const res of responses) {
+      expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+      expect(res.headers['x-request-id']).not.toBe(v.forgedRequestId);
+    }
+  });
+
+  it('no log line carries an address or a user agent — and the failure was logged, by its structure only', () => {
+    expect(d9Lines.length).toBeGreaterThan(responses.length);
+    const leaks = d9Lines.flatMap((line) =>
+      values.filter((value) => line.includes(value)).map((value) => `${value} in ${line.slice(0, 200)}`),
+    );
+    expect(leaks).toEqual([]);
+    // Not vacuous: the injected failure reached the log, as its SQLSTATE and a fixed message.
+    const failure = d9Lines
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .find((l) => (l.err as { code?: string } | undefined)?.code === 'XX000');
+    expect(failure?.err).toMatchObject({
+      type: 'DatabaseError',
+      message: 'database error XX000',
+      code: 'XX000',
+      severity: 'ERROR',
+    });
+    for (const field of ['detail', 'hint', 'where', 'stack']) expect(failure?.err).not.toHaveProperty(field);
+    // And a request line is the id, the method and the path — no query string, header or address.
+    const lines = d9Lines.map((l) => JSON.parse(l) as { req?: Record<string, unknown> }).filter((l) => l.req);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(Object.keys(l.req!).sort()).toEqual(['id', 'method', 'url']);
+  });
+
+  it('no response carries one (beyond what the caller sent: none echoed)', () => {
+    const leaks = responses.flatMap((res) => {
+      const visible = `${JSON.stringify(res.body)} ${JSON.stringify(res.headers)}`;
+      return values.filter((value) => visible.includes(value)).map((value) => `${res.status}: ${value}`);
+    });
+    expect(leaks).toEqual([]);
+  });
+
+  it('no stored request id carries one; the activity record keeps the IP address and user agent (D9)', async () => {
+    const ids = responses.map((r) => r.headers['x-request-id']);
+    const rows = await migrator.query<{ request_id: string; ip: string | null; user_agent: string | null }>(
+      `SELECT request_id, ip, user_agent FROM audit.audit_events WHERE request_id = ANY($1) OR request_id = ANY($2)`,
+      [ids, values],
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.filter((r) => values.includes(r.request_id))).toEqual([]);
+    expect(rows.every((r) => ids.includes(r.request_id))).toBe(true);
+    expect(rows.some((r) => r.ip === v.forwardedFor && r.user_agent === v.userAgent)).toBe(true);
+  });
+});

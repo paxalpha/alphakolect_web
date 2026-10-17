@@ -455,8 +455,9 @@ codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
 
 Frozen on the owner's O4 decision (2026-10-17, on the measured evidence of
 `docs/architecture/evidence/p5-o4-spike/`) and the visibility rules already decided (O3, D8′, D9, CF5). Nothing here is
-built until the reviewer confirms this addendum. One owner question is open: **O19**, whether a business's record names
-the platform team member (below); the contract's shape does not depend on the answer.
+built until the reviewer confirms this addendum. **O19** — whether a business's record names the platform team member —
+is answered: "AlphaKolect team", without naming the person (the owner, 2026-10-17, relayed; his signature on the form is
+requested).
 
 **Common to both reads.** Every rule of the frozen lists above applies (`{ items, nextCursor }`, opaque cursor,
 `400 INVALID_CURSOR`), and:
@@ -479,7 +480,14 @@ the platform team member (below); the contract's shape does not depend on the an
   email), `target` (`{ type, id }` or `null`), `summary` (the catalog's allowlisted fields for that event, never
   credentials, tokens or request bodies), `ip` and `userAgent` (strings, or `null` where the reader may not see them —
   the fields are always present). The platform read adds `merchantId` (`null` for a platform-wide event).
-- **`actor`:** `{ audience: 'merchant' | 'agent' | 'platform', membershipId, email }`, the email as it is when read.
+- **`actor`:** `null` when the event records no person; otherwise `{ audience, membershipId, email }`, **each as
+  recorded and each nullable on its own** — the record's actor columns are independent, and nothing is inferred
+  (amended at the reviewer's addendum review, 2026-10-17): `audience` is `'merchant'`, `'agent'` or `'platform'` when the
+  person acted through a signed-in session of that audience, and `null` when the event records none — for example an
+  invitation acceptance, recorded with the person and their new membership but no audience (a capability, not a
+  session); `membershipId` is the membership the event records, or `null`; `email` is the person's email as it is when
+  read. A test fails if any writer records an audience outside those three. **The platform team** is an actor whose
+  identity holds a platform membership (CF3 keeps an identity on one side only), whatever the event's audience.
 - **Errors:** 400 `VALIDATION_ERROR` (window, limit, a malformed identifier, an unknown event identifier), 400
   `INVALID_CURSOR`, 401, 403 (`FORBIDDEN`, `WRONG_AUDIENCE`), 404 `NOT_FOUND` (a filter naming a person or business
   that does not exist for the reader).
@@ -488,7 +496,7 @@ the platform team member (below); the contract's shape does not depend on the an
 
 | Operation | Method and path | Authorization | Filters (each optional, combinable) | What the reader sees | Built in |
 |---|---|---|---|---|---|
-| `listMerchantAuditEvents` (#33, `audit.read_merchant_events`) | `GET /v1/merchant/audit-events` | `merchant.audit.read` — the owner only (D8′) | `membershipId`: one member of the business, any status — that person's events in this business (O3; **by person only**, O4 Q3) | every event of the business only (the merchant from the session, R19), refused attempts included (O3), with `ip` and `userAgent` (D9) — except the platform team's actions, shown **without** them (CF5); its own people with `membershipId` and email; the platform team, pending **O19**, as `{ audience: 'platform', membershipId: null, email: null }` ("AlphaKolect team", the suggested answer) or with the team member's email | P5.8 |
+| `listMerchantAuditEvents` (#33, `audit.read_merchant_events`) | `GET /v1/merchant/audit-events` | `merchant.audit.read` — the owner only (D8′) | `membershipId`: one member of the business, any status — that person's events in this business (O3; **by person only**, O4 Q3) | every event of the business only (the merchant from the session, R19), refused attempts included (O3), with `ip` and `userAgent` (D9) — except the platform team's actions, shown **without** them (CF5); every other actor as recorded, with email; the platform team always as `{ audience: 'platform', membershipId: null, email: null }` — "AlphaKolect team", not naming the person (**O19**) | P5.8 |
 | `listPlatformAuditEvents` (#34, `audit.read_platform_events`) | `GET /v1/platform/audit-events` | `platform.audit.read` (grantable; the super admin holds every platform permission) | `merchantId` (one business), `membershipId` (one person, by any of their memberships — all of that person's events), `event` (one catalog identifier) (O4 Q4) | every event on the platform, each actor with `membershipId` and email; `ip` and `userAgent` **to the super admin only** — `null` for a platform staff member, whatever their grants (D9, F3) | P5.8 |
 
 **The record of a read.** #33 is written with the business as `merchant_id`, so the owner's own look at the record is in
@@ -505,7 +513,9 @@ businesses, the shape the spike did not cover. Footprints as in the plan (§7.2)
 **Tests (with the endpoints):** both reads refuse every reader without the permission and record the refusal; the
 merchant read returns no other business's event under any filter or cursor; the window, page and cursor rules on both;
 `ip` and `userAgent` shown and withheld exactly as above (own people, platform team, super admin, platform staff);
-the read event written before the rows, and no rows when it cannot be written; the app's direct `SELECT` refused.
+every actor shape the writers record, returned as recorded — an invitation acceptance included (a person and a
+membership, no audience) — and the platform team unnamed in a business's record whatever its audience; the read event
+written before the rows, and no rows when it cannot be written; the app's direct `SELECT` refused.
 
 #### Rollout
 
@@ -544,7 +554,7 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | CF1 | All earlier answers confirmed and signed | owner, 2026-10-12 | confirmation CF1 | `fa5a22f` |
 | O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` |
 | O4 — decided | Both reads: at most 100 events a page, a window of at most 31 days; the merchant read filters by person only, the platform read by business, person and kind of activity | owner, signed 2026-10-17 | `P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` Q1–Q4, on the spike's evidence | `7497869`; plan `623c52d`; the addendum above |
-| O19 | Whether a business's record names the platform team member | — | `P5_OWNER_TEAM_IN_BUSINESS_RECORD.md` | `c78dec8` — **open** |
+| O19 | A business's record shows the platform team's actions as "AlphaKolect team", without naming the person | owner, 2026-10-17 (relayed; signature requested) | `P5_OWNER_TEAM_IN_BUSINESS_RECORD.md` T1 | asked `c78dec8`, answered `4fe4f75`; the addendum above |
 | O10–O12 | Backup retention, the report copy's handling, a privacy notice | — | `P5_OWNER_PRIVACY_QUESTIONS.md` | `4b4ece9` — **open**, needed at P5.8 step (e) |
 | Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk (**superseded by B1**); atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
 | Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |

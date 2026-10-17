@@ -403,8 +403,9 @@ superseded; see the decision log.
   people (never the platform team's) and to the super admin — **never to platform staff**. The app role loses direct
   `SELECT` on the activity table (every read goes through the audited functions); the reporting role loses the `ip` and
   `user_agent` columns.
-- **Logs.** Application logs use an **allowlist**: request id (always server-generated), method and path without query
-  string; status code; database errors as structural fields only. No IP address, user agent or caller-controlled value
+- **Logs.** Application logs use an **allowlist**: request id (always server-generated) and method; the contract route
+  the request matched (its template, parameters unfilled — none for an unmatched request), never the path as sent
+  (amended at the P5.8 hold-point review, which found a caller can put anything in a path); status code; database errors as structural fields only. No IP address, user agent or caller-controlled value
   reaches a log line unchecked. The same rule binds the deployment (P15): the reverse proxy
   records no client IP address or user agent in its access logs, and error tracking sends neither (RESTRUCTURING_MAP,
   obligations P5 passes to P15).
@@ -448,7 +449,63 @@ codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
 | `setPlatformStaffPermissions` | `PUT /v1/platform/staff/{platformMembershipId}/permissions` | `platform.staff.manage` | `{ permissions: string[] }` — unique, grantable platform identifiers; may be empty | 200 `PlatformStaffMember` | 400, 401, 403, 404, 409 `INVALID_LIFECYCLE_TRANSITION` (deactivated) | P5.7 |
 | (params) `listMembers` | `GET /v1/merchant/members` | unchanged | query `cursor?`, `limit?` | `MemberList`, oldest first (unchanged order) | + 400 `INVALID_CURSOR` | P5.8 |
 | (params) `listInvitations` | `GET /v1/merchant/invitations` | unchanged | query `status?` (`open` default \| `all`), `cursor?`, `limit?` | `InvitationList`, newest first (unchanged order); `open` = pending and unexpired | + 400 `INVALID_CURSOR` | P5.8 |
-| `listMerchantAuditEvents` · `listPlatformAuditEvents` | `GET /v1/merchant/audit-events` · `GET /v1/platform/audit-events` | `merchant.audit.read` (owner) · `platform.audit.read` | required window `from`, `to`; filters (actor; platform also merchant, event identifier); `cursor?`, `limit?` | **frozen at P5.8 step 3**, after the measured O4 decision — page size and window bounds are not set here | — | P5.8 |
+| `listMerchantAuditEvents` · `listPlatformAuditEvents` | `GET /v1/merchant/audit-events` · `GET /v1/platform/audit-events` | `merchant.audit.read` (owner) · `platform.audit.read` | required window `from`, `to`; filters (actor; platform also merchant, event identifier); `cursor?`, `limit?` | **frozen in the addendum below** (O4, 2026-10-17) | see the addendum | P5.8 |
+
+#### Addendum — the activity-record reads (P5.8; drafted 2026-10-17, awaiting the reviewer's confirmation)
+
+Frozen on the owner's O4 decision (2026-10-17, on the measured evidence of
+`docs/architecture/evidence/p5-o4-spike/`) and the visibility rules already decided (O3, D8′, D9, CF5). Nothing here is
+built until the reviewer confirms this addendum. One owner question is open: **O19**, whether a business's record names
+the platform team member (below); the contract's shape does not depend on the answer.
+
+**Common to both reads.** Every rule of the frozen lists above applies (`{ items, nextCursor }`, opaque cursor,
+`400 INVALID_CURSOR`), and:
+
+- **Window, every request (O4):** `from` and `to` are required timestamps with an offset; the window is
+  `from ≤ occurredAt < to`; `from < to`; `to − from` at most **31 days** (744 hours). A missing, inverted or longer
+  window is `400 VALIDATION_ERROR`.
+- **Page (O4):** `limit` optional, 1–**100**, default 50, as for every list.
+- **Order:** newest first, `(occurredAt, eventId)` descending — events of one transaction share a timestamp, and the
+  identifier breaks the tie.
+- **Cursor:** a position `(occurredAt, eventId)` and a digest of the normalised window and filters. A cursor issued for
+  another window or other filters, or positioned outside the window, is `400 INVALID_CURSOR`; its timestamp must be a
+  real instant (the P5.7 rule). The window and filters always come from the request.
+- **The read is recorded first** (sensitive read, §8.2a rule 7): the designated function writes its one read event,
+  then returns the page, in one transaction; if the event cannot be written, no row is returned. Its summary holds
+  the window, the limit, whether it continues a cursor, and the filters given (identifiers only). A refusal is written
+  best effort (`denied`).
+- **Item `AuditEvent`:** `eventId`, `occurredAt`, `event` (the catalog identifier), `outcome`
+  (`success` · `failure` · `denied`), `actor` (below; `null` when the event has none, e.g. a sign-in to an unknown
+  email), `target` (`{ type, id }` or `null`), `summary` (the catalog's allowlisted fields for that event, never
+  credentials, tokens or request bodies), `ip` and `userAgent` (strings, or `null` where the reader may not see them —
+  the fields are always present). The platform read adds `merchantId` (`null` for a platform-wide event).
+- **`actor`:** `{ audience: 'merchant' | 'agent' | 'platform', membershipId, email }`, the email as it is when read.
+- **Errors:** 400 `VALIDATION_ERROR` (window, limit, a malformed identifier, an unknown event identifier), 400
+  `INVALID_CURSOR`, 401, 403 (`FORBIDDEN`, `WRONG_AUDIENCE`), 404 `NOT_FOUND` (a filter naming a person or business
+  that does not exist for the reader).
+- **Database access:** the app loses `SELECT` on `audit.audit_events` and the reporting role loses its `ip` and
+  `user_agent` columns, in the migration that creates the two functions; every read goes through them.
+
+| Operation | Method and path | Authorization | Filters (each optional, combinable) | What the reader sees | Built in |
+|---|---|---|---|---|---|
+| `listMerchantAuditEvents` (#33, `audit.read_merchant_events`) | `GET /v1/merchant/audit-events` | `merchant.audit.read` — the owner only (D8′) | `membershipId`: one member of the business, any status — that person's events in this business (O3; **by person only**, O4 Q3) | every event of the business only (the merchant from the session, R19), refused attempts included (O3), with `ip` and `userAgent` (D9) — except the platform team's actions, shown **without** them (CF5); its own people with `membershipId` and email; the platform team, pending **O19**, as `{ audience: 'platform', membershipId: null, email: null }` ("AlphaKolect team", the suggested answer) or with the team member's email | P5.8 |
+| `listPlatformAuditEvents` (#34, `audit.read_platform_events`) | `GET /v1/platform/audit-events` | `platform.audit.read` (grantable; the super admin holds every platform permission) | `merchantId` (one business), `membershipId` (one person, by any of their memberships — all of that person's events), `event` (one catalog identifier) (O4 Q4) | every event on the platform, each actor with `membershipId` and email; `ip` and `userAgent` **to the super admin only** — `null` for a platform staff member, whatever their grants (D9, F3) | P5.8 |
+
+**The record of a read.** #33 is written with the business as `merchant_id`, so the owner's own look at the record is in
+it. #34 is written with `merchant_id` = the filtered business when the read is filtered by one (so that business's
+record shows that the AlphaKolect team looked at it, as #36 does for its list of people), and `NULL` otherwise.
+
+**Indexes and locks.** The indexes are those the spike measured as reading about one page —
+`(occurred_at, id)`, `(merchant_id, occurred_at, id)` (superseding `(merchant_id, occurred_at)`) and
+`(actor_identity_id, occurred_at, id)`; the event filter uses the existing `(action, occurred_at)` — confirmed on recorded
+plans when the migration is written, including a business filtered by a platform team member busy across many
+businesses, the shape the spike did not cover. Footprints as in the plan (§7.2): #33 locks the owner's membership
+(`FOR SHARE`), #34 the reader's platform membership; then the read event, then one `SELECT` with no row locks.
+
+**Tests (with the endpoints):** both reads refuse every reader without the permission and record the refusal; the
+merchant read returns no other business's event under any filter or cursor; the window, page and cursor rules on both;
+`ip` and `userAgent` shown and withheld exactly as above (own people, platform team, super admin, platform staff);
+the read event written before the rows, and no rows when it cannot be written; the app's direct `SELECT` refused.
 
 #### Rollout
 
@@ -485,7 +542,9 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | D9 — purpose and visibility | IP address and user agent kept to investigate break-ins and settle disputes; visible to each business owner for their own business's people and to the super admin; never to platform staff | owner, 2026-10-11/12 | questions D1–D2; follow-up F3 | `8f15ceb`, `00724ec`; plan `8b17657` |
 | D9 — retention | Every activity entry kept two years, then deleted in full, existing entries included; a copy of entries due for deletion on request, no copy kept; the same two-year rule for IP and device details kept with sign-ins and links (CF4) — **implemented by Part 2** | owner, 2026-10-11/12 | questions D3–D5; follow-up F4; confirmation CF2, CF4 | `fa5a22f`; plan `8b17657` |
 | CF1 | All earlier answers confirmed and signed | owner, 2026-10-12 | confirmation CF1 | `fa5a22f` |
-| O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` — **open by design** |
+| O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` |
+| O4 — decided | Both reads: at most 100 events a page, a window of at most 31 days; the merchant read filters by person only, the platform read by business, person and kind of activity | owner, signed 2026-10-17 | `P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` Q1–Q4, on the spike's evidence | `7497869`; plan `623c52d`; the addendum above |
+| O19 | Whether a business's record names the platform team member | — | `P5_OWNER_TEAM_IN_BUSINESS_RECORD.md` | `c78dec8` — **open** |
 | O10–O12 | Backup retention, the report copy's handling, a privacy notice | — | `P5_OWNER_PRIVACY_QUESTIONS.md` | `4b4ece9` — **open**, needed at P5.8 step (e) |
 | Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk (**superseded by B1**); atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
 | Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |

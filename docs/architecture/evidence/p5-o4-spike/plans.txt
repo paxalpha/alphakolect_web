@@ -1,0 +1,393 @@
+dataset: {"events":2000000,"merchants":3000,"actors":15000,"days":730,"platformShare":0.05,"groupSizes":"1–4 events per transaction, sharing its timestamp","skew":"business = floor(3000 · u³): the busiest holds about 7% of all events","actorsPerMerchant":5}
+window: 31 days; page: 100
+seeded in 285 s: {"events":2000000,"platform_events":100465,"shared_timestamps":600000,"latest":"2026-12-31T23:59:37.869Z"}; busiest business 131957 events (5798 in the window); a small one 198; all events in the window 84670; the busiest business's busiest actor 26639
+
+---- S0 existing: (merchant_id, occurred_at), (action, occurred_at) (indexes built in 2 s)
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #33 first page, busiest (generic plan)
+Limit (actual time=0.116..0.286 rows=101 loops=1)
+  Buffers: shared hit=46
+  ->  Incremental Sort (actual time=0.114..0.274 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=46
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.042..0.176 rows=104 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=46
+Planning Time: 0.078 ms
+Execution Time: 0.358 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #33 continuation, busiest (generic plan)
+Limit (actual time=0.127..0.241 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Incremental Sort (actual time=0.125..0.230 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=45
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.055..0.163 rows=103 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2) AND (occurred_at <= $4))
+              Filter: (ROW(occurred_at, id) < ROW($4, $5))
+              Buffers: shared hit=45
+Planning Time: 0.062 ms
+Execution Time: 0.312 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #33 by person, busiest (generic plan)
+Limit (actual time=0.133..0.375 rows=101 loops=1)
+  Buffers: shared hit=171
+  ->  Incremental Sort (actual time=0.132..0.367 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Methods: top-N heapsort, quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=171
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.030..0.308 rows=104 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Filter: (actor_identity_id = $4)
+              Rows Removed by Filter: 294
+              Buffers: shared hit=171
+Planning Time: 0.042 ms
+Execution Time: 0.415 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #33 first page, small (generic plan)
+Limit (actual time=0.062..0.065 rows=12 loops=1)
+  Buffers: shared hit=8
+  ->  Incremental Sort (actual time=0.059..0.061 rows=12 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
+        Buffers: shared hit=8
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.032..0.041 rows=12 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=8
+Planning Time: 0.041 ms
+Execution Time: 0.105 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #33 empty window (generic plan)
+Limit (actual time=0.039..0.040 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Incremental Sort (actual time=0.038..0.038 rows=0 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
+        Buffers: shared hit=3
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.029..0.029 rows=0 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=3
+Planning Time: 0.043 ms
+Execution Time: 0.077 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 first page (generic plan)
+Limit (actual time=149.219..161.045 rows=101 loops=1)
+  Buffers: shared hit=15465 read=33037
+  ->  Gather Merge (actual time=149.216..161.033 rows=101 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=15465 read=33037
+        ->  Sort (actual time=115.733..115.739 rows=82 loops=3)
+              Sort Key: occurred_at DESC, id DESC
+              Sort Method: top-N heapsort  Memory: 46kB
+              Buffers: shared hit=15465 read=33037
+              Worker 0:  Sort Method: top-N heapsort  Memory: 47kB
+              Worker 1:  Sort Method: top-N heapsort  Memory: 47kB
+              ->  Parallel Seq Scan on audit_events e (actual time=0.169..104.979 rows=28223 loops=3)
+                    Filter: ((occurred_at >= $1) AND (occurred_at < $2))
+                    Rows Removed by Filter: 638443
+                    Buffers: shared hit=15375 read=33037
+Planning Time: 0.054 ms
+Execution Time: 161.107 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 continuation (generic plan)
+Limit (actual time=115.469..120.313 rows=101 loops=1)
+  Buffers: shared hit=15599 read=32845
+  ->  Gather Merge (actual time=115.466..120.296 rows=101 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=15599 read=32845
+        ->  Sort (actual time=90.658..90.663 rows=77 loops=3)
+              Sort Key: occurred_at DESC, id DESC
+              Sort Method: top-N heapsort  Memory: 48kB
+              Buffers: shared hit=15599 read=32845
+              Worker 0:  Sort Method: top-N heapsort  Memory: 46kB
+              Worker 1:  Sort Method: top-N heapsort  Memory: 46kB
+              ->  Parallel Seq Scan on audit_events e (actual time=0.150..87.744 rows=7056 loops=3)
+                    Filter: ((occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($3, $4)))
+                    Rows Removed by Filter: 659611
+                    Buffers: shared hit=15567 read=32845
+Planning Time: 5.192 ms
+Execution Time: 120.389 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 by business (generic plan)
+Limit (actual time=0.215..0.506 rows=101 loops=1)
+  Buffers: shared hit=46
+  ->  Incremental Sort (actual time=0.212..0.479 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=46
+        ->  Index Scan Backward using audit_events_merchant_id_occurred_at_idx on audit_events e (actual time=0.073..0.308 rows=104 loops=1)
+              Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=46
+Planning Time: 0.111 ms
+Execution Time: 0.616 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 by person (generic plan)
+Limit (actual time=122.298..135.177 rows=101 loops=1)
+  Buffers: shared hit=15759 read=32653
+  ->  Sort (actual time=122.296..135.166 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Sort Method: top-N heapsort  Memory: 48kB
+        Buffers: shared hit=15759 read=32653
+        ->  Gather (actual time=11.625..134.365 rows=1196 loops=1)
+              Workers Planned: 2
+              Workers Launched: 2
+              Buffers: shared hit=15759 read=32653
+              ->  Parallel Seq Scan on audit_events e (actual time=61.821..98.312 rows=399 loops=3)
+                    Filter: ((occurred_at >= $1) AND (occurred_at < $2) AND (actor_identity_id = $3))
+                    Rows Removed by Filter: 666268
+                    Buffers: shared hit=15759 read=32653
+Planning Time: 0.043 ms
+Execution Time: 135.223 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 by event (generic plan)
+Limit (actual time=0.143..0.251 rows=101 loops=1)
+  Buffers: shared hit=105
+  ->  Incremental Sort (actual time=0.142..0.243 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=105
+        ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.086..0.207 rows=102 loops=1)
+              Index Cond: ((action = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=105
+Planning Time: 0.031 ms
+Execution Time: 0.284 ms
+
+== S0 existing: (merchant_id, occurred_at), (action, occurred_at): #34 empty window (generic plan)
+Limit (actual time=128.052..133.784 rows=0 loops=1)
+  Buffers: shared hit=16108 read=32394
+  ->  Gather Merge (actual time=128.050..133.780 rows=0 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        Buffers: shared hit=16108 read=32394
+        ->  Sort (actual time=89.666..89.667 rows=0 loops=3)
+              Sort Key: occurred_at DESC, id DESC
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: shared hit=16108 read=32394
+              Worker 0:  Sort Method: quicksort  Memory: 25kB
+              Worker 1:  Sort Method: quicksort  Memory: 25kB
+              ->  Parallel Seq Scan on audit_events e (actual time=89.352..89.353 rows=0 loops=3)
+                    Filter: ((occurred_at >= $1) AND (occurred_at < $2))
+                    Rows Removed by Filter: 666667
+                    Buffers: shared hit=16018 read=32394
+Planning Time: 0.048 ms
+Execution Time: 133.838 ms
+
+---- S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id) (indexes built in 64 s)
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #33 first page, busiest (generic plan)
+Limit (actual time=0.067..0.271 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.065..0.249 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=45
+Planning Time: 0.100 ms
+Execution Time: 0.381 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #33 continuation, busiest (generic plan)
+Limit (actual time=0.048..0.198 rows=101 loops=1)
+  Buffers: shared hit=47
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.047..0.183 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($4, $5)))
+        Buffers: shared hit=47
+Planning Time: 0.065 ms
+Execution Time: 0.274 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #33 by person, busiest (generic plan)
+Limit (actual time=0.051..0.188 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.050..0.172 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Buffers: shared hit=48
+Planning Time: 0.063 ms
+Execution Time: 0.242 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #33 first page, small (generic plan)
+Limit (actual time=0.059..0.075 rows=12 loops=1)
+  Buffers: shared hit=8
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.057..0.070 rows=12 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=8
+Planning Time: 0.072 ms
+Execution Time: 0.129 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #33 empty window (generic plan)
+Limit (actual time=0.047..0.048 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.045..0.045 rows=0 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.068 ms
+Execution Time: 0.113 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 first page (generic plan)
+Limit (actual time=0.050..0.200 rows=101 loops=1)
+  Buffers: shared hit=49
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.049..0.182 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=49
+Planning Time: 0.064 ms
+Execution Time: 0.260 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 continuation (generic plan)
+Limit (actual time=0.043..0.168 rows=101 loops=1)
+  Buffers: shared hit=44
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.042..0.154 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($3, $4)))
+        Buffers: shared hit=44
+Planning Time: 0.052 ms
+Execution Time: 0.221 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 by business (generic plan)
+Limit (actual time=0.040..0.169 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.039..0.157 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=45
+Planning Time: 0.074 ms
+Execution Time: 0.218 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 by person (generic plan)
+Limit (actual time=0.046..0.183 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.045..0.167 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=48
+Planning Time: 0.053 ms
+Execution Time: 0.235 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 by event (generic plan)
+Limit (actual time=0.145..0.305 rows=101 loops=1)
+  Buffers: shared hit=105
+  ->  Incremental Sort (actual time=0.144..0.292 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=105
+        ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.058..0.225 rows=102 loops=1)
+              Index Cond: ((action = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=105
+Planning Time: 0.046 ms
+Execution Time: 0.362 ms
+
+== S1 + (occurred_at, id), (merchant_id, occurred_at, id), (actor_identity_id, occurred_at, id): #34 empty window (generic plan)
+Limit (actual time=0.029..0.030 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.028..0.029 rows=0 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.044 ms
+Execution Time: 0.067 ms
+
+---- S2 = S1 + (action, occurred_at, id) (indexes built in 29 s)
+
+== S2 = S1 + (action, occurred_at, id): #33 first page, busiest (generic plan)
+Limit (actual time=0.044..0.152 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.042..0.142 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=45
+Planning Time: 0.104 ms
+Execution Time: 0.278 ms
+
+== S2 = S1 + (action, occurred_at, id): #33 continuation, busiest (generic plan)
+Limit (actual time=0.067..0.183 rows=101 loops=1)
+  Buffers: shared hit=47
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.066..0.172 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($4, $5)))
+        Buffers: shared hit=47
+Planning Time: 0.065 ms
+Execution Time: 0.243 ms
+
+== S2 = S1 + (action, occurred_at, id): #33 by person, busiest (generic plan)
+Limit (actual time=0.099..0.215 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.098..0.203 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Buffers: shared hit=48
+Planning Time: 0.094 ms
+Execution Time: 0.272 ms
+
+== S2 = S1 + (action, occurred_at, id): #33 first page, small (generic plan)
+Limit (actual time=0.098..0.108 rows=12 loops=1)
+  Buffers: shared hit=8
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.095..0.104 rows=12 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=8
+Planning Time: 0.048 ms
+Execution Time: 0.155 ms
+
+== S2 = S1 + (action, occurred_at, id): #33 empty window (generic plan)
+Limit (actual time=0.034..0.035 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.032..0.033 rows=0 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.050 ms
+Execution Time: 0.077 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 first page (generic plan)
+Limit (actual time=0.033..0.143 rows=101 loops=1)
+  Buffers: shared hit=49
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.032..0.131 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=49
+Planning Time: 0.040 ms
+Execution Time: 0.183 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 continuation (generic plan)
+Limit (actual time=0.042..0.156 rows=101 loops=1)
+  Buffers: shared hit=44
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.041..0.144 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($3, $4)))
+        Buffers: shared hit=44
+Planning Time: 0.045 ms
+Execution Time: 0.206 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 by business (generic plan)
+Limit (actual time=0.038..0.148 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.037..0.137 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=45
+Planning Time: 0.056 ms
+Execution Time: 0.197 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 by person (generic plan)
+Limit (actual time=0.044..0.174 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.043..0.164 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=48
+Planning Time: 0.048 ms
+Execution Time: 0.220 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 by event (generic plan)
+Limit (actual time=0.039..0.209 rows=101 loops=1)
+  Buffers: shared hit=106
+  ->  Index Scan Backward using spike_action_occurred_at_id on audit_events e (actual time=0.037..0.198 rows=101 loops=1)
+        Index Cond: ((action = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=106
+Planning Time: 0.050 ms
+Execution Time: 0.257 ms
+
+== S2 = S1 + (action, occurred_at, id): #34 empty window (generic plan)
+Limit (actual time=0.021..0.021 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using spike_occurred_at_id on audit_events e (actual time=0.020..0.020 rows=0 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.031 ms
+Execution Time: 0.046 ms

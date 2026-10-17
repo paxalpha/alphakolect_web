@@ -2689,6 +2689,48 @@ independent of the permission catalog); it is listed with them so it is complete
 - **Done when:** every event class behaves as §8.2 states, proven by failure injection; both audit reads and (O9) the
   members and invitations lists are paginated as specified; the retention purge passes its §8.6 tests; the D9 written
   policy is drafted from the decisions and handed to the owner for approval (approved before P5.10).
+- **Progress 2026-10-17 — at its first hold point.** In the order of the go (§14), each step committed with its tests:
+  **(R19) the merchant-scope guard**, `1b5a5ba`: `merchantScopeFindings` in the lock-order analysis — every reference to
+  a tenant table in a merchant-scoped definer read must be a FROM or JOIN item whose business column is equal, in an
+  AND-ed conjunct of its own query, to a session-derived value (the resolver's `merchant_id`, a variable selected from
+  it, or another table so bound); a LEFT JOIN binds only its item; an OR, a deeper subquery, a parameter, another session,
+  a comma or outer join, or any other mention is a finding (fail closed). The seven merchant-scoped reads pass
+  (`MERCHANT_SCOPED_READS`); `validate_session` and the two platform lists are exempt with their reasons, and the check
+  would refuse each; a new reader of a tenant table cannot escape it by not being listed. Eight self-tests, five controls,
+  and a sabotage of `list_members`' filter in its migration fail it. **(b) O9**, `95f3060` (migration
+  `20261017000100_list_pagination`): the members (oldest first) and invitations (newest first; `open` by default — pending
+  and unexpired — or `all`) lists paginated; one statement a page, first page and continuation (and open and all)
+  separate; indexes from recorded plans (invitations `(merchant_id, created_at, id)` and a partial one over pending
+  invitations; members reuse P5.7's): without them every invitations page sorts the business's invitations (35–61 ms
+  for 30,000), with them 0.1–0.15 ms; existing calls and an older application version keep working (no page: every row;
+  status `all` by default in the function); oasdiff 0 errors, 0 warnings. **(d) the log allowlist**, `0a05652`: request
+  lines are the id, method and path, response lines the status; a database error is logged as its structural fields
+  under a fixed message; the request id is the server's own, an incoming `X-Request-ID` ignored (the deviation from P3
+  the plan records); the leak sweep's D9 part — addresses in six headers and a query string, a distinctive user agent, a
+  forged request id and an injected database failure printing a session's IP address and user agent — finds none in any
+  log line, response or stored request id, and catches each of three sabotages. **(c)(1) the O4 spike**, `d15d133`
+  (`docs/architecture/evidence/p5-o4-spike/`: the script, the dataset, every plan): on 2,000,000 events, with
+  `(occurred_at, id)`, `(merchant_id, occurred_at, id)` and `(actor_identity_id, occurred_at, id)` every page of both reads
+  reads about one page (0.05–0.38 ms); without them the platform read sorts the window (120–161 ms); a page's cost does
+  not depend on the window's length. **(c)(2) the owner's questions**, `07b61b1` (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`):
+  page size, window, and the filters of each read — unanswered. **Judgement calls:** (1) R19 covers the merchant-scoped
+  **reads**, as the condition states; writers use row-id derivations and `%ROWTYPE` declarations the read check does not
+  parse — a survey of every function with a session shows which — and stay guarded by their footprints and tenant tests;
+  (2) the paginated readers keep the earlier calls' meaning (no page: every row; `list_invitations` status `all`), so an
+  application version older than the migration keeps working; the API applies the contract's default (`open`); (3) a
+  members cursor is bound to its list, not to a business — the business comes from the session alone and the guard
+  checks it; an invitations cursor is bound to its status filter; (4) read-consistency (d) of §7.2 does not apply to the
+  O9 lists: they are lock-free readers whose authority and rows come from one statement's snapshot, so there is no
+  authority lock to race; (a)–(c) pass for both; (5) the tests' app honours a plain caller-supplied `X-Request-ID`
+  (`test/support/request-id.ts`, outside `src`), because hundreds of tests find their request's activity rows, and inject
+  audit failures, by an id they must know before the request; the server's own tests and the D9 sweep build the app as
+  production does, and a guard fails if anything in `src` reads the header; (6) log lines keep the request **path**, as
+  §8.6 states (only the query string is dropped): a path is the route and resource ids, though a caller can put anything
+  in an unknown path; (7) the spike seeds no platform staff member busy across many businesses, so a business filtering
+  its record by such a person is to be measured when the indexes are chosen. **Waiting for:** the owner's O4 answers, then
+  the ADR-16 addendum and the reviewer's confirmation, before the audit reads (#33, #34) are built — with them the app
+  loses `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns (§8.6); Part 2's approval
+  before the retention purge (step (a)); the D9 written policy (step (e)) after the purge is built.
 
 ### P5.9 — Authorization matrix and regression gate
 
@@ -2852,6 +2894,7 @@ step 2 on the spike's evidence); C1 → O9; Part D → the D9 policy (§8.6); E1
 Remaining-questions form (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, 2026-10-14): A1 → O13; A2 → O14; A3 →
 O15; B1–B3 → O16; Part C (P1, P2a–d, P3, unchanged from the privacy form of 2026-10-12) → O10–O12; D1 → O17.
 Refusal-messages form (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, asked at the P5.6 gate, answered 2026-10-14): R1–R4 → O18.
+Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2)): Q1–Q4 → O4.
 
 **Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
 `docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
@@ -2936,7 +2979,7 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O1 | Move branch/role/profile writes into definer functions and revoke direct grants (§7.2) | adopt (owner supports), with the single-migration enforcement boundary of §7.2 |
 | O2 | Exact contracts of the new endpoints (§5) | frozen in P5.0 |
 | O3 | What the business activity record shows | **DECIDED (2026-10-12; decision log, §14; R28):** merchant audit access is **owner-only** (`merchant.audit.read` reserved, D8′) — there is no staff visibility to decide; the owner sees every event of their own business, including refused attempts, can filter by person, and sees each event's allowlisted summary plus the IP address and user agent of their own business's people (§8.5, §8.6); never another business's events, credentials, tokens or request bodies. **Nothing in O3 is outstanding.** The page size and window are O4's (R24), frozen with this contract at P5.8 step 3 |
-| O4 | Audit-read bounds — **both** the merchant and the platform audit read (R24) | proposal (reviewer recommends approving, subject to validation; **owner's preference, B3: one month at a time is fine**): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8. Then **owner decision required before the platform audit-read contract is frozen** (ADR-16 addendum, P5.8 step 3 — not at P5.0); no default is implemented |
+| O4 | Audit-read bounds — **both** the merchant and the platform audit read (R24) | proposal (reviewer recommends approving, subject to validation; **owner's preference, B3: one month at a time is fine**): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8 — **done 2026-10-17** (`d15d133`, `docs/architecture/evidence/p5-o4-spike/`), and **asked 2026-10-17** (`07b61b1`, Q1–Q4). Then **owner decision required before the platform audit-read contract is frozen** (ADR-16 addendum, P5.8 step 3 — not at P5.0); no default is implemented |
 | O5 | D9 IP/user-agent policy | **DECIDED (2026-10-11/12; decision log):** purpose, access (business owners for their own business, the super admin; never platform staff), two-year retention with whole-entry deletion, existing records included, copy on request (§8.6). The owner-approved written policy remains a P5 exit criterion |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 | O7 | Branch ceiling for delegation | **RESOLVED by D5′ (2026-10-12; decision log):** only the owner assigns or invites, choosing one branch or all (F1b), so no branch ceiling is needed (§7.6) |
@@ -2977,6 +3020,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 64 | 2026-10-17 | **P5.8 at its first hold point.** Built and committed: the R19 merchant-scope guard (`1b5a5ba`), O9 pagination of the members and invitations lists (`95f3060`), the log allowlist with server-only request ids (`0a05652`), the O4 spike (`d15d133`); the owner's O4 questions asked (`07b61b1`). Seven judgement calls recorded. Waiting for the owner's O4 answers (then the addendum and the reviewer), and for Part 2's approval. |
 | 63 | 2026-10-17 | **Go for P5.8** (project lead, §14), in the plan's order: the R19 guard first, then O9 pagination, the log redaction, the O4 spike and an owner questionnaire on it; the retention purge parked until Part 2 is approved. |
 | 62 | 2026-10-17 | **P5.7 gate approved** by the independent reviewer ("P5.7 approved"; the decoder and list API suites re-run, 20 of 20; the full gate relied on as reported), with the go-ahead for P5.8 on the R19 condition — the merchant-scope guard, mutation-tested, before any merchant-scoped definer read. Part 2 (the retention step) is not approved by it. Recorded in §14. |
 | 61 | 2026-10-16 | **The P5.7 finding fixed** (`8913290`): an impossible timestamp in a cursor is `400 INVALID_CURSOR` before any query, with a decoder test and an API regression test for each list; without the check the API answers 500, as the reviewer found. P5.7 returns for its gate review; P5.8 waits for the reviewer's approval and the project lead's go, and its merchant-scoped reads for the R19 guard check. |

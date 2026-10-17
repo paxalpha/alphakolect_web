@@ -310,8 +310,9 @@ export const BASELINE: readonly string[] = [
 /**
  * The merchant-scoped definer reads (R19; P5 plan §8.5; the reviewer's condition for P5.8): each takes a merchant
  * session, and the merchant-scope guard (merchantScopeFindings) requires every tenant table it reads to be filtered by
- * the business that session gives. Every reader or sensitive read with a session parameter that reads a tenant table
- * is listed here or in MERCHANT_SCOPE_EXEMPT — a new one cannot escape the check by not being listed.
+ * the business that session gives. Every reader or sensitive read that reads a tenant table — whatever its parameters
+ * are called — is listed here, in MERCHANT_SCOPE_EXEMPT or in MERCHANT_SCOPE_INTERNAL: a new one cannot escape the
+ * check by not being listed, nor by naming its session parameter otherwise (the P5.8 hold-point review).
  */
 export const MERCHANT_SCOPED_READS: readonly string[] = [
   'identity.session_authority',
@@ -331,6 +332,19 @@ export const MERCHANT_SCOPE_EXEMPT: Readonly<Record<string, string>> = {
     'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
   'tenancy.platform_list_merchant_members':
     'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
+};
+
+/**
+ * Readers of a tenant table that take no session and that no application role may execute (the guard checks it):
+ * building blocks of the resolvers and the login flows, called only by definer functions with an identity or a
+ * membership those have already resolved.
+ */
+export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
+  'identity.active_membership':
+    'the session, MFA and refresh flows’ check of a membership the identity already holds',
+  'identity.eligible_memberships': 'the login flow’s list of the memberships an identity may choose from',
+  'identity.permissions_of':
+    'the permissions of a membership session_authority or assert_authority has already resolved from the session',
 };
 
 /**

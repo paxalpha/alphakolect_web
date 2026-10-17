@@ -25,6 +25,7 @@ import {
   BASELINE_CLASSES,
   CLASSES,
   MERCHANT_SCOPE_EXEMPT,
+  MERCHANT_SCOPE_INTERNAL,
   MERCHANT_SCOPED_READS,
   RESOLVER,
   SENSITIVE_READS,
@@ -165,11 +166,14 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
     expect(findings).toEqual([]);
   });
 
-  /** The readers and sensitive reads with a session that read a tenant table: the check's scope, from the catalog. */
+  /**
+   * The readers and sensitive reads that read a tenant table: the check's scope, from the catalog — whatever their
+   * parameters are called (the P5.8 hold-point review: a scope keyed on `p_session_id` missed a reader that names its
+   * session otherwise).
+   */
   const inScope = (functions: FnRow[], classes: Readonly<Record<string, FnClass>>) => {
     const designated = new Set(Object.values(SENSITIVE_READS));
     return functions
-      .filter((f) => /\bp_session_id\b/.test(f.args))
       .filter((f) => {
         const key = `${f.schema}.${f.name}`;
         return classes[key]?.class === 'reader' || designated.has(key);
@@ -178,16 +182,48 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
       .map((f) => `${f.schema}.${f.name}`)
       .sort();
   };
-  const listed = () => [...MERCHANT_SCOPED_READS, ...Object.keys(MERCHANT_SCOPE_EXEMPT)].sort();
+  const listed = () =>
+    [
+      ...MERCHANT_SCOPED_READS,
+      ...Object.keys(MERCHANT_SCOPE_EXEMPT),
+      ...Object.keys(MERCHANT_SCOPE_INTERNAL),
+    ].sort();
+  /** Parameters that name a session but are not the convention's `p_session_id`: the resolvers are read with it. */
+  const sessionParamFindings = (functions: FnRow[]) =>
+    functions.flatMap((f) =>
+      f.args
+        .split(',')
+        .map(
+          (a) =>
+            a
+              .trim()
+              .replace(/^(?:in|out|inout|variadic)\s+/i, '')
+              .split(/\s+/)[0]!,
+        )
+        .filter((name) => /session/i.test(name) && name !== 'p_session_id')
+        .map((name) => `${f.schema}.${f.name}: ${name}`),
+    );
 
-  it('every reader with a session that reads a tenant table is listed: checked, or exempt with its reason', () => {
+  it('every reader of a tenant table is listed: checked, exempt with its reason, or internal', () => {
     expect(inScope(catalog.functions, CLASSES)).toEqual(listed());
-    expect(MERCHANT_SCOPED_READS.filter((k) => k in MERCHANT_SCOPE_EXEMPT)).toEqual([]);
+    expect(listed()).toEqual([...new Set(listed())]);
+  });
+
+  it('a session parameter is always p_session_id, the name the check reads the resolvers with', () => {
+    expect(sessionParamFindings(catalog.functions)).toEqual([]);
   });
 
   it('the exempt readers are exempt for a reason: the check would refuse each of them', () => {
     for (const key of Object.keys(MERCHANT_SCOPE_EXEMPT))
       expect(merchantScopeFindings(fn(key), tenant), key).not.toEqual([]);
+  });
+
+  it('the internal readers take no session, and no application role may execute them', () => {
+    for (const key of Object.keys(MERCHANT_SCOPE_INTERNAL)) {
+      expect(fn(key), key).toBeDefined();
+      expect(fn(key).args, key).not.toMatch(/session/i);
+      expect(fn(key).executors, key).toEqual([]);
+    }
   });
 
   describe('self-tests: each way of escaping the session’s business fails the check, a conforming read passes', () => {
@@ -292,6 +328,30 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
         'probe.read': { class: 'reader' },
       });
       expect(scope.filter((k) => !listed().includes(k))).toEqual(['probe.read']);
+    });
+
+    it('(9) nor by naming its session parameter otherwise: it is in scope, unbound, and breaks the convention', () => {
+      const renamed: FnRow = {
+        ...probe(
+          `SELECT b.id FROM identity.session_authority(p_session) a JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`,
+        ),
+        name: 'renamed',
+        args: 'p_session uuid, p_branch_id uuid',
+      };
+      const scope = inScope([...catalog.functions, renamed], {
+        ...CLASSES,
+        'probe.renamed': { class: 'reader' },
+      });
+      expect(scope.filter((k) => !listed().includes(k))).toEqual(['probe.renamed']);
+      expect(merchantScopeFindings(renamed, tenant)).toHaveLength(1);
+      expect(sessionParamFindings([renamed])).toEqual(['probe.renamed: p_session']);
+      // An internal reader is in scope too, whatever it takes: one that is not listed fails the inventory.
+      const internal: FnRow = { ...probe(`SELECT b.id FROM tenancy.branches b`), name: 'internal', args: '' };
+      const all = inScope([...catalog.functions, internal], {
+        ...CLASSES,
+        'probe.internal': { class: 'reader' },
+      });
+      expect(all.filter((k) => !listed().includes(k))).toEqual(['probe.internal']);
     });
 
     it('(7) fails closed: a comma join, and a right or full outer join, are findings', () => {

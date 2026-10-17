@@ -363,9 +363,12 @@ describe('no IP address or user agent reaches a log line, a response or a stored
     custom: address(),
     forgedRequestId: address(),
     query: address(),
+    unknownPath: address(),
+    routeParameter: address(),
     failingIp: address(),
     userAgent: `d9-sweep-agent/${randomBytes(4).toString('hex')}`,
     failingAgent: `d9-failing-agent/${randomBytes(4).toString('hex')}`,
+    pathAgent: `d9-path-agent-${randomBytes(4).toString('hex')}`,
   };
   const values = Object.values(v);
   const responses: request.Response[] = [];
@@ -387,7 +390,10 @@ describe('no IP address or user agent reaches a log line, a response or a stored
   };
   const failSchema = `d9_fail_${randomBytes(4).toString('hex')}`;
 
-  it('sends the journeys: sign-up, verification, sign-in, a session read, a query string, a 404, and a failing sign-in', async () => {
+  /** The requests whose path carries an address or a user agent: an unknown path, and a known route's parameter. */
+  const pathed: { unknown?: request.Response; parameter?: request.Response } = {};
+
+  it('sends the journeys: sign-up, verification, sign-in, a session read, a query string, paths, and a failing sign-in', async () => {
     const who = `d9-sweep-${randomBytes(5).toString('hex')}@example.test`;
     const password = 'a d9 sweep passphrase';
     await keepRes(
@@ -414,6 +420,15 @@ describe('no IP address or user agent reaches a log line, a response or a stored
     await keepRes(headed(request(served.app).get('/v1/auth/session')).set('Cookie', access));
     await keepRes(headed(request(served.app).get(`/v1/health?addr=${v.query}&agent=${v.userAgent}`)));
     await keepRes(headed(request(served.app).get(`/v1/nowhere?addr=${v.query}`)));
+    // A caller can put anything in a path (the P5.8 hold-point review): an unknown one, and a known route's parameter.
+    pathed.unknown = await keepRes(
+      headed(request(served.app).get(`/v1/nowhere/${v.unknownPath}/${v.pathAgent}`)),
+    );
+    expect(pathed.unknown.status).toBe(404);
+    pathed.parameter = await keepRes(
+      headed(request(served.app).get(`/v1/merchant/branches/${v.routeParameter}`)).set('Cookie', access),
+    );
+    expect(pathed.parameter.status).toBe(400);
 
     // A database failure whose message and detail print the new session's IP address and user agent.
     await migrator.query(`CREATE SCHEMA ${failSchema}`);
@@ -471,10 +486,20 @@ describe('no IP address or user agent reaches a log line, a response or a stored
       severity: 'ERROR',
     });
     for (const field of ['detail', 'hint', 'where', 'stack']) expect(failure?.err).not.toHaveProperty(field);
-    // And a request line is the id, the method and the path — no query string, header or address.
+    // And a request line is the id and the method — no path as sent, query string, header or address.
     const lines = d9Lines.map((l) => JSON.parse(l) as { req?: Record<string, unknown> }).filter((l) => l.req);
     expect(lines.length).toBeGreaterThan(0);
-    for (const l of lines) expect(Object.keys(l.req!).sort()).toEqual(['id', 'method', 'url']);
+    for (const l of lines) expect(Object.keys(l.req!).sort()).toEqual(['id', 'method']);
+  });
+
+  it('a completion line names the contract route it matched, never the path as sent; an unmatched one, none', () => {
+    const completion = (res: request.Response | undefined) =>
+      d9Lines
+        .map((l) => JSON.parse(l) as { req?: { id?: string }; res?: unknown; route?: string })
+        .filter((l) => l.req?.id === res?.headers['x-request-id'] && l.res)
+        .map(({ route }) => ({ route }));
+    expect(completion(pathed.parameter)).toEqual([{ route: '/v1/merchant/branches/{branchId}' }]);
+    expect(completion(pathed.unknown)).toEqual([{ route: undefined }]);
   });
 
   it('no response carries one (beyond what the caller sent: none echoed)', () => {

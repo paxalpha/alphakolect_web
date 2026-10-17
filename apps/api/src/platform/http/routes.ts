@@ -7,6 +7,7 @@ import {
   type EndpointId,
 } from '@alphakolect/contracts';
 import { Router, type RequestHandler } from 'express';
+import { recordRoute } from '../logger.js';
 import { validateRequest } from './validate.js';
 
 // Every HTTP route comes from the contract registry (packages/contracts). The Handlers type requires a
@@ -107,7 +108,13 @@ export function buildV1Router(
     const endpoint: EndpointContract = endpoints[id];
     // Authentication first: an unauthenticated caller learns nothing from validation errors. Authorization after
     // validation, as P4's in-handler checks were, so every answer stays the same (P5.4: zero behaviour change).
+    // First, the route for the log line (§8.6): the contract path, never the path as sent.
+    const recordMatchedRoute: RequestHandler = (req, _res, next) => {
+      recordRoute(req, endpoint.path);
+      next();
+    };
     const chain = [
+      recordMatchedRoute,
       ...(endpoint.security?.length ? [authenticateFor(endpoint)] : []),
       validateRequest(endpoint),
       ...(endpoint.authorization.class === 'permission' ? [authorizeFor(endpoint)] : []),

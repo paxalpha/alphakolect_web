@@ -2,10 +2,10 @@ import { pino, stdSerializers, type DestinationStream, type Logger } from 'pino'
 import type { Config } from './config.js';
 
 // Structured JSON logs (TARGET_ARCHITECTURE §28). From P5.8 (P5 plan §8.6, R49, R50) a request is logged by an
-// **allowlist**: its id, method and path, and its status code — no header, no query string and no remote address, so
-// no IP address or user agent (D9: the AlphaKolect team cannot see them; the activity record keeps them under the D9
-// rules). A database error is logged as its structural fields only. The redaction list stays, as defence in depth for
-// credentials.
+// **allowlist**: its id and method, the contract route it matched, and its status code — no path as sent, no header,
+// no query string and no remote address, so no IP address or user agent (D9: the AlphaKolect team cannot see them; the
+// activity record keeps them under the D9 rules). A database error is logged as its structural fields only. The
+// redaction list stays, as defence in depth for credentials.
 export const REDACT_PATHS = [
   'req.headers.authorization',
   'req.headers.cookie',
@@ -29,12 +29,28 @@ export const REDACT_PATHS = [
   '*.nin',
 ];
 
-/** The request line: the id, the method and the path — never the query string, a header or the remote address. */
-const requestLine = (req: { id?: unknown; method?: unknown; url?: unknown }) => ({
-  id: req.id,
-  method: req.method,
-  url: typeof req.url === 'string' ? req.url.split('?')[0] : undefined,
-});
+/**
+ * The request line: the id and the method — never the path as sent (a caller can put anything in it, an address or a
+ * user agent included: the P5.8 hold-point review), the query string, a header or the remote address.
+ */
+const requestLine = (req: { id?: unknown; method?: unknown }) => ({ id: req.id, method: req.method });
+
+/** The contract path each request matched, recorded by the v1 router; an unmatched request has none. */
+const matchedRoutes = new WeakMap<object, string>();
+
+/** Records the contract path a request matched ('/v1/merchant/branches/{branchId}'), for its completion line. */
+export function recordRoute(req: object, contractPath: string): void {
+  matchedRoutes.set(req, contractPath);
+}
+
+/**
+ * The completion line's route (pino-http customProps): the contract path the request matched, its parameters
+ * unfilled — none for a request that matched no route.
+ */
+export function routeProps(req: object): { route?: string } {
+  const route = matchedRoutes.get(req);
+  return route === undefined ? {} : { route };
+}
 
 /** The response line: the status code — never a header. */
 const responseLine = (res: { statusCode?: unknown }) => ({ statusCode: res.statusCode });

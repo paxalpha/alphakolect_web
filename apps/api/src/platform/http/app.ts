@@ -33,7 +33,7 @@ import { authorize } from '../authorization.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { Mailer, type EmailSender } from '../email.js';
-import { HTTP_LOG_SERIALIZERS } from '../logger.js';
+import { HTTP_LOG_SERIALIZERS, routeProps } from '../logger.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { serverRequestId, type RequestIdSource } from './request-id.js';
@@ -81,8 +81,10 @@ export function createApp({
     pinoHttp({
       logger,
       genReqId: requestId,
-      // The allowlist (§8.6): id, method, path and status — no header, query string or remote address.
+      // The allowlist (§8.6): id, method, matched route and status — no path as sent, header, query string or
+      // remote address.
       serializers: HTTP_LOG_SERIALIZERS,
+      customProps: (req) => routeProps(req),
       // Health probes are frequent and uninteresting.
       autoLogging: { ignore: (req) => req.url === '/v1/health' },
     }),

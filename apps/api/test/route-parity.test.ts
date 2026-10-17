@@ -80,6 +80,8 @@ describe('Express routes and the contract registry are identical', () => {
       const chain = byRoute.get(`${e.method} ${toExpressPath(e.path)}`);
       const secured = (e.security?.length ?? 0) > 0;
       const expected = [
+        // P5.8: the route for the log line (§8.6), before anything can answer.
+        'recordMatchedRoute',
         ...(secured ? ['authenticateRequest'] : []),
         // P5.3: every endpoint — path parameters, query parameters (none unless declared) and body.
         'validateRequestInput',

@@ -2747,8 +2747,22 @@ independent of the permission catalog); it is listed with them so it is complete
   list, reading the whole platform's list while other files added to it in parallel; it now walks the list to its own
   rows (`b53ff00`). Gate on the fixes: format, lint, typecheck, build, OpenAPI check, contracts 64, db 657, the
   races 16 (50 staged runs each) — all passing; the API suite 745 of 746 with that test, then 746 of 746 after its fix
-  (oasdiff not rerun: no contract changed). **Waiting for:** the ADR-16 addendum and
-  the reviewer's confirmation, before the audit reads (#33, #34) are built — with them the app
+  (oasdiff not rerun: no contract changed). **(c)(3) the ADR-16 addendum**, `cbe8467` (`TARGET_ARCHITECTURE.md` §3.5, "Addendum — the
+  activity-record reads"): both audit-read contracts frozen on O4 and on O3, D8′, D9 and CF5 — window, page, order,
+  cursor, the item `AuditEvent`, the filters, who sees `ip` and `userAgent`, errors, the record of a read, indexes,
+  locks and tests; its Logs paragraph amended to the route template. **Judgement calls of the addendum:** (a) `limit`
+  defaults to 50, as every list, with 100 the maximum the owner chose; (b) the window is `from ≤ occurredAt < to`, at
+  most 744 hours; (c) a filter naming a person or business the reader cannot see is `404 NOT_FOUND`, as the
+  members endpoint answers; (d) the person filter is the **person** — the identity behind the membership given — so
+  the platform read shows everything they did, on any membership; (e) the actor's email is the one held when read, not
+  a copy taken when the event was written (the record stores no email); (f) the merchant read shows `ip` and
+  `userAgent` on every event of the business except the platform team's — events with no actor included — following
+  D9 "for their own business's events" with CF5's exception; (g) #34 filtered by one business is written with that
+  business as `merchant_id`, as #36 is, so the business's record shows that the AlphaKolect team looked at it; (h)
+  "kind of activity" (O4 Q4) is one catalog event identifier. **Owner question O19** (`c78dec8`,
+  `docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`): whether a business's record names the platform team member;
+  the contract's shape is the same either way — unanswered. **Waiting for:** the reviewer's re-check of the two fixes
+  and confirmation of the addendum, and the owner's O19 answer, before the audit reads (#33, #34) are built — with them the app
   loses `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns (§8.6); Part 2's approval
   before the retention purge (step (a)); the D9 written policy (step (e)) after the purge is built.
 
@@ -2915,6 +2929,7 @@ Remaining-questions form (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, 2026-
 O15; B1–B3 → O16; Part C (P1, P2a–d, P3, unchanged from the privacy form of 2026-10-12) → O10–O12; D1 → O17.
 Refusal-messages form (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, asked at the P5.6 gate, answered 2026-10-14): R1–R4 → O18.
 Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2); answered and signed 2026-10-17, `7497869`): Q1–Q4 → O4.
+Team-in-the-business-record form (`docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`, asked 2026-10-17 with the ADR-16 addendum, `c78dec8`): T1 → O19.
 
 **Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
 `docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
@@ -3012,6 +3027,7 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O16 | Who may set and lift the containment switch, and whether business owners are told (B1–B3; §11.1) | **DECIDED (2026-10-14; decision log):** the owner, or the technical lead in an emergency who informs him straight away; lifted only with the owner's approval after the fault is fixed and checked; every business owner told when it is set and when it is lifted |
 | O17 | Whether the three planning documents stay in the merged history (D1; P5.10) | **DECIDED (2026-10-14; decision log):** keep them |
 | O18 | The refusal message for a permission that can be given (R1–R4; the reviewer's P5.6 item 1) | **DECIDED (2026-10-14; decision log):** the suggested wording — whom to ask for a grantable permission; P4's messages kept for the reserved ones |
+| O19 | Whether a business's activity record names the platform team member who acted on it (the merchant audit read, #33; CF5 already withholds the team's IP address and user agent) | **owner decision required** (asked 2026-10-17, `c78dec8`); proposal: "AlphaKolect team", without naming the person — `actor` `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record always names the person. The contract's shape is the same either way (ADR-16 addendum, `cbe8467`); the read is not built with either answer assumed |
 | O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
 
 ## 15. Legacy context (background only — not a requirement)
@@ -3042,6 +3058,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 67 | 2026-10-17 | **The ADR-16 addendum drafted** (`cbe8467`): both audit-read contracts frozen on O4 and the visibility decisions, eight judgement calls (a)–(h) recorded under §10 P5.8; ADR-16's Logs paragraph amended to the route template; **O19** asked of the owner (`c78dec8`). For the reviewer: the re-check of rev 66's fixes and the confirmation of the addendum. |
 | 66 | 2026-10-17 | **The P5.8 hold-point review: changes requested, both findings fixed.** (R19) the guard's inventory no longer depends on a session parameter's name, and the name is checked (`12f839c`); (logs) the completion line names the matched contract route, never the path as sent (`2134b80`), §8.6 amended; a parallel-isolation flake in the team-list test fixed (`b53ff00`). The verdict recorded in §14. Returned to the reviewer for re-check. |
 | 65 | 2026-10-17 | **O4 decided.** The owner answered and signed `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` (`7497869`), choosing every suggested option: 100 events a page and a 31-day window for both audit reads; the merchant read filters by person only; the platform read by business, person and event identifier. Recorded in §8.5, §10 P5.8 and §14 (decision log and open items). Next: the ADR-16 addendum freezing both audit-read contracts, for the reviewer's confirmation. |
 | 64 | 2026-10-17 | **P5.8 at its first hold point.** Built and committed: the R19 merchant-scope guard (`1b5a5ba`), O9 pagination of the members and invitations lists (`95f3060`), the log allowlist with server-only request ids (`0a05652`), the O4 spike (`d15d133`); the owner's O4 questions asked (`07b61b1`). Seven judgement calls recorded. Waiting for the owner's O4 answers (then the addendum and the reviewer), and for Part 2's approval. |

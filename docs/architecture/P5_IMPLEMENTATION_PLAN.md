@@ -1060,19 +1060,19 @@ signature changes for this (each is a single statement that does not commit by i
   which are cross-tenant by design, are exempt by classification and are permission-gated and audited instead).
 - Platform audit reads: the designated definer function `audit.read_platform_events` (#34), checking
   `platform.audit.read` under the §7.5 lock, applying the bounds and cursor rules below, and writing its own read
-  event in the same transaction. Tenant RLS is not relaxed. **[Open, O4 — proposal]** at most 100 events per page and
-  a required time window of at most 31 days — for **both** audit reads (R24) — to be validated against the index and query design (below) before it is
-  frozen.
+  event in the same transaction. Tenant RLS is not relaxed. **[Decided, O4, 2026-10-17 — after the validation below]** at most
+  100 events per page and a required time window of at most 31 days — for **both** audit reads (R24); the platform read
+  filters by business, person and event identifier, each optional (§14).
 - **Pagination contract for both audit reads (R21).** It applies identically to `GET /v1/merchant/audit-events` (#33)
   and `GET /v1/platform/audit-events` (#34) (R24). **The bounds — maximum page size and maximum window — are one
-  decision, O4, applied to both endpoints**; the 31-day window and 100-event page below are O4's proposal, not yet
-  frozen. O3 decides only what the merchant read shows (events, fields, filters), never its bounds, so the two
+  decision, O4, applied to both endpoints**; the 31-day window and 100-event page below are O4's, decided by the owner on
+  2026-10-17 on the validation's evidence (§14), and frozen with both contracts in the ADR-16 addendum. O3 decides only what the merchant read shows (events, fields, filters), never its bounds, so the two
   decisions cannot set conflicting limits.
   - **Order:** newest first, `ORDER BY occurred_at DESC, id DESC` — a total order: [Fact] `occurred_at` defaults to
     `CURRENT_TIMESTAMP` (`20260927000100_baseline:133`), PostgreSQL's **transaction start time**, so every event
     written in one transaction shares a timestamp; ties are routine, not an edge case, and the UUIDv7 `id` breaks them.
-  - **Window and filters come from the request, every time.** The time window (`from`, `to`; at most the O4 maximum, proposed 31 days; `from` <
-    `to`) and filters (actor; for the platform read optionally merchant and event identifier, if O4 includes them) are
+  - **Window and filters come from the request, every time.** The time window (`from`, `to`; at most the O4 maximum, 31 days; `from` <
+    `to`) and filters (O4: the merchant read by actor only; the platform read by actor, merchant and event identifier, each optional) are
     validated on **every** request and always appear in the query's `WHERE` clause. The cursor never substitutes for
     them.
   - **The cursor carries only a position** — `(occurred_at, id)` of the last row returned — plus a digest of the
@@ -2713,7 +2713,7 @@ independent of the permission catalog); it is listed with them so it is complete
   `(occurred_at, id)`, `(merchant_id, occurred_at, id)` and `(actor_identity_id, occurred_at, id)` every page of both reads
   reads about one page (0.05–0.38 ms); without them the platform read sorts the window (120–161 ms); a page's cost does
   not depend on the window's length. **(c)(2) the owner's questions**, `07b61b1` (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`):
-  page size, window, and the filters of each read — unanswered. **Judgement calls:** (1) R19 covers the merchant-scoped
+  page size, window, and the filters of each read — answered and signed by the owner on 2026-10-17 (`7497869`; O4, §14). **Judgement calls:** (1) R19 covers the merchant-scoped
   **reads**, as the condition states; writers use row-id derivations and `%ROWTYPE` declarations the read check does not
   parse — a survey of every function with a session shows which — and stay guarded by their footprints and tenant tests;
   (2) the paginated readers keep the earlier calls' meaning (no page: every row; `list_invitations` status `all`), so an
@@ -2727,8 +2727,8 @@ independent of the permission catalog); it is listed with them so it is complete
   production does, and a guard fails if anything in `src` reads the header; (6) log lines keep the request **path**, as
   §8.6 states (only the query string is dropped): a path is the route and resource ids, though a caller can put anything
   in an unknown path; (7) the spike seeds no platform staff member busy across many businesses, so a business filtering
-  its record by such a person is to be measured when the indexes are chosen. **Waiting for:** the owner's O4 answers, then
-  the ADR-16 addendum and the reviewer's confirmation, before the audit reads (#33, #34) are built — with them the app
+  its record by such a person is to be measured when the indexes are chosen. **Waiting for:** the ADR-16 addendum and
+  the reviewer's confirmation, before the audit reads (#33, #34) are built — with them the app
   loses `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns (§8.6); Part 2's approval
   before the retention purge (step (a)); the D9 written policy (step (e)) after the purge is built.
 
@@ -2894,7 +2894,7 @@ step 2 on the spike's evidence); C1 → O9; Part D → the D9 policy (§8.6); E1
 Remaining-questions form (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, 2026-10-14): A1 → O13; A2 → O14; A3 →
 O15; B1–B3 → O16; Part C (P1, P2a–d, P3, unchanged from the privacy form of 2026-10-12) → O10–O12; D1 → O17.
 Refusal-messages form (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, asked at the P5.6 gate, answered 2026-10-14): R1–R4 → O18.
-Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2)): Q1–Q4 → O4.
+Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2); answered and signed 2026-10-17, `7497869`): Q1–Q4 → O4.
 
 **Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
 `docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
@@ -2923,7 +2923,8 @@ decision-maker, the date, the source, the selected option, the affected contract
 | O16 | B1: "Me, or the technical lead in an emergency, who tells me straight away". B2: "Only with my approval, after the fault is fixed and checked". B3: "Yes — every business owner is told that staff access is paused, and again when it is back." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — the `admin:containment` runbook (P5.10) states it: set by the owner, or by the technical lead in an emergency, who informs the owner straight away; lifted only with the owner's approval after the fault is fixed and checked; every business owner told when staff access is paused and when it is back | §11.1; P5.10 |
 | O17 | D1: "Keep them" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — `P5_AUDIT_REPORT.md`, `P5_REVIEW_HANDOFF.md` and `P5_EVIDENCE_PACK.md` stay in the merged history | P5.10 |
 | O18 | R1: "You don't have permission to do this. Ask the business owner if you need it." R2: "Keep it". R3: "You don't have permission to do this. Ask a super admin if you need it." R4: "keep them" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 14th of October, 2026"; `feea3d4`), relayed by Olamide Fadahunsi — answers relayed unsigned first (`6cfb681`), then signed, unchanged | **Decided** — a refusal of a grantable permission says whom to ask: the business owner (merchant) or a super admin (platform); a reserved permission keeps P4's message ("Only the business owner can do this"; the three super-admin messages). Applied in `616cff1` (API), `850a4b1` (the 403 descriptions) and `3d53835` (the two new messages in the owner's exact characters, straight apostrophe included) | §10 P5.6; the 403 message of every permission endpoint; P5.7's platform refusals |
-| O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself is decided at P5.8 step 2 on the spike's evidence | §8.5; P5.8 |
+| O4 | Q1: "Up to 100 entries a page". Q2: "up to 31 days (one month) at a time". Q3: "Not now: by person only, as already decided". Q4: "One business, One person, One kind of activity" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 17th of October, 2026"; `7497869`), relayed by Olamide Fadahunsi; asked on the measured evidence of the spike (`d15d133`) | **Decided** — for **both** audit reads (R24): at most 100 events a page; a required window of at most 31 days; the merchant read (#33) filters by person only (event filtering may be added later if owners ask); the platform read (#34) filters by business, by person and by kind of activity (an event identifier of the catalog), each optional and combinable. Frozen with both contracts in the ADR-16 addendum, which the reviewer confirms before the reads are built | §8.5; §10 P5.8; #33, #34 |
+| O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself decided 2026-10-17 on the spike's evidence (the O4 entry) | §8.5; P5.8 |
 | O3 | A2a–c, F2: "Only the owner, always. The owner cannot give this to any staff member." A2b: refused attempts shown to the owner only. A2c: the owner can see one person's actions | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §6, §8.5; P5.8 |
 | O7, D5 → D5′ | A1 and F1a: inviting staff or agents and cancelling invitations, changing a staff member's role or branch, and switching a staff member or agent off or on are owner-only ("All 3"); F1b: "The owner may choose one branch or all branches." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D5's staff-delegation clause; O7 no longer arises | §3, §4, §5, §6, §7.3, §7.6; P5.5, P5.6, P5.9 |
 | D9 purpose | D1: "Investigate break-ins and suspicious activity, and settling disputes." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §8.6 |
@@ -2968,10 +2969,10 @@ signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for
 **No owner question for P5 is open.** O10–O17 were asked in one form, `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`,
 and answered and signed by the owner on 2026-10-14 (decision log above). O18, the refusal wording the reviewer asked
 the owner to decide at the P5.6 gate, was asked in `docs/business/P5_OWNER_REFUSAL_MESSAGES.md` and answered and signed by the owner on
-2026-10-14. **Coming later, by design:** O4 at P5.8 step
-2 on the spike's evidence; the owner's approval of the D9 written policy (P5.8 step e, before P5.10); the owner's
+2026-10-14. O4 was asked on the spike's evidence in `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` and answered
+and signed by the owner on 2026-10-17. **Coming later, by design:** the owner's approval of the D9 written policy (P5.8 step e, before P5.10); the owner's
 final approval at P5.10. **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
-owner's G1. O4 is decided at P5.8 step 2 on measured evidence, by design. P5.0 then moves this log into ADR-16 (Part 1
+owner's G1. O4 was decided at P5.8 step (c)(2) on measured evidence, by design (2026-10-17). P5.0 then moves this log into ADR-16 (Part 1
 entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
 
 | # | Item | Proposed position |
@@ -2979,7 +2980,7 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O1 | Move branch/role/profile writes into definer functions and revoke direct grants (§7.2) | adopt (owner supports), with the single-migration enforcement boundary of §7.2 |
 | O2 | Exact contracts of the new endpoints (§5) | frozen in P5.0 |
 | O3 | What the business activity record shows | **DECIDED (2026-10-12; decision log, §14; R28):** merchant audit access is **owner-only** (`merchant.audit.read` reserved, D8′) — there is no staff visibility to decide; the owner sees every event of their own business, including refused attempts, can filter by person, and sees each event's allowlisted summary plus the IP address and user agent of their own business's people (§8.5, §8.6); never another business's events, credentials, tokens or request bodies. **Nothing in O3 is outstanding.** The page size and window are O4's (R24), frozen with this contract at P5.8 step 3 |
-| O4 | Audit-read bounds — **both** the merchant and the platform audit read (R24) | proposal (reviewer recommends approving, subject to validation; **owner's preference, B3: one month at a time is fine**): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8 — **done 2026-10-17** (`d15d133`, `docs/architecture/evidence/p5-o4-spike/`), and **asked 2026-10-17** (`07b61b1`, Q1–Q4). Then **owner decision required before the platform audit-read contract is frozen** (ADR-16 addendum, P5.8 step 3 — not at P5.0); no default is implemented |
+| O4 | Audit-read bounds — **both** the merchant and the platform audit read (R24) | proposal (reviewer recommends approving, subject to validation; **owner's preference, B3: one month at a time is fine**): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8 — **done 2026-10-17** (`d15d133`, `docs/architecture/evidence/p5-o4-spike/`), and **asked 2026-10-17** (`07b61b1`, Q1–Q4). **DECIDED (2026-10-17; decision log):** at most 100 events a page and a 31-day window, for both reads; the merchant read filters by person only; the platform read by business, person and event identifier. Frozen with both contracts in the ADR-16 addendum (P5.8 step (c)(3)), which the reviewer confirms before the reads are built |
 | O5 | D9 IP/user-agent policy | **DECIDED (2026-10-11/12; decision log):** purpose, access (business owners for their own business, the super admin; never platform staff), two-year retention with whole-entry deletion, existing records included, copy on request (§8.6). The owner-approved written policy remains a P5 exit criterion |
 | O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
 | O7 | Branch ceiling for delegation | **RESOLVED by D5′ (2026-10-12; decision log):** only the owner assigns or invites, choosing one branch or all (F1b), so no branch ceiling is needed (§7.6) |
@@ -3020,6 +3021,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 65 | 2026-10-17 | **O4 decided.** The owner answered and signed `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` (`7497869`), choosing every suggested option: 100 events a page and a 31-day window for both audit reads; the merchant read filters by person only; the platform read by business, person and event identifier. Recorded in §8.5, §10 P5.8 and §14 (decision log and open items). Next: the ADR-16 addendum freezing both audit-read contracts, for the reviewer's confirmation. |
 | 64 | 2026-10-17 | **P5.8 at its first hold point.** Built and committed: the R19 merchant-scope guard (`1b5a5ba`), O9 pagination of the members and invitations lists (`95f3060`), the log allowlist with server-only request ids (`0a05652`), the O4 spike (`d15d133`); the owner's O4 questions asked (`07b61b1`). Seven judgement calls recorded. Waiting for the owner's O4 answers (then the addendum and the reviewer), and for Part 2's approval. |
 | 63 | 2026-10-17 | **Go for P5.8** (project lead, §14), in the plan's order: the R19 guard first, then O9 pagination, the log redaction, the O4 spike and an owner questionnaire on it; the retention purge parked until Part 2 is approved. |
 | 62 | 2026-10-17 | **P5.7 gate approved** by the independent reviewer ("P5.7 approved"; the decoder and list API suites re-run, 20 of 20; the full gate relied on as reported), with the go-ahead for P5.8 on the R19 condition — the merchant-scope guard, mutation-tested, before any merchant-scoped definer read. Part 2 (the retention step) is not approved by it. Recorded in §14. |

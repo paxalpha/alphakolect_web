@@ -10,14 +10,25 @@ import {
   findingKey,
   loadCatalog,
   LOCK_FREE_EXPRESSION_FUNCTIONS,
+  merchantScopeFindings,
   schemaFindings,
+  tenantTables,
   type Catalog,
   type Finding,
   type FnClass,
   type FnRow,
 } from './support/lock-analysis.js';
 import * as plan from './support/lock-plan.js';
-import { AUTHORITY_DATA_RULES, BASELINE, BASELINE_CLASSES, CLASSES, RESOLVER } from './support/lock-plan.js';
+import {
+  AUTHORITY_DATA_RULES,
+  BASELINE,
+  BASELINE_CLASSES,
+  CLASSES,
+  MERCHANT_SCOPE_EXEMPT,
+  MERCHANT_SCOPED_READS,
+  RESOLVER,
+  SENSITIVE_READS,
+} from './support/lock-plan.js';
 
 // The lock-order guard (P5.5 step 1; P5 plan §7.2 — L1–L6, the category order, the planned footprints and the
 // authority rule, "What the guard can analyse, and failing closed outside it", R34). It reads every
@@ -121,6 +132,177 @@ describe('the SQL authority guard (§10 P5.5): authority comes only from the res
       authorityLiterals(catalog.functions, new Set()).filter((l) => l.startsWith('identity.permissions_of:'))
         .length,
     ).toBeGreaterThan(0);
+  });
+});
+
+// R19 (P5 plan §8.5; the reviewer's condition at the P5.7 gate): a merchant-scoped definer read filters every tenant
+// table by the business its own session gives — row-level security filters nothing inside a definer function.
+describe('the merchant-scope guard (R19): merchant-scoped definer reads filter by the session’s business', () => {
+  let tenant: Map<string, string>;
+  beforeAll(async () => {
+    tenant = await tenantTables(owner);
+  });
+  const fn = (key: string) => catalog.functions.find((f) => `${f.schema}.${f.name}` === key)!;
+  const readsTenant = (f: FnRow) =>
+    [...tenant.keys()].some((t) => new RegExp(`\\b${t.replace('.', '\\.')}\\b(?!\\s*\\()`, 'i').test(f.def));
+
+  it('sees the tenant tables (sanity): the businesses by id, the rest by merchant_id', () => {
+    expect(tenant.get('tenancy.merchants')).toBe('id');
+    for (const t of [
+      'tenancy.merchant_memberships',
+      'tenancy.roles',
+      'tenancy.invitations',
+      'audit.audit_events',
+    ])
+      expect(tenant.get(t), t).toBe('merchant_id');
+  });
+
+  it('every listed merchant-scoped read filters every tenant table it reads by the session’s business', () => {
+    const findings = MERCHANT_SCOPED_READS.flatMap((key) => {
+      expect(fn(key), key).toBeDefined();
+      return merchantScopeFindings(fn(key), tenant);
+    });
+    expect(findings).toEqual([]);
+  });
+
+  /** The readers and sensitive reads with a session that read a tenant table: the check's scope, from the catalog. */
+  const inScope = (functions: FnRow[], classes: Readonly<Record<string, FnClass>>) => {
+    const designated = new Set(Object.values(SENSITIVE_READS));
+    return functions
+      .filter((f) => /\bp_session_id\b/.test(f.args))
+      .filter((f) => {
+        const key = `${f.schema}.${f.name}`;
+        return classes[key]?.class === 'reader' || designated.has(key);
+      })
+      .filter(readsTenant)
+      .map((f) => `${f.schema}.${f.name}`)
+      .sort();
+  };
+  const listed = () => [...MERCHANT_SCOPED_READS, ...Object.keys(MERCHANT_SCOPE_EXEMPT)].sort();
+
+  it('every reader with a session that reads a tenant table is listed: checked, or exempt with its reason', () => {
+    expect(inScope(catalog.functions, CLASSES)).toEqual(listed());
+    expect(MERCHANT_SCOPED_READS.filter((k) => k in MERCHANT_SCOPE_EXEMPT)).toEqual([]);
+  });
+
+  it('the exempt readers are exempt for a reason: the check would refuse each of them', () => {
+    for (const key of Object.keys(MERCHANT_SCOPE_EXEMPT))
+      expect(merchantScopeFindings(fn(key), tenant), key).not.toEqual([]);
+  });
+
+  describe('self-tests: each way of escaping the session’s business fails the check, a conforming read passes', () => {
+    const probe = (body: string, lang = 'sql'): FnRow => ({
+      schema: 'probe',
+      name: 'read',
+      args: 'p_session_id uuid, p_merchant_id uuid, p_branch_id uuid',
+      lang,
+      definer: true,
+      executors: [],
+      def: `CREATE FUNCTION probe.read() RETURNS SETOF record LANGUAGE ${lang} AS $function$${body}$function$`,
+    });
+    const findings = (body: string, lang = 'sql') => merchantScopeFindings(probe(body, lang), tenant);
+    const AUTHORITY = `FROM identity.session_authority(p_session_id) a`;
+
+    it('controls: a join on the resolver, a session variable, a chain, a correlated subquery, a left join — all pass', () => {
+      expect(
+        findings(`SELECT b.id ${AUTHORITY} JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`),
+      ).toEqual([]);
+      expect(
+        findings(
+          `DECLARE v_merchant uuid; BEGIN
+             SELECT v.merchant_id, v.membership_id INTO v_merchant, v_actor FROM identity.validate_session(p_session_id) v;
+             RETURN QUERY SELECT b.id FROM tenancy.branches b WHERE b.merchant_id = v_merchant AND b.id = p_branch_id;
+           END`,
+          'plpgsql',
+        ),
+      ).toEqual([]);
+      expect(
+        findings(
+          `SELECT r.id, ARRAY(SELECT rp.permission FROM tenancy.role_permissions rp
+                              WHERE rp.merchant_id = r.merchant_id AND rp.role_id = r.id)
+             ${AUTHORITY} JOIN tenancy.merchants m ON m.id = a.merchant_id
+             JOIN tenancy.roles r ON r.merchant_id = m.id`,
+        ),
+      ).toEqual([]);
+      expect(
+        findings(`SELECT b.id ${AUTHORITY} LEFT JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`),
+      ).toEqual([]);
+    });
+
+    it('(1) a business taken from a parameter fails', () => {
+      expect(
+        findings(`SELECT b.id ${AUTHORITY} JOIN tenancy.branches b ON b.merchant_id = p_merchant_id`),
+      ).toHaveLength(1);
+    });
+
+    it('(2) no business filter at all fails, whatever else filters the rows', () => {
+      expect(findings(`SELECT b.id ${AUTHORITY} JOIN tenancy.branches b ON b.id = p_branch_id`)).toHaveLength(
+        1,
+      );
+    });
+
+    it('(3) a business filter only inside an OR fails', () => {
+      expect(
+        findings(
+          `SELECT b.id ${AUTHORITY} JOIN tenancy.branches b ON true WHERE (b.merchant_id = a.merchant_id OR b.id = p_branch_id)`,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('(4) an unfiltered table in a subquery fails, though the outer query is filtered', () => {
+      expect(
+        findings(
+          `SELECT b.id, ARRAY(SELECT r.id FROM tenancy.roles r) ${AUTHORITY}
+             JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('(5) a session resolver called with another session, or a variable not taken from the session, fails', () => {
+      expect(
+        findings(
+          `SELECT b.id FROM identity.session_authority(p_merchant_id) a JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`,
+        ),
+      ).toHaveLength(1);
+      expect(
+        findings(
+          `DECLARE v_merchant uuid; BEGIN
+             v_merchant := p_merchant_id;
+             RETURN QUERY SELECT b.id FROM tenancy.branches b WHERE b.merchant_id = v_merchant;
+           END`,
+          'plpgsql',
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('(6) a left join filters only the table it joins: the table on its left stays unfiltered', () => {
+      expect(
+        findings(
+          `SELECT b.id FROM tenancy.branches b LEFT JOIN identity.session_authority(p_session_id) a ON b.merchant_id = a.merchant_id`,
+        ),
+      ).toHaveLength(1);
+    });
+
+    it('(8) a new reader of a tenant table cannot escape the check by not being listed', () => {
+      const unlisted = probe(
+        `SELECT b.id ${AUTHORITY} JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`,
+      );
+      const scope = inScope([...catalog.functions, unlisted], {
+        ...CLASSES,
+        'probe.read': { class: 'reader' },
+      });
+      expect(scope.filter((k) => !listed().includes(k))).toEqual(['probe.read']);
+    });
+
+    it('(7) fails closed: a comma join, and a right or full outer join, are findings', () => {
+      expect(
+        findings(`SELECT b.id ${AUTHORITY}, tenancy.branches b WHERE b.merchant_id = a.merchant_id`).length,
+      ).toBeGreaterThan(0);
+      expect(
+        findings(`SELECT b.id ${AUTHORITY} RIGHT JOIN tenancy.branches b ON b.merchant_id = a.merchant_id`)
+          .length,
+      ).toBeGreaterThan(0);
+    });
   });
 });
 

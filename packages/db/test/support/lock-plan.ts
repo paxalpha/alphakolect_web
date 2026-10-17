@@ -308,6 +308,32 @@ export const BASELINE: readonly string[] = [
 ];
 
 /**
+ * The merchant-scoped definer reads (R19; P5 plan §8.5; the reviewer's condition for P5.8): each takes a merchant
+ * session, and the merchant-scope guard (merchantScopeFindings) requires every tenant table it reads to be filtered by
+ * the business that session gives. Every reader or sensitive read with a session parameter that reads a tenant table
+ * is listed here or in MERCHANT_SCOPE_EXEMPT — a new one cannot escape the check by not being listed.
+ */
+export const MERCHANT_SCOPED_READS: readonly string[] = [
+  'identity.session_authority',
+  'tenancy.list_branches',
+  'tenancy.list_invitations',
+  'tenancy.list_members',
+  'tenancy.list_roles',
+  'tenancy.read_own_membership',
+  'tenancy.read_profile',
+];
+
+/** Readers with a session that read a tenant table without a session-derived business filter, each with its reason. */
+export const MERCHANT_SCOPE_EXEMPT: Readonly<Record<string, string>> = {
+  'identity.validate_session':
+    'the session resolution itself: it derives the business from the session row, for every audience',
+  'tenancy.platform_list_merchants':
+    'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
+  'tenancy.platform_list_merchant_members':
+    'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
+};
+
+/**
  * The designated sensitive-read functions (P5 plan §8.1 #33–#36, R16, R18): each read pair has exactly one writer, the
  * function that checks the reader's authority under its locks and returns the rows in the same transaction. Read by
  * the API's writer guard (a read pair written anywhere else is rejected) and its transaction classes (T4: one call of

@@ -1078,3 +1078,250 @@ export function authorityLiterals(functions: FnRow[], exempt: ReadonlySet<string
   }
   return out.sort();
 }
+
+// ── the merchant-scope guard (R19; P5 plan §8.5; the reviewer's condition for P5.8) ────────────────────────────────
+
+/**
+ * The tenant tables and the column that names a row's business: every table with a merchant_id column, and
+ * tenancy.merchants itself (its id).
+ */
+export async function tenantTables(client: pg.Client): Promise<Map<string, string>> {
+  const { rows } = await client.query<{ t: string }>(`
+    SELECT DISTINCT c.table_schema || '.' || c.table_name AS t
+      FROM information_schema.columns c
+      JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
+     WHERE c.column_name = 'merchant_id' AND t.table_type = 'BASE TABLE'
+       AND c.table_schema NOT IN ('pg_catalog', 'information_schema')`);
+  const map = new Map(rows.map((r) => [r.t, 'merchant_id']));
+  map.set('tenancy.merchants', 'id');
+  return map;
+}
+
+/** Words that can follow a FROM or JOIN item where an alias would stand. */
+const NOT_AN_ALIAS = new Set(
+  (
+    'on where join left right inner full cross natural order group limit offset using union intersect except ' +
+    'having window for returning lateral into as set values select and or'
+  ).split(' '),
+);
+/** The session resolvers, called with the function's own session: the one source of a merchant-scoped business. */
+const SESSION_SOURCE =
+  /\bidentity\.(?:validate_session|session_authority)\s*\(\s*p_session_id\s*\)\s*(?:as\s+)?([a-z_][a-z0-9_]*)/g;
+
+/** Splits at top-level occurrences of a whole word (`and`, `or`), never inside parentheses or another word. */
+function splitWord(s: string, word: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let last = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') depth--;
+    else if (
+      depth === 0 &&
+      s.startsWith(word, i) &&
+      !/[a-z0-9_]/.test(s[i - 1] ?? ' ') &&
+      !/[a-z0-9_]/.test(s[i + word.length] ?? ' ')
+    ) {
+      parts.push(s.slice(last, i));
+      last = i + word.length;
+      i += word.length - 1;
+    }
+  }
+  parts.push(s.slice(last));
+  return parts;
+}
+
+/** Strips parentheses that wrap the whole of `s`. */
+function unwrap(s: string): string {
+  let t = s.trim();
+  while (t.startsWith('(') && t.endsWith(')')) {
+    let depth = 0;
+    let wraps = true;
+    for (let i = 0; i < t.length; i++) {
+      if (t[i] === '(') depth++;
+      else if (t[i] === ')') depth--;
+      if (depth === 0 && i < t.length - 1) {
+        wraps = false;
+        break;
+      }
+    }
+    if (!wraps) break;
+    t = t.slice(1, -1).trim();
+  }
+  return t;
+}
+
+const IDENT = '[a-z_][a-z0-9_]*(?:\\.[a-z_][a-z0-9_]*)?';
+const EQUALITY = new RegExp(`^(${IDENT})\\s*=\\s*(${IDENT})$`);
+
+/**
+ * R19 (P5 plan §8.5; the reviewer's condition at the P5.7 gate): a merchant-scoped definer function filters every
+ * tenant table it reads by the business its own session gives — never by row-level security, which a definer function
+ * bypasses, and never by a parameter or a cursor. Every reference to a tenant table must be a FROM or JOIN item whose
+ * business column (merchant_id; the id of tenancy.merchants) is equal — in an AND-ed conjunct of a WHERE or an inner
+ * join's ON clause of its own query, not inside an OR or a deeper subquery — to a session-derived value:
+ *   - the merchant_id of identity.validate_session(p_session_id) or identity.session_authority(p_session_id), a FROM
+ *     item of this query or of an enclosing one;
+ *   - a variable a statement selected INTO from such a call's merchant_id;
+ *   - the business column of another table of this query or an enclosing one that is itself so bound.
+ * A LEFT JOIN's ON clause binds only the item it joins. A right or full outer join, a comma join, or any other mention
+ * of a tenant table is a finding: the check fails closed on whatever it cannot read.
+ */
+export function merchantScopeFindings(f: FnRow, tenant: ReadonlyMap<string, string>): string[] {
+  const key = `${f.schema}.${f.name}`;
+  const s0 = f.def.indexOf('$function$');
+  const e0 = f.def.lastIndexOf('$function$');
+  const { text } = normalize(s0 >= 0 && e0 > s0 ? f.def.slice(s0 + 10, e0) : '');
+  const d = depths(text);
+  const findings: string[] = [];
+  const at = (pos: number) => `line ${lineAt(text, pos)}`;
+
+  // Variables holding the session's business: SELECT …, x.merchant_id, … INTO …, v, … FROM <resolver>(p_session_id) x
+  const sessionVars = new Set<string>();
+  for (const m of text.matchAll(
+    /\bselect\s+([^;]*?)\s+into\s+(?:strict\s+)?([^;]*?)\s+from\s+identity\.(?:validate_session|session_authority)\s*\(\s*p_session_id\s*\)\s*(?:as\s+)?([a-z_][a-z0-9_]*)/g,
+  )) {
+    const exprs = topLevelSplit(m[1]!, /^,/);
+    const vars = m[2]!.split(',').map((v) => v.trim());
+    exprs.forEach((e, i) => {
+      if (e.trim() === `${m[3]}.merchant_id` && vars[i]) sessionVars.add(vars[i]!);
+    });
+  }
+
+  // Query blocks: each statement, and each parenthesised subquery, with its enclosing block.
+  type Block = { start: number; end: number; parent: Block | null };
+  const blocks: Block[] = [];
+  let from = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i === text.length || (text[i] === ';' && d[i] === 0)) {
+      blocks.push({ start: from, end: i, parent: null });
+      from = i + 1;
+    }
+  }
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== '(' || !/^\s*(select|with)\b/.test(text.slice(i + 1, i + 64))) continue;
+    let depth = 0;
+    let j = i;
+    for (; j < text.length; j++) {
+      if (text[j] === '(') depth++;
+      else if (text[j] === ')' && --depth === 0) break;
+    }
+    blocks.push({ start: i + 1, end: j, parent: null });
+  }
+  blocks.sort((a, b) => a.start - b.start || b.end - a.end);
+  for (const b of blocks)
+    b.parent =
+      blocks
+        .filter((p) => p !== b && p.start <= b.start && b.end <= p.end)
+        .sort((x, y) => x.end - x.start - (y.end - y.start))[0] ?? null;
+
+  const boundOf = new Map<Block, Set<string>>();
+  for (const b of blocks) {
+    // This block's own text: its nested subqueries blanked out (they are blocks of their own).
+    let own = text.slice(b.start, b.end);
+    for (const c of blocks.filter((x) => x.parent === b))
+      own = own.slice(0, c.start - b.start) + ' '.repeat(c.end - c.start) + own.slice(c.end - b.start);
+    const od = depths(own);
+
+    // FROM and JOIN items: tenant tables (with their aliases) and session resolvers.
+    const refs: { table: string; alias: string; pos: number }[] = [];
+    /** Where each FROM or JOIN item names its table or function: mentions the check has read. */
+    const itemAt = new Set<number>();
+    const sessionAliases = [...own.matchAll(SESSION_SOURCE)]
+      .map((m) => m[1]!)
+      .filter((a) => !NOT_AN_ALIAS.has(a));
+    type Join = { pos: number; type: string; alias: string };
+    const joins: Join[] = [];
+    for (const m of own.matchAll(
+      /\b(from|(?:(left|right|full|inner|cross)\s+(?:outer\s+)?)?join)\s+(?:only\s+|lateral\s+)?([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b/g,
+    )) {
+      let k = m.index! + m[0].length;
+      itemAt.add(k - m[3]!.length - 1 - m[4]!.length);
+      const isCall = /^\s*\(/.test(own.slice(k));
+      if (isCall) {
+        let depth = 0;
+        for (; k < own.length; k++) {
+          if (own[k] === '(') depth++;
+          else if (own[k] === ')' && --depth === 0) {
+            k++;
+            break;
+          }
+        }
+      }
+      const a = own.slice(k).match(/^\s+(?:as\s+)?([a-z_][a-z0-9_]*)/);
+      const alias = a && !NOT_AN_ALIAS.has(a[1]!) ? a[1]! : m[4]!;
+      const type = m[1] === 'from' ? 'from' : (m[2] ?? 'inner');
+      if (m[1] !== 'from') joins.push({ pos: m.index!, type, alias });
+      const table = `${m[3]}.${m[4]}`;
+      if (isCall || !tenant.has(table)) continue;
+      if (type === 'right' || type === 'full')
+        findings.push(
+          `${key}: ${at(b.start + m.index!)}: ${table} in a ${type} outer join, which the check does not read`,
+        );
+      refs.push({ table, alias, pos: m.index! });
+    }
+    // Any other mention of a tenant table (a comma join, a write, …) is one the check cannot read.
+    for (const table of tenant.keys()) {
+      const re = new RegExp(`\\b${table.replace('.', '\\.')}\\b(?!\\s*\\()`, 'g');
+      for (const m of own.matchAll(re))
+        if (!itemAt.has(m.index!))
+          findings.push(`${key}: ${at(b.start + m.index!)}: a reference to ${table} the check cannot read`);
+    }
+
+    // AND-ed equalities of the WHERE and ON clauses at this block's own level; a LEFT JOIN's ON binds only its item.
+    const symmetric: [string, string][] = [];
+    const directed: { into: string; eq: [string, string] }[] = [];
+    const STOP =
+      /\b(join|left|right|inner|full|cross|natural|where|on|group|order|limit|offset|having|window|union|intersect|except|returning|into|for|loop|then)\b/g;
+    for (const m of own.matchAll(/\b(where|on)\b/g)) {
+      if (od[m.index!] !== 0) continue;
+      const startAt = m.index! + m[0].length;
+      STOP.lastIndex = startAt;
+      let stopAt = own.length;
+      for (let n = STOP.exec(own); n; n = STOP.exec(own))
+        if (od[n.index] === 0) {
+          stopAt = n.index;
+          break;
+        }
+      const clause = own.slice(startAt, stopAt);
+      const join = m[1] === 'on' ? [...joins].reverse().find((j) => j.pos < m.index!) : undefined;
+      for (const conjunct of splitWord(clause, 'and')) {
+        const c = unwrap(conjunct);
+        if (splitWord(c, 'or').length > 1) continue;
+        const eq = c.match(EQUALITY);
+        if (!eq) continue;
+        const pair: [string, string] = [eq[1]!, eq[2]!];
+        if (join?.type === 'left') directed.push({ into: join.alias, eq: pair });
+        else symmetric.push(pair);
+      }
+    }
+
+    // The bound values: the enclosing block's, the session variables, this block's resolvers; then a fixpoint.
+    const bound = new Set<string>([...(b.parent ? boundOf.get(b.parent)! : []), ...sessionVars]);
+    for (const a of sessionAliases) bound.add(`${a}.merchant_id`);
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const [x, y] of symmetric) {
+        if (bound.has(x) !== bound.has(y)) {
+          bound.add(x);
+          bound.add(y);
+          changed = true;
+        }
+      }
+      for (const { into, eq } of directed) {
+        for (const [x, y] of [eq, [eq[1], eq[0]] as const])
+          if (bound.has(y) && !bound.has(x) && x.startsWith(`${into}.`)) {
+            bound.add(x);
+            changed = true;
+          }
+      }
+    }
+    boundOf.set(b, bound);
+    for (const r of refs)
+      if (!bound.has(`${r.alias}.${tenant.get(r.table)}`))
+        findings.push(
+          `${key}: ${at(b.start + r.pos)}: ${r.table} ${r.alias} is not filtered by the session's business`,
+        );
+  }
+  return [...new Set(findings)];
+}

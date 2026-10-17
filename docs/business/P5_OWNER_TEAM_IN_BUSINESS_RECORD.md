@@ -29,7 +29,7 @@ For example, a team member switched the business off on 3 March.
 - ☐ With the team member's email address
 - ☐ Not sure
 
-> Answer:
+> Answer: As "AlphaKolect team", without naming the person
 
 ---
 

@@ -89,3 +89,10 @@ export const IdempotencyKeyHeader = z.object({
     .max(200)
     .meta({ description: 'Client-generated unique key for this operation; reuse it when retrying' }),
 });
+
+/** Cursor pagination (ADR-16): `limit` 1–100, default 50; the cursor is opaque, from the previous page's `nextCursor`. */
+export const PageQuery = z.object({
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+export type PageQuery = z.infer<typeof PageQuery>;

@@ -2523,7 +2523,7 @@
     "/v1/merchant/members": {
       "get": {
         "operationId": "listMembers",
-        "summary": "The business’s members, active and deactivated (owner)",
+        "summary": "The business’s members, active and deactivated, oldest first",
         "tags": [
           "merchant"
         ],
@@ -2538,13 +2538,44 @@
             "cookieSession": []
           }
         ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "All members",
+            "description": "One page of members",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MemberList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -3675,7 +3706,7 @@
     "/v1/merchant/invitations": {
       "get": {
         "operationId": "listInvitations",
-        "summary": "The business’s invitations (owner)",
+        "summary": "The business’s invitations, newest first: the open ones (pending and unexpired) unless status=all",
         "tags": [
           "merchant"
         ],
@@ -3690,13 +3721,56 @@
             "cookieSession": []
           }
         ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "default": "open",
+              "type": "string",
+              "enum": [
+                "open",
+                "all"
+              ]
+            }
+          }
+        ],
         "responses": {
           "200": {
-            "description": "All invitations",
+            "description": "One page of invitations",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvitationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list and status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -5428,7 +5502,7 @@
           "nextCursor"
         ],
         "additionalProperties": false,
-        "description": "Every member, oldest first; nextCursor is always null for now"
+        "description": "The members, oldest first, one page at a time (P5.8, O9)"
       },
       "Member": {
         "type": "object",
@@ -5681,7 +5755,7 @@
           "nextCursor"
         ],
         "additionalProperties": false,
-        "description": "Every invitation, newest first; nextCursor is always null for now"
+        "description": "The invitations, newest first, one page at a time (P5.8, O9)"
       },
       "Invitation": {
         "type": "object",

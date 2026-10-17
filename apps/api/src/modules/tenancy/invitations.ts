@@ -1,8 +1,15 @@
-import type { AcceptInvitationRequest, CreateInvitationRequest, Invitation } from '@alphakolect/contracts';
+import type {
+  AcceptInvitationRequest,
+  CreateInvitationRequest,
+  Invitation,
+  InvitationList,
+  InvitationListQuery,
+} from '@alphakolect/contracts';
 import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
+import { decodeCursor, pageOf } from '../../platform/pagination.js';
 import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import { INVITATION_TTL_SECONDS, invitationAcceptEmail, invitationSetupEmail } from '../identity/emails.js';
@@ -60,8 +67,15 @@ export type InvitationDeps = {
 export class InvitationService {
   constructor(private readonly deps: InvitationDeps) {}
 
-  async list(tenant: TenantContext): Promise<InvitationRow[]> {
-    return withTenant(this.deps.db, tenant, (tx) => repo.invitations(tx));
+  /** One page of the invitations, newest first: the open ones (pending and unexpired) or all (P5.8, O9). */
+  async list(tenant: TenantContext, query: InvitationListQuery, now = new Date()): Promise<InvitationList> {
+    // A cursor is bound to its status filter: one from status=all is refused for the open list, and the reverse.
+    const scope = `listInvitations|status=${query.status}`;
+    const after = decodeCursor(query.cursor, scope);
+    const rows = await withTenant(this.deps.db, tenant, (tx) =>
+      repo.invitations(tx, null, { status: query.status, page: { limit: query.limit, after } }),
+    );
+    return pageOf(rows, query.limit, scope, (row) => toInvitation(row, now));
   }
 
   async create(

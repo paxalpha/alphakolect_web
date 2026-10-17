@@ -1,7 +1,8 @@
-import type { AssignMemberRequest, Member } from '@alphakolect/contracts';
+import type { AssignMemberRequest, Member, MemberList, PageQuery } from '@alphakolect/contracts';
 import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
+import { decodeCursor, pageOf } from '../../platform/pagination.js';
 import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import type { RequestContext } from '../identity/sessions.js';
@@ -26,6 +27,9 @@ const AUDIT_ACTION = {
   deactivate: 'merchant.member_deactivated',
   reactivate: 'merchant.member_reactivated',
 } as const satisfies Record<MembershipAction, string>;
+
+/** The members list's cursor scope: the business comes from the session, never from a cursor. */
+const LIST_SCOPE = 'listMembers';
 
 export const toMember = (row: MemberRow): Member => ({
   membershipId: row.membership_id,
@@ -66,8 +70,13 @@ function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: Me
 export class MembershipService {
   constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
 
-  async list(tenant: TenantContext): Promise<MemberRow[]> {
-    return withTenant(this.deps.db, tenant, (tx) => repo.members(tx));
+  /** One page of the members, oldest first (P5.8, O9). */
+  async list(tenant: TenantContext, query: PageQuery): Promise<MemberList> {
+    const after = decodeCursor(query.cursor, LIST_SCOPE);
+    const rows = await withTenant(this.deps.db, tenant, (tx) =>
+      repo.members(tx, null, { limit: query.limit, after }),
+    );
+    return pageOf(rows, query.limit, LIST_SCOPE, toMember);
   }
 
   async get(tenant: TenantContext, membershipId: string): Promise<MemberRow> {

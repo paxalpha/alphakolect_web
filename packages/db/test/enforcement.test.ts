@@ -604,7 +604,8 @@ describe('no actor can be supplied: the parameters are the session, the targets 
     ['list_branches', 'p_session_id p_branch_id'],
     ['list_roles', 'p_session_id p_role_id'],
     ['list_permission_catalog', 'p_session_id'],
-    ['list_invitations', 'p_session_id p_invitation_id'],
+    // P5.8 (O9): paginated — the status filter and the page; still no actor
+    ['list_invitations', 'p_session_id p_invitation_id p_status p_limit p_after_created_at p_after_id'],
     ['read_own_membership', 'p_session_id'],
   ])('tenancy.%s(%s)', async (name, args) => {
     const {

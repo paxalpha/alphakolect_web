@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ErrorResponse, Id } from '../primitives.js';
+import { ErrorResponse, Id, PageQuery } from '../primitives.js';
 import { defineEndpoint } from '../registry.js';
 import { Email } from './auth.js';
 import { MerchantStatus } from './platform.js';
@@ -355,7 +355,7 @@ export type Member = z.infer<typeof Member>;
 
 export const MemberList = z
   .object({ items: z.array(Member), nextCursor: z.string().nullable() })
-  .meta({ id: 'MemberList', description: 'Every member, oldest first; nextCursor is always null for now' });
+  .meta({ id: 'MemberList', description: 'The members, oldest first, one page at a time (P5.8, O9)' });
 
 export type MemberList = z.infer<typeof MemberList>;
 
@@ -383,8 +383,13 @@ export const listMembers = defineEndpoint({
   path: '/v1/merchant/members',
   authorization: { class: 'permission', permission: 'merchant.members.read', branchScope: 'merchant_wide' },
   ...merchantSession,
-  summary: 'The business’s members, active and deactivated (owner)',
-  responses: { 200: { description: 'All members', schema: MemberList }, ...needsGrant },
+  summary: 'The business’s members, active and deactivated, oldest first',
+  request: { query: PageQuery },
+  responses: {
+    200: { description: 'One page of members', schema: MemberList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list'),
+    ...needsGrant,
+  },
 });
 
 export const getMember = defineEndpoint({
@@ -470,10 +475,14 @@ export const InvitationList = z
   .object({ items: z.array(Invitation), nextCursor: z.string().nullable() })
   .meta({
     id: 'InvitationList',
-    description: 'Every invitation, newest first; nextCursor is always null for now',
+    description: 'The invitations, newest first, one page at a time (P5.8, O9)',
   });
 
 export type InvitationList = z.infer<typeof InvitationList>;
+
+/** O9 (decided): `open` — pending and unexpired — by default, or `all`; and the page. */
+export const InvitationListQuery = PageQuery.extend({ status: z.enum(['open', 'all']).default('open') });
+export type InvitationListQuery = z.infer<typeof InvitationListQuery>;
 
 export const CreateInvitationRequest = z
   .object({
@@ -503,8 +512,14 @@ export const listInvitations = defineEndpoint({
     branchScope: 'merchant_wide',
   },
   ...merchantSession,
-  summary: 'The business’s invitations (owner)',
-  responses: { 200: { description: 'All invitations', schema: InvitationList }, ...needsGrant },
+  summary:
+    'The business’s invitations, newest first: the open ones (pending and unexpired) unless status=all',
+  request: { query: InvitationListQuery },
+  responses: {
+    200: { description: 'One page of invitations', schema: InvitationList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list and status'),
+    ...needsGrant,
+  },
 });
 
 export const createInvitation = defineEndpoint({

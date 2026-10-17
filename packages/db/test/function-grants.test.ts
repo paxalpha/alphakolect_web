@@ -83,7 +83,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   // tenancy
   'tenancy.accept_invitation(text, uuid, text, text, text)': APP,
   'tenancy.issue_invitation(uuid, text, text, uuid, uuid, text, text, integer, text, text, text)': APP,
-  'tenancy.list_members(uuid, uuid)': APP,
+  'tenancy.list_members(uuid, uuid, integer, timestamp with time zone, uuid)': APP, // P5.8: paginated (O9)
   'tenancy.revoke_invitation(uuid, uuid, text, text, text)': APP,
   'tenancy.set_merchant_status(uuid, uuid, text, text, text, text, text)': APP,
   'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean, text, text, text)': APP,
@@ -92,7 +92,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'tenancy.create_branch(uuid, text, text, text, text)': APP,
   'tenancy.create_role(uuid, text, text, text, text)': APP,
   'tenancy.list_branches(uuid, uuid)': APP,
-  'tenancy.list_invitations(uuid, uuid)': APP,
+  'tenancy.list_invitations(uuid, uuid, text, integer, timestamp with time zone, uuid)': APP, // P5.8: paginated (O9)
   'tenancy.list_permission_catalog(uuid)': APP,
   'tenancy.list_roles(uuid, uuid)': APP,
   'tenancy.read_own_membership(uuid)': APP,

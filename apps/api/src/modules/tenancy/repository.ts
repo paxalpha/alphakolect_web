@@ -1,4 +1,5 @@
 import { scopeOf, type TenantTx } from '../../platform/tenant.js';
+import { POSITION_AT, type Position, type Positioned } from '../../platform/pagination.js';
 import type { RequestContext } from '../identity/sessions.js';
 
 // The tenancy module's scoped repository (TARGET_ARCHITECTURE §4, ADR-15 T13–T15). Every function takes a TenantTx
@@ -62,6 +63,9 @@ export type MemberRow = {
 };
 
 export type MembershipAction = 'assign' | 'deactivate' | 'reactivate';
+
+/** A page of a list (P5.8, O9): its size, and the position a cursor gave (null for the first page). */
+export type Page = { limit: number; after: Position | null };
 
 export type InvitationRow = {
   id: string;
@@ -261,12 +265,18 @@ export const tenancyRepository = {
    * The business's members with their email (tenancy.list_members, P4.5). Authority is decided in the database from
    * the session: only the active owner's session sees anything.
    */
-  async members(tx: TenantTx, membershipId: string | null = null): Promise<MemberRow[]> {
+  async members(
+    tx: TenantTx,
+    membershipId: string | null = null,
+    page: Page | null = null,
+  ): Promise<(MemberRow & Positioned)[]> {
     const { sessionId } = scopeOf(tx);
-    return tx.query<MemberRow>(
-      `SELECT membership_id, kind, status, role_id, branch_id, email, created_at, deactivated_at
-         FROM tenancy.list_members($1, $2)`,
-      [sessionId, membershipId],
+    // With a page, one row more than the page when another follows (P5.8, O9); without, every member.
+    return tx.query<MemberRow & Positioned>(
+      `SELECT membership_id AS id, membership_id, kind, status, role_id, branch_id, email, created_at, deactivated_at,
+              ${POSITION_AT}
+         FROM tenancy.list_members($1, $2, $3, $4::timestamptz, $5)`,
+      [sessionId, membershipId, page?.limit ?? null, page?.after?.at ?? null, page?.after?.id ?? null],
     );
   },
 
@@ -302,12 +312,24 @@ export const tenancyRepository = {
    * tenancy.list_invitations: the business's invitations, newest first; empty unless the session holds
    * merchant.invitations.read. The token hash is never returned.
    */
-  async invitations(tx: TenantTx, invitationId: string | null = null): Promise<InvitationRow[]> {
+  async invitations(
+    tx: TenantTx,
+    invitationId: string | null = null,
+    filter: { status: 'open' | 'all'; page: Page } | null = null,
+  ): Promise<(InvitationRow & Positioned)[]> {
     const { sessionId } = scopeOf(tx);
-    return tx.query<InvitationRow>(
-      `SELECT id, email, kind, role_id, branch_id, expires_at, accepted_at, revoked_at, created_at
-         FROM tenancy.list_invitations($1, $2)`,
-      [sessionId, invitationId],
+    // With a filter, one page of the open or all invitations (P5.8, O9); without, every invitation (or the one asked).
+    return tx.query<InvitationRow & Positioned>(
+      `SELECT id, email, kind, role_id, branch_id, expires_at, accepted_at, revoked_at, created_at, ${POSITION_AT}
+         FROM tenancy.list_invitations($1, $2, $3, $4, $5::timestamptz, $6)`,
+      [
+        sessionId,
+        invitationId,
+        filter?.status ?? 'all',
+        filter?.page.limit ?? null,
+        filter?.page.after?.at ?? null,
+        filter?.page.after?.id ?? null,
+      ],
     );
   },
 

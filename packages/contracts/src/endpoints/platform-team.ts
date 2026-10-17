@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ErrorResponse, Id } from '../primitives.js';
+import { ErrorResponse, Id, PageQuery } from '../primitives.js';
 import { defineEndpoint } from '../registry.js';
 import { Email } from './auth.js';
 import { Member, MembershipStatus, Timestamp } from './merchant.js';
@@ -16,13 +16,6 @@ import { MerchantStatus } from './platform.js';
 // database records it before returning the rows, and returns nothing if it cannot (§8.2a rule 7).
 
 const error = (description: string) => ({ description, schema: ErrorResponse });
-
-/** Cursor pagination (ADR-16): `limit` 1–100, default 50; the cursor is opaque, from the previous page's `nextCursor`. */
-export const PageQuery = z.object({
-  cursor: z.string().min(1).max(512).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-export type PageQuery = z.infer<typeof PageQuery>;
 
 export const PlatformStaffRole = z
   .enum(['support', 'verification', 'finance'])

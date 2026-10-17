@@ -580,6 +580,9 @@ model Invitation {
 
   @@unique([merchantId, id])
   @@index([identityId])
+  /// P5.8 (O9): every invitation of a business, newest first (chosen from recorded query plans); the pending ones
+  /// have a partial index of their own, which this schema does not express
+  @@index([merchantId, createdAt, id], map: "invitations_merchant_id_created_at_id_idx")
   @@map("invitations")
   @@schema("tenancy")
 }

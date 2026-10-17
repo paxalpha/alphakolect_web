@@ -242,7 +242,14 @@ describe('the owner’s side', () => {
     );
     const theirs = await invite(b.owner.token, { email: uniqueEmail('three'), kind: 'agent' });
 
-    const list = InvitationList.parse((await call(a.owner.token, 'get', '/v1/merchant/invitations')).body);
+    // O9 (P5.8): by default the open ones only — pending and unexpired; status=all lists every one.
+    const open = InvitationList.parse((await call(a.owner.token, 'get', '/v1/merchant/invitations')).body);
+    expect(open.items.map((i) => [i.invitationId, i.status])).toEqual([
+      [second.body.invitationId, 'pending'],
+    ]);
+    const list = InvitationList.parse(
+      (await call(a.owner.token, 'get', '/v1/merchant/invitations?status=all')).body,
+    );
     expect(list.items.map((i) => [i.invitationId, i.status])).toEqual([
       [second.body.invitationId, 'pending'],
       [first.body.invitationId, 'revoked'],

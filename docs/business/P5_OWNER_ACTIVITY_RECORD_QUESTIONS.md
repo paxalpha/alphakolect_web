@@ -13,7 +13,7 @@ for the people using it, not about speed. Each page someone looks at is itself w
 
 As before, **"Not sure" is a fine answer.**
 
-**Answered by:** ____________________ **Date:** ____________________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 17th of October, 2026
 
 ---
 
@@ -26,7 +26,7 @@ The screen shows the record a page at a time, newest first, with a button for th
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: Up to 100 entries a page
 
 ## Q2. How long a period can one search cover?
 
@@ -40,7 +40,7 @@ can implement a feature to allow searching longer periods in the future."*
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: up to 31 days (one month) at a time
 
 ## Q3. A business owner's own record: which searches?
 
@@ -51,7 +51,7 @@ show **only one kind of activity** — for example only sign-ins, or only change
 - ☐ Yes: by person, and by kind of activity
 - ☐ Not sure
 
-> Answer:
+> Answer: Not now: by person only, as already decided
 
 ## Q4. The AlphaKolect team's record: which searches?
 
@@ -64,7 +64,7 @@ should they be able to narrow it by? (Tick any.)
 - ☐ None of these
 - ☐ Not sure
 
-> Answer:
+> Answer: One business, One person, One kind of activity
 
 ---
 

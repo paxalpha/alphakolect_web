@@ -288,16 +288,25 @@ describe('the team list', () => {
         PlatformStaffMember.parse((await create(admin.token, uniqueEmail(`team${i}`))).body)
           .platformMembershipId,
       );
-    const first = PlatformStaffList.parse(
-      (await call(admin.token, 'get', '/v1/platform/staff?limit=2')).body,
-    );
-    expect(first.items.map((m) => m.platformMembershipId)).toEqual([ids[2], ids[1]]);
-    expect(first.nextCursor).not.toBeNull();
-    const second = PlatformStaffList.parse(
-      (await call(admin.token, 'get', `/v1/platform/staff?limit=2&cursor=${first.nextCursor}`)).body,
-    );
-    expect(second.items[0]!.platformMembershipId).toBe(ids[0]);
-    expect(first.items.concat(second.items).map((m) => m.role)).not.toContain('super_admin');
+    // The list is the whole platform's, and other files add to it in parallel: walk it two at a time until this
+    // test's three are found — newest first, each once, across pages joined by the cursor.
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const page = PlatformStaffList.parse(
+        (await call(admin.token, 'get', `/v1/platform/staff?limit=2${cursor ? `&cursor=${cursor}` : ''}`))
+          .body,
+      );
+      expect(page.items.length).toBeLessThanOrEqual(2);
+      expect(page.items.map((m) => m.role)).not.toContain('super_admin');
+      seen.push(...page.items.map((m) => m.platformMembershipId));
+      cursor = page.nextCursor;
+      pages += 1;
+    } while (cursor && !seen.includes(ids[0]!));
+    expect(pages).toBeGreaterThanOrEqual(2);
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen.filter((id) => ids.includes(id))).toEqual([ids[2], ids[1], ids[0]]);
 
     const merchantsCursor = (await call(admin.token, 'get', '/v1/platform/merchants?limit=1')).body
       .nextCursor as string;

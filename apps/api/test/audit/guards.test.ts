@@ -93,6 +93,58 @@ const INVENTORY: Record<
     writer: 'identity.set_platform_staff_status',
   },
   'platform.grants_set/success': { class: 'atomic', pattern: 'A', writer: 'identity.set_platform_grants' },
+  'platform.audit_purged/success': { class: 'atomic', pattern: 'A', writer: 'audit.purge_expired_events' },
+  'platform.request_metadata_cleared/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.clear_expired_request_metadata',
+  },
+  'platform.purge_report_delivered/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.record_report_delivery',
+  },
+  'platform.purge_report_requested/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.request_purge_report',
+  },
+  'platform.purge_report_lost/success': { class: 'atomic', pattern: 'A', writer: 'audit.record_report_lost' },
+  'platform.purge_report_copy_destroyed/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.record_report_copy_destroyed',
+  },
+  'platform.purge_export_discarded/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.discard_purge_export',
+  },
+  'platform.purge_report_confirmed/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.confirm_purge_report',
+  },
+  'platform.purge_report_handed_over/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.record_report_handover',
+  },
+  'platform.purge_report_request_cancelled/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.cancel_purge_report_request',
+  },
+  'platform.purge_report_handover_abandoned/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.record_handover_abandoned',
+  },
+  'platform.purge_report_handover_failed/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'audit.record_handover_failed',
+  },
   'merchant.profile_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_profile' },
   'merchant.branch_created/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.create_branch' },
   'merchant.branch_updated/success': { class: 'atomic', pattern: 'A', writer: 'tenancy.update_branch' },

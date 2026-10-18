@@ -974,6 +974,18 @@ const COVERED_PAIRS = [...new Set(CASES.map((c) => c.pair))];
 const DATABASE_COVERED = [
   'platform.super_admin_bootstrapped/success',
   'platform.authorization_containment_set/success', // P5.5 step 6: containment.test.ts (db)
+  'platform.audit_purged/success',
+  'platform.request_metadata_cleared/success',
+  'platform.purge_report_delivered/success',
+  'platform.purge_report_requested/success',
+  'platform.purge_report_lost/success',
+  'platform.purge_report_copy_destroyed/success',
+  'platform.purge_export_discarded/success',
+  'platform.purge_report_confirmed/success',
+  'platform.purge_report_handed_over/success',
+  'platform.purge_report_request_cancelled/success',
+  'platform.purge_report_handover_abandoned/success',
+  'platform.purge_report_handover_failed/success',
 ];
 
 describe('the coverage guard: every atomic pair has its two tests', () => {

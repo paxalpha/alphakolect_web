@@ -114,6 +114,41 @@ export const AUDIT_CATALOG = [
   }),
   atomicA('platform.staff_reactivated', {}),
   atomicA('platform.grants_set', { before: permissionList, after: permissionList }),
+  // retention and report handover (P5.8, Part 2)
+  atomicA('platform.audit_purged', {
+    asOf: { type: 'string', max: 40 },
+    runId: uuid,
+    pageNo: { type: 'integer' },
+    rowsDeleted: { type: 'integer' },
+    pageDigest: { type: 'string', max: 64 },
+  }),
+  atomicA('platform.request_metadata_cleared', {
+    asOf: { type: 'string', max: 40 },
+    tokensCleared: { type: 'integer' },
+    sessionsCleared: { type: 'integer' },
+  }),
+  atomicA('platform.purge_report_delivered', { reportId: uuid, attemptId: uuid }),
+  atomicA('platform.purge_report_requested', { requestId: uuid }),
+  atomicA('platform.purge_report_lost', { reportId: uuid, mode: status16 }),
+  atomicA('platform.purge_report_copy_destroyed', { reportId: uuid, mode: status16 }),
+  atomicA('platform.purge_export_discarded', { runId: uuid, mode: status16 }),
+  atomicA('platform.purge_report_confirmed', {
+    reportId: uuid,
+    runId: uuid,
+    rowCount: { type: 'integer' },
+    fileSha256: { type: 'string', max: 64 },
+  }),
+  atomicA('platform.purge_report_handed_over', { reportId: uuid, attemptId: uuid, diskseqChecked: flag }),
+  atomicA('platform.purge_report_request_cancelled', {
+    requestId: uuid,
+    withdrawnReportId: nullableUuid,
+  }),
+  atomicA('platform.purge_report_handover_abandoned', {
+    reportId: uuid,
+    attemptId: uuid,
+    outcome: status16,
+  }),
+  atomicA('platform.purge_report_handover_failed', { reportId: uuid, attemptId: uuid }),
   atomicA('platform.ownership_transferred', {
     formerOwnerIdentityId: uuid,
     formerOwnerMembershipId: uuid,

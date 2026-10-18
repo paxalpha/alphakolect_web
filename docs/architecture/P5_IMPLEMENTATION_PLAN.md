@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 89 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 90 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–83; O20 and O21 decided; rewritten once as a consolidated specification in rev 84, corrected for the critic's rounds 5–9 in revs 85–89; Part 2's approval delegated to Claude by the project lead, 2026-10-18) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–83; O20 and O21 decided; rewritten once as a consolidated specification in rev 84, corrected for the critic's rounds 5–10 in revs 85–90; Part 2's approval delegated to Claude by the project lead, 2026-10-18) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -947,7 +947,7 @@ Error logs carry the event identifier, request id and reason only — never summ
 ### 8.2 Failure classes
 
 This table defines what each class **means**. It is not an event list: **§8.1's inventory is the exhaustive authority**
-for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#43, sensitive read #33–#36, and every
+for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#50, sensitive read #33–#36, and every
 best-effort pair), and the coverage guard compares the catalog with that inventory alone. The examples below are
 illustrative.
 
@@ -1192,8 +1192,8 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   onto the server.
 
 **Retention design (Part 2, §12) ([Plan], P5.8) — the one controlled exception to append-only. Consolidated in
-revision 84** from revisions 20–83 and the four critic rounds of 2026-10-18 (§14), and corrected in revisions 85–89 for the
-fifth to ninth, on the owner's decisions D9, CF2b,
+revision 84** from revisions 20–83 and the four critic rounds of 2026-10-18 (§14), and corrected in revisions 85–90 for the
+fifth to tenth, on the owner's decisions D9, CF2b,
 CF4, O10, O11, O20 and O21. [Fact] `audit.audit_events` is append-only for every role (grant and trigger,
 `20260927000300:142-147`).
 
@@ -1463,8 +1463,9 @@ Nothing was deleted by an export run, so no entry is ever lost: a later run expo
   `<name>` on the medium **exclusively** (`open` with `wx`; no hard link, so an ordinary FAT or exFAT stick works),
   copies the report into it, flushes, calls `record_handover_written(p_attempt_id, p_diskseq)` and tells the operator
   to **eject the medium safely and insert it again**. Then `audit:purge-report-handover --report <id> --verify --to <medium
-  directory>`, a new process, asks the operator **interactively** to confirm the eject by typing the stick's label (rev
-  89: never a flag on the command line, which would become a rubber stamp), checks the volume's serial against the
+  directory>`, a new process, asks the operator **interactively** to confirm the eject by typing a fixed phrase with the
+  attempt's id ("ejected <id>") and the stick's label (revs 89–90: never a flag on the command line, which would become a
+  rubber stamp; `begin_report_handover` refuses a medium with an empty or default label, such as `NO NAME`), checks the volume's serial against the
   attempt's, opens the file afresh, hashes it, and calls `record_report_handover(p_attempt_id, p_medium_sha256,
   p_eject_attested, p_diskseq)`. **A serial mismatch, an eject not confirmed, and a disk sequence unchanged or
   unreadable are refusals that change nothing** (rev 89) — the stick may be another one, or not yet ejected; the
@@ -1479,20 +1480,25 @@ Nothing was deleted by an export run, so no entry is ever lost: a later run expo
   (`/sys/class/block/<disk>/diskseq`, found from the mount's device numbers; a per-boot counter that grows on every
   attach and is never reused) is recorded at the write and must have changed at the verification — a real check where
   the kernel offers it. The verification proves the stick's bytes as far as the eject is true. It records the attempt
-  and writes #47. **On a hash mismatch or a failure, the command first re-reads the
-  attempt** (rev 89): if it is `recorded` — a response lost after the record committed — the stick is never touched,
-  and the command prints its number and hash; only while the attempt is known to be unended does it delete what it
-  wrote and call `record_handover_failed(p_attempt_id, p_reason)` — the command's own record, a twentieth function
-  (outcome `abandoned`, **no fate**; it writes its own event, #50 `platform.purge_report_handover_failed`, so each pair keeps
-  one writer): the stick **must be wiped or destroyed** (deleting a file leaves
-  its bytes on a FAT stick), and the listing flags the attempt until the operator attests its fate. A counterfeit or failing stick is
+  and writes #47. **Only a hash mismatch, or a file on the stick that is unreadable or
+  truncated, is a failure** (rev 90); a refusal for anything else — a lock taken by a running page
+  (`lock_not_available`), a lost connection, an unconfirmed eject, a serial or disk-sequence mismatch — changes nothing,
+  and the operator runs the verification again. **On a failure the database decides first** (rev 90): the command calls
+  `record_handover_failed(p_attempt_id, p_reason)` — the command's own record, a twentieth function, which locks the
+  attempt and is refused unless it is unended and its write recorded; it sets the outcome `abandoned` with **no fate**
+  and writes its own event, #50 `platform.purge_report_handover_failed`, so each pair keeps one writer. **Only after that
+  call succeeds** — or, after a lost response, a re-read shows the attempt abandoned by it — does the command delete what
+  it wrote on the stick; on any other answer (the attempt recorded, by a commit that landed late) it leaves the stick
+  alone and prints the attempt's state. So no path wipes a stick whose attempt is recorded. The stick **must be wiped or
+  destroyed** (deleting a file leaves its bytes on a FAT stick), and the listing flags the attempt until the operator
+  attests its fate. A counterfeit or failing stick is
   therefore caught before the owner takes it, as far as the attested eject is true. The command prints the attempt's number, the stick's label and the SHA-256, which the
   owner's written "received" quotes (the runbook's form). **An attempt that stopped** (a killed process, a medium never
   verified) is listed as unended, and **a recorded attempt that is not to be delivered** (the owner says the stick is
   faulty; a replacement is made) is listed as live; either is ended with `audit:purge-report-handover-abandoned
   --attempt <id> --note <what became of the stick>` — `record_handover_abandoned(p_attempt_id, p_note)`, the
   operator's attestation, which sets `abandoned` (unended) or `superseded` (recorded) — keeping `ended_at` as it was for
-  a recorded attempt, the verification's time, so the reminders stay right — attests the stick's fate and writes #49.
+  a recorded attempt, the verification's time (the superseding's time is `fate_attested_at`) — attests the stick's fate and writes #49.
   The same call attests the fate of an attempt `record_handover_failed` abandoned (setting only the fate; rev 89). It is accepted whatever the report's state,
   **except for the delivered attempt**, which is refused (rev 88), and refused for an attempt whose fate is already
   attested. **A live
@@ -1530,8 +1536,9 @@ Nothing was deleted by an export run, so no entry is ever lost: a later run expo
   attempt is live (rev 87) — a recorded stick already with the owner is first recorded superseded, "with the owner".
   A copy already handed over is the owner's.
 - **A report lost before delivery** — the file missing or altered, or the medium never reaching the owner:
-  `record_report_lost(p_report_id, p_note, p_mode)` (#43), refused once the report is delivered or withdrawn, and while
-  an attempt of it is live (rev 87). The command first
+  `record_report_lost(p_report_id, p_note, p_mode)` (#43), refused once the report is delivered or withdrawn, while
+  an attempt of it is live (rev 87), and while an attempt of it has no attested fate (rev 90: an unaccounted stick is
+  another copy). The command first
   deletes the run's files (on the writing machine with the marker; otherwise by `--attest` or `--lost`, as above),
   records the loss, then removes the marker. The report's manifest is removed and the request stays open with no active
   report, so the next run is an export run that makes a new copy of what is due then — the same rows, none of which was
@@ -1653,7 +1660,10 @@ delivery** — a medium on the report's own volume is refused; the handover succ
 verification runs in a new process; `record_report_handover` is refused without the eject attested, and, where the
 write recorded a disk sequence, with an unchanged or a null one (staged sysfs values); a serial mismatch, an unconfirmed
 eject and an unchanged sequence change nothing and leave the attempt unended; a response lost after
-`record_report_handover` committed (injected) leaves the stick untouched and the attempt recorded; an attempt abandoned
+`record_report_handover` committed (injected) leaves the stick untouched and the attempt recorded; a record committed
+after the command's re-read (injected) makes `record_handover_failed` refuse and the stick stays untouched;
+`lock_not_available` during the verification changes nothing; a medium with an empty or default label is refused;
+`record_report_lost` is refused while an attempt has no attested fate; an attempt abandoned
 by `record_handover_failed` has no fate until the operator's later call sets only the fate; another volume's serial is a
 refusal that changes nothing; a medium whose bytes were changed after the write is caught (a test stage alters the
 file between the two steps); `record_report_handover` is refused before `record_handover_written`; a truncated copy is refused, removed from the medium and the attempt recorded abandoned; an attempt killed
@@ -3109,6 +3119,8 @@ Part 2 boundary in place (§14, §16).
 
 ## 14. Open items for the reviewer and owner
 
+**Critic review of Part 2, round 10 (2026-10-18, on revision 89; a new fresh-context agent; a narrow confirmation round; no sign-off).** Verdict: "the deletion-safety core is unchanged, and the rev-89 changes are mostly sound and consistent … The handover state machine is closed except for one ordering gap." Findings: P0 none; P1 none; **P2** (1) the failure path deleted the stick's file before the database moved the attempt out of the unended state, so a commit of the successful record landing late could still leave a recorded attempt on a wiped stick; and P3 points (transient refusals treated as failures, `record_report_lost` with an unaccounted stick, the reason given for keeping `ended_at`, an unlabelled stick's confirmation, §8.2's atomic range). **Disposition (revision 90):** (1) the database decides first — `record_handover_failed` locks the attempt and is refused unless it is unended and written, and the stick is touched only after that call succeeds (or a re-read shows it abandoned by it); the P3 points applied — only a hash mismatch or an unreadable or truncated file is a failure, a loss refused while any attempt lacks a fate, the eject confirmed with a fixed phrase and the attempt's id, unlabelled sticks refused, §8.2's range #37–#50.
+
 **Critic review of Part 2, round 9 (2026-10-18, on revision 88; a new fresh-context agent; a final confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds after revision 88 … The rev-88 handover changes are mostly sound"; the statements on the eject and `diskseq` "accurate". Findings: P0 none; P1 none; **P2**, both in the handover and neither able to delete a held row alone — (1) no function could record the command's own abandonment without also attesting the stick's fate; (2) the verification's failure path did not re-read the attempt, so a response lost after the record committed could wipe a stick then handed over as verified; and P3 points (copy destruction with an unaccounted stick, a null `diskseq`, an unchanged `diskseq` after a real eject, `--ejected` as a rubber stamp, the attempt's number, the reminder's time). **Disposition (revision 89):** (1) `record_handover_failed` (the twentieth function, its own event #50) records the command's abandonment with no fate; the operator's `record_handover_abandoned` later sets only the fate; (2) before any cleanup the command re-reads the attempt and never touches a stick whose attempt is recorded; the P3 points applied — `record_report_copy_destroyed` refused while another attempt has no fate, a null disk sequence never passes, an unconfirmed eject and an unchanged sequence are refusals that change nothing, the eject confirmed interactively by typing the stick's label, "the attempt's number" is its id, superseding keeps the verification's time.
 
 **Critic review of Part 2, round 8 (2026-10-18, on revision 87; a new fresh-context agent; a confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds … I found no path that deletes a held row, deletes a row before its retention, or deletes while a copy is awaited. Nothing stalls the two-year rule or CF4." Findings: P0 none; P1 none; **P2**, all in the handover and none risking a deletion — (1) a stick from an automatically abandoned attempt could never get an attested fate; (2) Linux's mount id is reused and proves neither an unmount nor a dropped cache; (3) `record_handover_abandoned` could rewrite the delivered attempt, and one of its tests was impossible; and P3 points (the eject enforced only by the command, wording, the delivery command without the receipt's attempt, the listing and reminders). **Disposition (revision 88):** (1) a fate is attested on every attempt but the delivered one (`fate_attested_at`, `fate_note`), the same call attesting an auto-abandoned one; (2) the eject is the operator's attestation on every platform, **enforced by the database** (`record_report_handover` refuses without it), with the disk's never-reused `diskseq` required to change where Linux offers it (5.15+), and every claim stated "as far as the attested eject is true"; (3) the delivered attempt is refused; the P3 points applied — `--attempt` on the delivery command, the listing and reminders per attempt.
@@ -3307,6 +3319,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 90 | 2026-10-18 | **Part 2: the critic's round 10 addressed** (§14). Round 10 found the core unchanged and the handover closed but for one ordering gap: on a failure the database now decides first (`record_handover_failed` locks the attempt and is refused unless it is unended and written; the stick is touched only after it succeeds). Also only a hash mismatch or an unreadable file is a failure, a loss is refused while any stick is unaccounted for, the eject is confirmed with a fixed phrase and the attempt's id, unlabelled sticks are refused, and §8.2's atomic range reads #37–#50. Design text only. |
 | 89 | 2026-10-18 | **Part 2: the critic's round 9 addressed** (§14). Round 9 again found the deletion-safety core sound and no P0 or P1; its two P2: `record_handover_failed` (twentieth function, #50) records the command's own abandonment without a fate, and the verification re-reads the attempt before any cleanup, never touching a recorded stick. Also copy destruction refused while another stick is unaccounted for, a null disk sequence never passing, refusals that change nothing, the eject confirmed interactively, the attempt id, the reminder's time kept. Design text only. |
 | 88 | 2026-10-18 | **Part 2: the critic's round 8 addressed** (§14). Round 8 again found the deletion-safety core sound and no P0 or P1; its three P2 were handover details: every attempt but the delivered one gets an attested stick fate; the eject is the operator's attestation on every platform, enforced by the database, with Linux's `diskseq` checked where available (the reused mount id dropped); the delivered attempt can no longer be superseded; the delivery command takes the receipt's attempt; listing and reminders per attempt. Design text only. |
 | 87 | 2026-10-18 | **Part 2: the critic's round 7 addressed** (§14). Round 7 found no P0 or P1 and the deletion-safety core intact; its two P2 concerned the handover: one live attempt per report (unended, or recorded and not superseded), a replacement stick only after the recorded attempt is superseded with an attested note on that stick's fate, the delivery naming the live recorded attempt and the receipt quoting its number and the stick's label; the eject enforced by a changed mount id on Linux and attested on Windows. Also `record_handover_written` (nineteen functions), the delivered attempt by composite foreign key, a serial mismatch a refusal, failed sticks flagged for wiping, an unknown page outcome re-read, a dead run's count kept, reminders per attempt, UNC and `subst` drives resolved. Design text only. |

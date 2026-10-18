@@ -572,6 +572,28 @@ offers no `diskseq`; the stick's fate, the operator's copy's destruction and the
 from sync, backup and shadow copies rest on the operator's attestations; the migrator is trusted, as in the P1 role
 model; while a request awaits its copy nothing is deleted, so a scheduled run (P12) must alert on it.
 
+#### As built (2026-10-18; branch `feat/p5-authorization-audit`, not yet merged)
+
+Part 1 and Part 2 are built as written above, in 21 forward-only migrations; the record of what was built, where each
+exit criterion is proven, and what remains open is the P5 record in `RESTRUCTURING_MAP.md`, and the as-built threat
+model is `docs/security/P5_THREAT_MODEL.md`. Where the system differs from the text above, or goes beyond it:
+
+- **The activity-record reads (#33, #34) are not built**: their addendum awaits the independent reviewer's confirmation.
+  Until the migration that creates them, no endpoint returns activity entries, the app keeps P1's `SELECT` on
+  `audit.audit_events` (no app code uses it), and the reporting role keeps its `ip` and `user_agent` columns (§19 says
+  "from P5"; it holds from that migration).
+- **The activity table's guard** is one trigger function, `audit.audit_events_guard()`, replacing the two triggers P1
+  gave the table; the ledger keeps `util.reject_modification()`.
+- **The operator command** reads its default as-of time from the database's clock (the operator's machine may run
+  ahead of it), and moves to the next page only when the database recorded one — a step that examined its ceiling of
+  rows and took none (held, or kept by a longer retention) asks for the same page again.
+- **Branch restrictions** are stored, resolved and tested, but narrow no endpoint: nothing branch-owned exists yet
+  (§7.6 of the plan).
+- **The request id** is always the server's own (P3 echoed a caller's).
+- **Approvals:** Part 1 by the owner and the independent reviewer (2026-10-12); Part 2 by Claude under the project
+  lead's delegation (2026-10-18), not by an independent review. The P5.8–P5.10 gate reviews and the owner's final
+  approval are outstanding.
+
 #### Rollout
 
 Additive steps first (catalog and resolver change no access), then the API switch (unchanged results for existing

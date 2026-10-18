@@ -1,11 +1,14 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 91 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 92 — built except the audit reads; awaiting reviews.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
 APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
-review (§14). P5.8 step (a), the retention purge, may be built; P5.9 and P5.10 remain downstream gates.
+review (§14). P5.8 step (a), the retention purge, is **built** (revision 92), its §8.6 test list met in part (the rest listed
+in P5.8 below); P5.9's matrix is built; the P5.10 documents are written. **Waiting for:** the independent reviewer's
+confirmation of the audit-read addendum, then the reads #33 and #34; the P5.8–P5.10 gate reviews; the owner's answers in
+`docs/business/P5_OWNER_POLICY_AND_CLOSURE.md` and the owner's final approval.
 
 | | |
 |---|---|
@@ -2967,6 +2970,47 @@ independent of the permission catalog); it is listed with them so it is complete
   loses `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns (§8.6); Part 2's approval
   before the retention purge (step (a)); the D9 written policy (step (e)) after the purge is built.
 
+**Step (a) built (revision 92, 2026-10-18).** The retention purge as approved (§8.6 at revision 90): the database side
+`c30cbff` (migrations `20261018000100_retention_core` and `…000200_retention_reports`: the helpers, the eight purge
+tables, `audit.audit_events_guard()`, the index, events #38 and #40–#50, twenty purge functions; the lock-order guard's
+categories, classes and footprints with two new source rules, each mutation-tested; formatted in `3319542`); the API's
+catalog mirror `9fefdcf`; the engine, the operator lock and the `audit:purge*` command `16c2d86`; the runbook
+`c7cc91a`. Built with a second agent (a Copilot session in the editor) and reviewed against the design before each
+commit. **Found and fixed while smoke-testing the command** on a throwaway database (`16c2d86`): a step that took no row
+advanced the page number, so the next call would be refused `page_out_of_order` — the round-5 stall again, in the
+command — now the page number moves only on a recorded page, in both loops (unit test, mutation-checked on each); the
+default as-of was the operator's clock, refused when ahead of the database's — now read from the database; Windows tools
+by absolute path; a folder refusal shown by its code (`non_operator_acl`); `reports` querying one client in turn.
+The smoke run, as the operator runs it: request, a run without a folder (skipped, nothing deleted), an export (report and
+marker written, nothing deleted), the listing, a cancellation (report withdrawn, files removed), a plain run (the five
+old rows deleted). **Tests** (`6f3de9c`, `1f7200f`, `6e7919f`; 38 database cases and 6 in the API): the main flows with
+every new pair's commit-and-rollback evidence; a held block larger than one step's ceiling crossed; a request appearing
+mid-run refusing the page; page order and idempotency; a second run refused and a dead run taken over after a short
+lease, the old run refused; `p_as_of` in the future refused; one open request; the guard case by case beside a deletion
+it allows; the ledger's guard unchanged against P1's text; calendar years (29 February 2028), UTC throughout, a redefined
+retention, overrides that only lengthen; the app and reporting role kept out; every `CHECK` and partial unique index;
+the clearing's batches, idle and revoked-after-expiry sessions, valid links and live sessions never; the export's,
+handover's, delivery's, destruction's and loss's database rules. Mutation checks: the guard without its held-row check
+and without its copy-awaited check, the verification without its disk-sequence check, the destruction without its
+unaccounted-stick check — each fails the matching case. **§8.6's Tests paragraph is not yet met in full** — the Part 2
+approval requires it, and P5.8's gate review is the independent reviewer's. Not yet tested: the request race at the
+lease's edge with a test-only gate (round 4); a late commit during a page's deletion (R38); `lock_not_available` while a
+page transaction holds the row, and renewal after a long page; the clearing raced 50 times against a revocation, two
+clearings at once, and clearing while an export is unresolved; the operator lock with real processes (a paused holder, a
+kill, a squatted name, a connection, an unsupported platform, a container, no child process while held); the
+connection's heartbeat and idle timeout; the export's file failures (an unwritable folder, a full disk, a kill mid-write
+or between the link and the confirmation, a stop between the link and the unlink, an empty export discarded `empty`) —
+partly covered by `purge.test.ts` (only its own partial file removed, a planted one untouched); `--check-files`' staged
+cases, the FAT and exFAT probe and the POSIX mode; recovery with the volume unmounted; the command's handover steps
+(a FAT medium, verification in a new process, staged `sysfs` values, a serial mismatch, a truncated copy, lost responses
+injected, the volume label); the seven-day reminders; the listing while the lock is held; and the concurrent purge
+against the paginated reads (R25, R35), which waits for the reads. **Evidence:** the full gate twice at `3dbb482` — run 1
+all passing (format, lint, typecheck, build, OpenAPI check; contracts 64, database 673, API 1143, the races 16 at 50
+staged runs each); run 2 the same except three API tests in three files timing out at 30 s together with Vitest's own
+`Timeout calling "onTaskUpdate"` (the machine stalled, under 1 GB free), the API suite then rerun: 1143 of 1143.
+After `1f7200f` and `6e7919f` (tests only): the database suite 698 of 698 in 41 files, format, lint and typecheck
+passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean.
+
 ### P5.9 — Authorization matrix and regression gate
 
 - **Work:** extend `isolation-matrix.test.ts`: expected results come from registry declarations (the
@@ -2977,6 +3021,17 @@ independent of the permission catalog); it is listed with them so it is complete
   `packages/db/test` alongside. Negative cases assert **no row changed**.
 - **Integrity:** no existing test weakened or skipped; every run recorded with command, commit and result.
 - **Done when:** the full matrix and all P1–P4 suites are green on a from-zero database.
+- **Built (revision 92, 2026-10-18):** `apps/api/test/authorization-matrix.test.ts` (`42fe471`) — every permission
+  endpoint × 13 actors (anonymous, an invalid session, the owner; staff granted every grantable merchant permission,
+  without any, with an archived role, restricted to a branch and to an archived branch; an agent; the super admin;
+  platform staff granted every grantable platform permission, without any, revoked), 391 cases; the expected answer from
+  the declaration and the catalog's grantable flag; a refusal leaves the business's rows and the platform rows it
+  addresses unchanged; an allowed call passes the API policy and the database's check. The isolation matrix's
+  `^FORBIDDEN` description regex replaced by the declaration (`3dbb482`). Foreign-tenant resources stay in the isolation
+  matrix; database-function tests in `packages/db/test`. Green on a from-zero database in both gate runs. **Departures:**
+  a new file beside the isolation matrix rather than an extension of it; platform staff with every grantable permission
+  rather than one (each grantable permission is exercised by its own endpoint). The rows of the audit reads come with
+  them.
 
 ### P5.10 — Closure
 
@@ -2996,6 +3051,15 @@ independent of the permission catalog); it is listed with them so it is complete
   gitleaks over full history; the three review documents are already committed on this branch as planning records —
   whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
 - **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.
+- **Done so far (revision 92, 2026-10-18):** ADR-16 as built (`9d412d0`); the P5 record in `RESTRUCTURING_MAP.md`
+  (`fecca3f`, `d08dcdc`); the threat model `docs/security/P5_THREAT_MODEL.md` (`d5fbfb0`); the runbooks
+  `docs/operations/AUDIT_PURGE.md` (`c7cc91a`) and `AUTHORIZATION_CONTAINMENT.md` (`3fc54d9`); the D9 policy drafted for
+  the owner (`995fbc6`); the full gate twice and gitleaks over the full history (P5.8 above). The review documents stay
+  in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **§13, item by item:** 1 met;
+  2 met for every endpoint built (the reads' rows follow them); 3, 4, 6, 8, 10, 11 met; 5 met except the audit reads;
+  7 open for the reads (isolated and audited reads, the concurrent purge against them); 9 open — the owner's approval of
+  the policy, and §8.6's tests in full. **Open:** the reviewer's confirmation of the addendum, the reads, the P5.8–P5.10
+  gate reviews, the owner's answers and final approval.
 
 ## 11. Rollout and rollback (no fail-open)
 
@@ -3321,6 +3385,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 92 | 2026-10-18 | **P5.8 step (a), P5.9 and the P5.10 documents built** — the retention purge (database, API mirror, engine, lock, command, runbook) with 38 database and 6 API tests, two command defects found by a smoke run and fixed, §8.6's tests met in part and the remainder listed (P5.8); the authorization matrix, 391 cases, and the isolation matrix's regex replaced by the declaration (P5.9); ADR-16 as built, the P5 record, the threat model, both runbooks and the policy draft (P5.10); the full gate twice (run 2's three timeouts a machine stall, rerun green), gitleaks over the full history clean; the closing form's repeated question (O17) removed. Not built: the audit reads, awaiting the reviewer's confirmation. Nothing approved by this revision. |
 | 91 | 2026-10-18 | **Part 2 approved** — by Claude, under the project lead's delegation of 2026-10-18, not by an independent review (§14): the retention design at revision 90 (`687dee6`), after ten critic rounds whose last five found the deletion-safety core and liveness sound, with every finding resolved and the residual risks stated (the attested eject where no `diskseq`, the operator's attestations, the trusted migrator, the alert on a request awaiting its copy). P5.8 step (a) may be built; P5.8's gate review stays with the independent reviewer. |
 | 90 | 2026-10-18 | **Part 2: the critic's round 10 addressed** (§14). Round 10 found the core unchanged and the handover closed but for one ordering gap: on a failure the database now decides first (`record_handover_failed` locks the attempt and is refused unless it is unended and written; the stick is touched only after it succeeds). Also only a hash mismatch or an unreadable file is a failure, a loss is refused while any stick is unaccounted for, the eject is confirmed with a fixed phrase and the attempt's id, unlabelled sticks are refused, and §8.2's atomic range reads #37–#50. Design text only. |
 | 89 | 2026-10-18 | **Part 2: the critic's round 9 addressed** (§14). Round 9 again found the deletion-safety core sound and no P0 or P1; its two P2: `record_handover_failed` (twentieth function, #50) records the command's own abandonment without a fate, and the verification re-reads the attempt before any cleanup, never touching a recorded stick. Also copy destruction refused while another stick is unaccounted for, a null disk sequence never passing, refusals that change nothing, the eject confirmed interactively, the attempt id, the reminder's time kept. Design text only. |

@@ -15,7 +15,17 @@
     "test": "pnpm --filter @alphakolect/contracts client:generate && vitest run",
     "secrets:local": "tsx scripts/generate-local-secrets.ts",
     "admin:bootstrap": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/bootstrap-super-admin.ts",
-    "admin:containment": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/containment.ts"
+    "admin:containment": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/containment.ts",
+    "audit:purge": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts run",
+    "audit:purge-request-report": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts request-report",
+    "audit:purge-request-cancel": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts request-cancel",
+    "audit:purge-reports": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts reports",
+    "audit:purge-export-discarded": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts export-discarded",
+    "audit:purge-report-handover": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts report-handover",
+    "audit:purge-report-handover-abandoned": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts handover-abandoned",
+    "audit:purge-report-delivered": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts report-delivered",
+    "audit:purge-report-destroyed": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts report-destroyed",
+    "audit:purge-report-lost": "tsx --conditions=@alphakolect/source --env-file-if-exists=.env scripts/audit-purge.ts report-lost"
   },
   "dependencies": {
     "@alphakolect/contracts": "workspace:*",

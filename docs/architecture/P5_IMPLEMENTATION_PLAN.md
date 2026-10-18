@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 71 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 72 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for the review of 2026-10-18 (rev 71) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–72) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -1287,19 +1287,27 @@ The exception is:
       in the database (its location is the path string, never the contents) and marks the export **confirmed** in the
       same transaction, and **prints the report id, path, SHA-256 and count at once — before any deletion** (R45). Any
       failure here — unwritable path, full disk, interrupted process, a stalled `fsync`, mismatch, a refused heartbeat —
-      **ends the run before any deletion**, and the command **removes what it wrote**: it deletes `<path>.partial` and
-      `<path>` if present, `fsync`s the directory, checks that neither exists, and only then calls
+      **ends the run before any deletion**, and the command **removes only artifacts it can prove this run created**:
+      it deletes `<path>.partial` or `<path>` only if this invocation successfully created that file (tracking the
+      exclusive-create handle and the successful no-overwrite rename), `fsync`s the directory, checks that its own
+      artifacts no longer exist, and only then calls
       `discard_purge_export(run_id, note)`, which marks the export **discarded** (#45). Nothing is deleted from the
-      database and the run can simply be repeated.
+      database and the run can simply be repeated. If either exclusive create or the no-overwrite rename is refused
+      because the destination already exists, that pre-existing file is never removed; the export is discarded only
+      after confirming that this run created no artifact. If ownership of a path cannot be established, the export
+      stays unresolved for operator reconciliation rather than deleting that path.
 
       **An export the command could not clean up is never forgotten.** If the process dies, or cannot remove or reach
       the file, the export stays **unresolved** (neither confirmed nor discarded). `audit:purge-reports` lists every
       unresolved export (run, path, started), and `reserve_purge_run` **refuses every new run** with
       `export_unresolved`, naming them, while one exists whose run no longer holds a live reservation. The command
-      resolves such an export before it reserves: it deletes both names at the recorded path, checks that neither
-      exists, and records the discard; where the path cannot be reached from where it runs (another machine, a removed
-      disk), it stops, and the operator deletes the file there and records it with
-      `audit:purge-export-discarded --run <id> --note <how it was destroyed>` — an attestation, as a delivery is.
+      resolves such an export before it reserves. It deletes only an artifact whose ownership by this run it can
+      establish, checks that artifact is gone, and records the discard. It never deletes a file merely because it
+      occupies a recorded path. If the path is unreachable, ownership is unclear, or the command cannot prove the
+      export created the file (including a pre-existing path that caused a refusal), it stops; the operator inspects
+      the path, removes only any artifact from this run, and records the outcome with
+      `audit:purge-export-discarded --run <id> --note <how it was resolved>` — an attestation, as a delivery is. A
+      pre-existing file is left untouched, and an uncertain export remains unresolved and blocks new runs.
       `discard_purge_export` is refused for a confirmed export and for another run's export while that run's
       reservation is live, so a healthy export is never discarded under it. A confirmed report is never "unresolved":
       the database, not the command's output, says which state an export is in;
@@ -1516,8 +1524,12 @@ once the next run has started), neither `<path>.partial` nor `<path>` exists and
 (#45); while an export is unresolved, `reserve_purge_run` refuses with `export_unresolved` naming it and
 `audit:purge-reports` lists it; an unreachable path is never recorded discarded without the operator's attestation;
 `discard_purge_export` is refused for a confirmed export and for another live run's export; an existing file at
-either name is refused before anything is written; the file is created owner-only; a failure injected on #45 leaves
-the export unresolved; **page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
+either name is refused before anything is written **and remains byte-for-byte untouched**, including if the process
+stops before recording the discard; a collision at the final path during the no-overwrite rename also preserves that
+pre-existing file; same-process and restart cleanup never remove a path this run did not create; an unresolved collision
+blocks new runs until the operator confirms no run-owned artifact remains; the file is created owner-only; a failure
+injected on #45 leaves the export unresolved;
+**page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
 `p_as_of`, or a digest that does not match makes `purge_expired_events` raise and delete nothing, while an eligible
 row that arrived after the page was read is simply not in the page and is left for the next run; a failure injected on #38 rolls the deletion back and leaves the
 verified file; a successful run deletes exactly the rows in the file (ids and digest); **late-commit race (R38)** — a
@@ -3135,6 +3147,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 72 | 2026-10-18 | **Part 2 export collision safety.** Same-process and crash-recovery cleanup remove only paths this run successfully created; exclusive-create or no-overwrite-rename collisions preserve existing files, with regression coverage including a process stop before discard. If file ownership cannot be established, the export remains unresolved for operator reconciliation. The independent reviewer's approval remains pending. |
 | 71 | 2026-10-18 | **Part 2 design: the review's two findings addressed** (design text only; nothing of Part 2 built). (1) An export is recorded (`audit.purge_exports`, `begin_purge_export`) before its file exists, written as `<path>.partial` (exclusive, owner-only) and renamed only when verified; any failure removes both names and records the discard (#45, `discard_purge_export`); an export left unresolved by a crash blocks every new run (`export_unresolved`) and is listed by `audit:purge-reports` until resolved, by the command or by the operator's attestation. (2) O11 applied: a delivery needs the owner's written receipt; the operator's copy is then destroyed, checked and recorded (#44, `record_report_copy_destroyed`), and a request is satisfied only when every report is delivered with its copy destroyed, or lost; an altered file and a rebuild's scratch database are destroyed too. Tests, footprints, grants, the catalog (#44, #45), the Part 2 list and the P5.10 runbook updated; thirteen purge functions. The review's recommendation on the addendum recorded (§14). Waiting for: the independent reviewer — the addendum's confirmation and Part 2's approval. |
 | 70 | 2026-10-18 | **O19 signed; sign-offs stay independent.** The reviewer's revision 69 edits committed as written (`2b28a3b`); the owner signed the O19 form (`894d309`), recorded in the decision log, the open item and ADR-16. The project lead chose that the independent reviewer keeps every remaining sign-off (§14, "option 1"). Waiting for: the reviewer's confirmation of the addendum as amended in revision 69, and Part 2's approval. |
 | 69 | 2026-10-17 | **P5.8 addendum re-review: changes requested.** The merchant-read row used `audience: 'platform'` as the team label, conflicting with the recorded nullable audience. Separate `actorLabel` from actor fields, preserve `audience` as stored, and test a platform identity with no recorded audience. The addendum remains unconfirmed; O19 signature and Part 2 approval remain separate gates. |

@@ -36,8 +36,33 @@ const OWNER_ONLY: Grantee[] = [];
 
 /** Every function in a module schema → who may execute it besides its owner, alphakolect_migrator. */
 const EXPECTED: Record<string, Grantee[]> = {
-  // audit — P5.3a: the catalog's protection and the validation trigger on audit.audit_events (trigger functions)
+  // audit — P5.3a catalog triggers and P5.8 Part 2 operator-only purge/report functions
+  'audit.audit_events_guard()': OWNER_ONLY,
+  'audit.begin_purge_export(uuid, timestamp with time zone, text, text, text)': OWNER_ONLY,
+  'audit.begin_report_handover(uuid, text)': OWNER_ONLY,
+  'audit.cancel_purge_report_request(uuid, text)': OWNER_ONLY,
+  'audit.clear_expired_request_metadata(timestamp with time zone, integer)': OWNER_ONLY,
+  'audit.confirm_purge_report(uuid, timestamp with time zone, integer, integer, text, text, text)':
+    OWNER_ONLY,
+  'audit.d9_retention()': OWNER_ONLY,
+  'audit.discard_purge_export(uuid, text, text)': OWNER_ONLY,
+  'audit.event_canonical_text(audit.audit_events)': OWNER_ONLY,
+  'audit.purge_candidates(uuid, timestamp with time zone, integer, integer)': OWNER_ONLY,
+  'audit.purge_expired_events(uuid, timestamp with time zone, integer)': OWNER_ONLY,
+  'audit.purge_lease()': OWNER_ONLY,
+  'audit.record_export_artifact(uuid, timestamp with time zone)': OWNER_ONLY,
+  'audit.record_handover_abandoned(uuid, text)': OWNER_ONLY,
+  'audit.record_handover_failed(uuid, text)': OWNER_ONLY,
+  'audit.record_handover_written(uuid, text)': OWNER_ONLY,
+  'audit.record_report_copy_destroyed(uuid, text, text)': OWNER_ONLY,
+  'audit.record_report_delivery(uuid, uuid, text, text)': OWNER_ONLY,
+  'audit.record_report_handover(uuid, text, boolean, text)': OWNER_ONLY,
+  'audit.record_report_lost(uuid, text, text)': OWNER_ONLY,
   'audit.protect_event_catalog()': OWNER_ONLY,
+  'audit.release_purge_run(uuid, boolean)': OWNER_ONLY,
+  'audit.renew_purge_run(uuid, timestamp with time zone)': OWNER_ONLY,
+  'audit.request_purge_report(text)': OWNER_ONLY,
+  'audit.reserve_purge_run(timestamp with time zone)': OWNER_ONLY,
   'audit.validate_event()': OWNER_ONLY,
   // identity — request paths (P3/P4)
   'identity.accept_totp_step(uuid, bigint)': APP,

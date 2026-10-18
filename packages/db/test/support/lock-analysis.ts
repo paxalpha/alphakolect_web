@@ -21,6 +21,14 @@ import type pg from 'pg';
 /** The global category order (§7.2 "Categories (global order)"). */
 export const CATEGORY: Readonly<Record<string, number>> = {
   'audit.purge_reservation': 0,
+  // the purge's own tables (P5.8 step (a), Part 2): written only by purge functions, after the reservation row
+  'audit.purge_runs': 0,
+  'audit.purge_run_pages': 0,
+  'audit.purge_run_events': 0,
+  'audit.purge_report_requests': 0,
+  'audit.purge_exports': 0,
+  'audit.purge_reports': 0,
+  'audit.purge_report_handovers': 0,
   // the containment switch's one row (§11.1): operator-only, like the purge reservation; no request path locks it
   'util.authorization_containment': 0,
   'identity.platform_memberships': 1,
@@ -39,6 +47,8 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'tenancy.role_permissions': 9,
   'identity.platform_membership_grants': 9,
   'identity.sessions': 10,
+  // the activity record's rows: deleted by id by the purge only (Part 2, §8.6 item 12); nothing else locks them
+  'audit.audit_events': 11,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */

@@ -27,6 +27,15 @@ const MODULE_SCHEMAS = [
 const TABLES = [
   'audit.audit_events',
   'audit.event_catalog',
+  // P5.8 step (a): the retention purge's own tables (Part 2)
+  'audit.purge_exports',
+  'audit.purge_report_handovers',
+  'audit.purge_report_requests',
+  'audit.purge_reports',
+  'audit.purge_reservation',
+  'audit.purge_run_events',
+  'audit.purge_run_pages',
+  'audit.purge_runs',
   'identity.identities',
   'identity.membership_selection_challenges',
   'identity.mfa_challenges',

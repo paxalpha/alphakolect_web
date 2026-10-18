@@ -93,6 +93,15 @@ describe('enforcing mode (R34): no finding at all', () => {
       )
       .sort();
     expect(contested).toEqual([
+      // P5.8 Part 2: run, manifest, export and report state inserted under unique keys
+      'audit.purge_exports(run_id)',
+      'audit.purge_report_handovers(report_id) partial',
+      'audit.purge_reports(request_id) partial',
+      'audit.purge_reports(run_id)',
+      'audit.purge_reservation(id)',
+      'audit.purge_run_events(run_id, page_no, ordinal)',
+      'audit.purge_run_pages(run_id, page_no)',
+      'audit.purge_runs(run_id)',
       'identity.identities(email)',
       // P5.7: the platform grant writer inserts grant rows
       'identity.platform_membership_grants(platform_membership_id, permission)',
@@ -363,6 +372,74 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
           .length,
       ).toBeGreaterThan(0);
     });
+  });
+});
+
+// The retention purge's two lock rules (P5 plan §8.6 item 12, Part 2): activity rows (category 11) are deleted by the
+// purge alone, and the purge's own tables (category 0) are written only after the reservation row, taken NOWAIT first.
+describe('the purge’s lock rules (§8.6 item 12): category 11 and the purge tables', () => {
+  const PURGE_TABLES =
+    /\b(?:insert\s+into|update|delete\s+from)\s+audit\.purge_(?:runs|run_pages|run_events|report_requests|exports|reports|report_handovers)\b/i;
+  const RESERVATION_FIRST = /from\s+audit\.purge_reservation\s+r\s+where\s+r\.id\s+for\s+no\s+key\s+update\s+nowait/i;
+  const bodyOf = (f: FnRow) => {
+    const a = f.def.indexOf('$function$');
+    const b = f.def.lastIndexOf('$function$');
+    return a >= 0 && b > a ? f.def.slice(a + 10, b) : f.def;
+  };
+  /** Every function that deletes activity rows. */
+  const deletesActivity = (functions: FnRow[]) =>
+    functions
+      .filter((f) => /\bdelete\s+from\s+audit\.audit_events\b/i.test(bodyOf(f)))
+      .map((f) => `${f.schema}.${f.name}`)
+      .sort();
+  /** Every function that writes a purge table before taking the reservation row. */
+  const writesBeforeReservation = (functions: FnRow[]) =>
+    functions
+      .filter((f) => {
+        const body = bodyOf(f);
+        const write = body.search(PURGE_TABLES);
+        if (write < 0) return false;
+        const reservation = body.search(RESERVATION_FIRST);
+        return reservation < 0 || reservation > write;
+      })
+      .map((f) => `${f.schema}.${f.name}`)
+      .sort();
+  const probe = (name: string, body: string): FnRow => ({
+    schema: 'probe',
+    name,
+    args: '',
+    lang: 'plpgsql',
+    definer: true,
+    executors: [],
+    def: `CREATE FUNCTION probe.${name}() RETURNS void LANGUAGE plpgsql AS $function$${body}$function$`,
+  });
+
+  it('activity rows are deleted by audit.purge_expired_events alone', () => {
+    expect(deletesActivity(catalog.functions)).toEqual(['audit.purge_expired_events']);
+  });
+
+  it('every write to a purge table follows the reservation row, taken NOWAIT first', () => {
+    expect(writesBeforeReservation(catalog.functions)).toEqual([]);
+  });
+
+  it('mutations: a second function deleting activity rows, and a purge-table write without the reservation, fail', () => {
+    const deleter = probe('deleter', `BEGIN DELETE FROM audit.audit_events a WHERE a.id = gen_random_uuid(); END`);
+    expect(deletesActivity([...catalog.functions, deleter])).toEqual([
+      'audit.purge_expired_events',
+      'probe.deleter',
+    ]);
+    const unreserved = probe('unreserved', `BEGIN UPDATE audit.purge_runs pr SET completed = true; END`);
+    const late = probe(
+      'late',
+      `BEGIN UPDATE audit.purge_runs pr SET completed = true;
+         PERFORM 1 FROM audit.purge_reservation r WHERE r.id FOR NO KEY UPDATE NOWAIT; END`,
+    );
+    const conforming = probe(
+      'conforming',
+      `BEGIN PERFORM 1 FROM audit.purge_reservation r WHERE r.id FOR NO KEY UPDATE NOWAIT;
+         UPDATE audit.purge_runs pr SET completed = true; END`,
+    );
+    expect(writesBeforeReservation([unreserved, late, conforming])).toEqual(['probe.late', 'probe.unreserved']);
   });
 });
 

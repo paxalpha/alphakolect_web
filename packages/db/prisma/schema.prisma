@@ -198,6 +198,8 @@ model AuditEvent {
 
   @@index([merchantId, occurredAt])
   @@index([action, occurredAt])
+  /// P5.8 (Part 2): the purge pages by it, and the audit reads use it too.
+  @@index([occurredAt, id], map: "audit_events_occurred_at_id_idx")
   @@map("audit_events")
   @@schema("audit")
 }
@@ -223,6 +225,161 @@ model AuditEventCatalogEntry {
 
   @@id([identifier, outcome])
   @@map("event_catalog")
+  @@schema("audit")
+}
+
+// ── the retention purge (P5.8 step (a), Part 2; P5 plan §8.6) ───────────────────────────────────────────────────
+// Written only by the operator-only purge functions (owned by the migrator); nothing granted to the app or the
+// reporting role. CHECKs, the one-row key and the partial unique indexes live in SQL.
+
+/// The run-wide reservation: exactly one row.
+model PurgeReservation {
+  id         Boolean   @id @default(true)
+  runId      String?   @map("run_id") @db.Uuid
+  pAsOf      DateTime? @map("p_as_of") @db.Timestamptz(6)
+  reservedAt DateTime? @map("reserved_at") @db.Timestamptz(6)
+  renewedAt  DateTime? @map("renewed_at") @db.Timestamptz(6)
+
+  @@map("purge_reservation")
+  @@schema("audit")
+}
+
+/// One row per purge run, never deleted: its kind, its read position, what it deleted.
+model PurgeRun {
+  runId               String    @id @map("run_id") @db.Uuid
+  /// plain | export
+  kind                String
+  pAsOf               DateTime  @map("p_as_of") @db.Timestamptz(6)
+  reservedAt          DateTime  @map("reserved_at") @db.Timestamptz(6)
+  takenOverRun        String?   @map("taken_over_run") @db.Uuid
+  scanAfterOccurredAt DateTime? @map("scan_after_occurred_at") @db.Timestamptz(6)
+  scanAfterId         String?   @map("scan_after_id") @db.Uuid
+  exhaustedAt         DateTime? @map("exhausted_at") @db.Timestamptz(6)
+  rowsDeleted         Int       @default(0) @map("rows_deleted")
+  releasedAt          DateTime? @map("released_at") @db.Timestamptz(6)
+  completed           Boolean?
+
+  @@map("purge_runs")
+  @@schema("audit")
+}
+
+/// The manifest's pages: what purge_candidates handed out.
+model PurgeRunPage {
+  runId        String    @map("run_id") @db.Uuid
+  pageNo       Int       @map("page_no")
+  rowCount     Int       @map("row_count")
+  digest       String
+  processedAt  DateTime? @map("processed_at") @db.Timestamptz(6)
+  deletedCount Int?      @map("deleted_count")
+
+  @@id([runId, pageNo])
+  @@map("purge_run_pages")
+  @@schema("audit")
+}
+
+/// The manifest's events: each page's event ids, in order.
+model PurgeRunEvent {
+  runId   String @map("run_id") @db.Uuid
+  pageNo  Int    @map("page_no")
+  ordinal Int
+  eventId String @map("event_id") @db.Uuid
+
+  @@id([runId, pageNo, ordinal])
+  @@index([eventId], map: "purge_run_events_event_id_idx")
+  @@map("purge_run_events")
+  @@schema("audit")
+}
+
+/// The owner's requests for a copy of the entries due for deletion (one open at most).
+model PurgeReportRequest {
+  id          String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  requestedAt DateTime  @default(now()) @map("requested_at") @db.Timestamptz(6)
+  note        String
+  /// open | satisfied | cancelled
+  state       String    @default("open")
+  closedAt    DateTime? @map("closed_at") @db.Timestamptz(6)
+  closeNote   String?   @map("close_note")
+
+  reports PurgeReport[]
+
+  @@map("purge_report_requests")
+  @@schema("audit")
+}
+
+/// One row per export run that began: recorded before its file exists.
+model PurgeExport {
+  runId              String    @id @map("run_id") @db.Uuid
+  directory          String
+  writerHostId       String    @map("writer_host_id")
+  writerLockKey      String    @map("writer_lock_key")
+  startedAt          DateTime  @map("started_at") @db.Timestamptz(6)
+  artifactRecordedAt DateTime? @map("artifact_recorded_at") @db.Timestamptz(6)
+  /// confirmed | discarded
+  outcome            String?
+  endedAt            DateTime? @map("ended_at") @db.Timestamptz(6)
+  note               String?
+  lost               Boolean   @default(false)
+
+  @@map("purge_exports")
+  @@schema("audit")
+}
+
+/// A confirmed copy for the owner: active (its rows held) until delivered, withdrawn or lost.
+model PurgeReport {
+  id                  String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  requestId           String    @map("request_id") @db.Uuid
+  runId               String    @unique @map("run_id") @db.Uuid
+  pAsOf               DateTime  @map("p_as_of") @db.Timestamptz(6)
+  confirmedAt         DateTime  @map("confirmed_at") @db.Timestamptz(6)
+  rowCount            Int       @map("row_count")
+  pageCount           Int       @map("page_count")
+  manifestDigest      String    @map("manifest_digest")
+  fileSha256          String    @map("file_sha256")
+  fileLocation        String    @map("file_location")
+  deliveredHandoverId String?   @map("delivered_handover_id") @db.Uuid
+  deliveredAt         DateTime? @map("delivered_at") @db.Timestamptz(6)
+  receiptReference    String?   @map("receipt_reference")
+  deliveryNote        String?   @map("delivery_note")
+  withdrawnAt         DateTime? @map("withdrawn_at") @db.Timestamptz(6)
+  lostAt              DateTime? @map("lost_at") @db.Timestamptz(6)
+  lossNote            String?   @map("loss_note")
+  copyDestroyedAt     DateTime? @map("copy_destroyed_at") @db.Timestamptz(6)
+  /// automatic | attested | lost
+  destroyMode         String?   @map("destroy_mode")
+  destroyNote         String?   @map("destroy_note")
+  lostHost            Boolean   @default(false) @map("lost_host")
+
+  request           PurgeReportRequest    @relation(fields: [requestId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveredHandover PurgeReportHandover?  @relation("DeliveredHandover", fields: [deliveredHandoverId, id], references: [id, reportId], onDelete: Restrict, onUpdate: Restrict, map: "purge_reports_delivered_handover_fkey")
+  handovers         PurgeReportHandover[] @relation("ReportHandovers")
+
+  @@map("purge_reports")
+  @@schema("audit")
+}
+
+/// One row per handover attempt of a report onto a stick (at most one live per report).
+model PurgeReportHandover {
+  id             String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  reportId       String    @map("report_id") @db.Uuid
+  startedAt      DateTime  @map("started_at") @db.Timestamptz(6)
+  medium         String
+  writtenAt      DateTime? @map("written_at") @db.Timestamptz(6)
+  writeDiskseq   String?   @map("write_diskseq")
+  verifyDiskseq  String?   @map("verify_diskseq")
+  ejectAttested  Boolean   @default(false) @map("eject_attested")
+  /// recorded | abandoned | superseded
+  outcome        String?
+  endedAt        DateTime? @map("ended_at") @db.Timestamptz(6)
+  mediumSha256   String?   @map("medium_sha256")
+  note           String?
+  fateAttestedAt DateTime? @map("fate_attested_at") @db.Timestamptz(6)
+  fateNote       String?   @map("fate_note")
+
+  report      PurgeReport   @relation("ReportHandovers", fields: [reportId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  deliveredIn PurgeReport[] @relation("DeliveredHandover")
+
+  @@unique([id, reportId])
+  @@map("purge_report_handovers")
   @@schema("audit")
 }
 

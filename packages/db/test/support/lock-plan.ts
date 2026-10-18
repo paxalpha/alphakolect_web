@@ -136,6 +136,142 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['0:NKU'],
     writes: ['util.authorization_containment', 'audit.audit_events'],
   },
+  // ── the retention purge (P5.8 step (a), Part 2; plan §8.6, §7.2's purge rows): operator only ──
+  // the helpers: constants and the canonical text, lock-free
+  'audit.d9_retention': { class: 'reader' },
+  'audit.purge_lease': { class: 'reader' },
+  'audit.event_canonical_text': { class: 'reader' },
+  // the table's own guard (L4): reads without locks, locks and writes nothing
+  'audit.audit_events_guard': { class: 'trigger' },
+  'audit.reserve_purge_run': {
+    class: 'operation',
+    planned: ['0:W', '0:W', '0:W', '+0'],
+    writes: [
+      'audit.purge_reservation',
+      'audit.purge_runs',
+      'audit.purge_run_events',
+      'audit.purge_run_pages',
+    ],
+  },
+  'audit.renew_purge_run': { class: 'operation', planned: [], writes: ['audit.purge_reservation'] },
+  'audit.release_purge_run': {
+    class: 'operation',
+    planned: ['0:W', '0:W', '0:W'],
+    writes: [
+      'audit.purge_reservation',
+      'audit.purge_runs',
+      'audit.purge_run_events',
+      'audit.purge_run_pages',
+    ],
+  },
+  'audit.purge_candidates': {
+    class: 'operation',
+    planned: ['0:NKU', '+0'],
+    writes: [
+      'audit.purge_reservation',
+      'audit.purge_runs',
+      'audit.purge_run_pages',
+      'audit.purge_run_events',
+    ],
+  },
+  'audit.purge_expired_events': {
+    class: 'operation',
+    planned: ['0:W', '11:W'],
+    writes: ['audit.purge_reservation', 'audit.purge_run_pages', 'audit.audit_events'],
+  },
+  'audit.clear_expired_request_metadata': {
+    class: 'operation',
+    planned: [],
+    writes: ['identity.one_time_tokens', 'identity.sessions', 'audit.audit_events'],
+  },
+  'audit.request_purge_report': {
+    class: 'operation',
+    planned: [],
+    writes: ['audit.purge_report_requests', 'audit.audit_events'],
+  },
+  'audit.cancel_purge_report_request': {
+    class: 'operation',
+    planned: ['0:W', '0:W', '0:W', '0:W'],
+    writes: [
+      'audit.purge_report_requests',
+      'audit.purge_reports',
+      'audit.purge_run_events',
+      'audit.purge_run_pages',
+      'audit.audit_events',
+    ],
+  },
+  'audit.begin_purge_export': {
+    class: 'operation',
+    planned: ['+0'],
+    writes: ['audit.purge_reservation', 'audit.purge_exports'],
+  },
+  'audit.record_export_artifact': {
+    class: 'operation',
+    planned: ['0:W'],
+    writes: ['audit.purge_reservation', 'audit.purge_exports'],
+  },
+  'audit.discard_purge_export': {
+    class: 'operation',
+    planned: ['0:W', '0:W', '0:W'],
+    writes: [
+      'audit.purge_reservation',
+      'audit.purge_exports',
+      'audit.purge_run_events',
+      'audit.purge_run_pages',
+      'audit.audit_events',
+    ],
+  },
+  'audit.confirm_purge_report': {
+    class: 'operation',
+    planned: ['0:W', '+0'],
+    writes: ['audit.purge_reservation', 'audit.purge_exports', 'audit.purge_reports', 'audit.audit_events'],
+  },
+  'audit.begin_report_handover': {
+    class: 'operation',
+    planned: ['0:NKU', '+0'],
+    writes: ['audit.purge_report_handovers'],
+  },
+  'audit.record_handover_written': {
+    class: 'operation',
+    planned: ['0:W'],
+    writes: ['audit.purge_report_handovers'],
+  },
+  'audit.record_report_handover': {
+    class: 'operation',
+    planned: ['0:NKU'],
+    writes: ['audit.purge_report_handovers', 'audit.audit_events'],
+  },
+  'audit.record_handover_failed': {
+    class: 'operation',
+    planned: ['0:NKU'],
+    writes: ['audit.purge_report_handovers', 'audit.audit_events'],
+  },
+  'audit.record_handover_abandoned': {
+    class: 'operation',
+    planned: ['0:NKU'],
+    writes: ['audit.purge_report_handovers', 'audit.audit_events'],
+  },
+  'audit.record_report_delivery': {
+    class: 'operation',
+    planned: ['0:NKU', '0:W', '0:W', '0:W'],
+    writes: [
+      'audit.purge_reports',
+      'audit.purge_report_requests',
+      'audit.purge_run_events',
+      'audit.purge_run_pages',
+      'audit.audit_events',
+    ],
+  },
+  'audit.record_report_copy_destroyed': {
+    class: 'operation',
+    planned: ['0:NKU'],
+    writes: ['audit.purge_reports', 'audit.audit_events'],
+  },
+  'audit.record_report_lost': {
+    class: 'operation',
+    planned: ['0:NKU', '0:W', '0:W'],
+    writes: ['audit.purge_reports', 'audit.purge_run_events', 'audit.purge_run_pages', 'audit.audit_events'],
+  },
   // operator only (§7.4, rev 14)
   'identity.bootstrap_super_admin': {
     class: 'operation',
@@ -340,6 +476,8 @@ export const MERCHANT_SCOPE_EXEMPT: Readonly<Record<string, string>> = {
  * membership those have already resolved.
  */
 export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
+  'audit.event_canonical_text':
+    'canonicalizes a caller-supplied audit row for the operator export; it reads no table and takes no session',
   'identity.active_membership':
     'the session, MFA and refresh flows’ check of a membership the identity already holds',
   'identity.eligible_memberships': 'the login flow’s list of the memberships an identity may choose from',

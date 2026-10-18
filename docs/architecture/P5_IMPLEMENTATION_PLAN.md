@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 72 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 73 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–72) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–73) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -375,7 +375,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.begin_purge_export`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52; rev 71) | 0: reservation / NKU `NOWAIT` | write the reservation row, the export and report tables, and delete manifest rows per the manifest lifecycle (no request path touches any of them); #41–#45 inserts (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52; revs 71, 73) | 0: reservation / NKU `NOWAIT` | write the reservation row, the export and report tables, and delete manifest rows per the manifest lifecycle (no request path touches any of them); #41–#45 inserts (fresh key) |
 | `audit.purge_candidates` (Part 2; operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
 | `audit.purge_expired_events` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → audit rows of the page, by id (`DELETE`; nothing else locks them) | #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
@@ -1278,7 +1278,10 @@ The exception is:
       2026-10-18): `begin_purge_export(run_id, path)` inserts this run's row of `audit.purge_exports` (one per run) with
       the path the operator names (never in the repository or on the server). The command then creates
       `<path>.partial` **exclusively** (refused if `<path>` or `<path>.partial` exists) and readable by its owner only
-      (mode `0600`), writes all pages to it, flushes it to disk (`fsync` of the file and its directory), reads it back
+      (mode `0600`), and at once records **the file's identity** — `record_export_artifact(run_id, identity)` sets it,
+      once, on this run's export (rev 73): the device and file number of the open handle (`fstat`), and its creation
+      time where the platform reports one; a rename within the directory keeps them. A platform that reports no stable
+      file number records none, and its exports are resolved by hand. Only then does it write all pages to it, flushes it to disk (`fsync` of the file and its directory), reads it back
       and checks that every page's rows reproduce that page's database digest, and records the file's own SHA-256; only
       then does it rename it to `<path>` (no overwrite) and `fsync` the directory. Throughout this step the command calls
       `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44), so a healthy slow write keeps its
@@ -1303,7 +1306,11 @@ The exception is:
       `export_unresolved`, naming them, while one exists whose run no longer holds a live reservation. The command
       resolves such an export before it reserves. It deletes only an artifact whose ownership by this run it can
       establish, checks that artifact is gone, and records the discard. It never deletes a file merely because it
-      occupies a recorded path. If the path is unreachable, ownership is unclear, or the command cannot prove the
+      occupies a recorded path. **The proof is the recorded identity (rev 73):** for each of `<path>.partial` and
+      `<path>`, it reads the entry without following a link; a regular file whose device, file number and (where
+      recorded) creation time all equal the recorded identity was made by that export and is deleted; any other entry
+      is left untouched. An export with no recorded identity — the process stopped between creating the file and
+      recording it, or the platform reports none — has no proof, and goes to the operator as below. If the path is unreachable, ownership is unclear, or the command cannot prove the
       export created the file (including a pre-existing path that caused a refusal), it stops; the operator inspects
       the path, removes only any artifact from this run, and records the outcome with
       `audit:purge-export-discarded --run <id> --note <how it was resolved>` — an attestation, as a delivery is. A
@@ -1429,8 +1436,8 @@ The exception is:
      report that is already delivered or already lost; never deleted.
      **The operator's copy (rev 71):** `copy_destroyed_at` and `destroy_note`, set once, only after the delivery —
      `CHECK (copy_destroyed_at IS NULL OR delivered_at IS NOT NULL)`.
-   - `audit.purge_exports` (`run_id` unique, `path`, `started_at`, `outcome` `NULL` | `confirmed` | `discarded`,
-     `ended_at`, `note`; rev 71): one row per run that began an export; its outcome moves once, from unresolved to
+   - `audit.purge_exports` (`run_id` unique, `path`, `started_at`, `artifact_identity` — set once, rev 73 —,
+     `outcome` `NULL` | `confirmed` | `discarded`, `ended_at`, `note`; rev 71): one row per run that began an export; its outcome moves once, from unresolved to
      confirmed (with the run's report, in `confirm_purge_report`'s transaction) or to discarded, never back; never
      deleted.
      These rows hold a path, a hash and counts — no personal data. `audit.purge_run_pages` rows (the manifest, R53)
@@ -1504,7 +1511,8 @@ result under two different session time zones; redefining `audit.d9_retention()`
 changed; a scratch event entry with an override uses its override, not the function; the catalog test fails if a P5
 pair has an override; a `p_as_of` in the future is
 refused (by every purge function that takes it); the app role cannot execute any purge function (`reserve_purge_run`,
-`renew_purge_run`, `request_purge_report`, `purge_candidates`, `begin_purge_export`, `discard_purge_export`,
+`renew_purge_run`, `request_purge_report`, `purge_candidates`, `begin_purge_export`, `record_export_artifact`,
+`discard_purge_export`,
 `confirm_purge_report`, `purge_expired_events`, `clear_expired_request_metadata`, `record_report_delivery`,
 `record_report_copy_destroyed`, `record_report_lost`, `release_purge_run`) or delete
 directly;
@@ -1527,7 +1535,12 @@ once the next run has started), neither `<path>.partial` nor `<path>` exists and
 either name is refused before anything is written **and remains byte-for-byte untouched**, including if the process
 stops before recording the discard; a collision at the final path during the no-overwrite rename also preserves that
 pre-existing file; same-process and restart cleanup never remove a path this run did not create; an unresolved collision
-blocks new runs until the operator confirms no run-owned artifact remains; the file is created owner-only; a failure
+blocks new runs until the operator confirms no run-owned artifact remains; **restart cleanup by identity (rev 73)** —
+after a process killed mid-write, and again after the rename but before confirmation, the next run deletes the file
+whose identity matches, records the discard (#45) and proceeds, with no attestation; a file put at the path after the
+crash (another identity) is left untouched and the export stays unresolved; a process killed between the create and
+`record_export_artifact` leaves an export with no identity, resolved only by attestation; `record_export_artifact`
+is refused a second time, for another run, without the live reservation, and for a confirmed or discarded export; the file is created owner-only; a failure
 injected on #45 leaves the export unresolved;
 **page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
 `p_as_of`, or a digest that does not match makes `purge_expired_events` raise and delete nothing, while an eligible
@@ -1576,7 +1589,7 @@ can be satisfied; **terminal states (R54)** — a delivered report cannot be mar
 delivered, neither can be recorded twice, and a direct update setting both columns fails the `CHECK`; a request revoking an
 expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
 `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; a failure injected on #40 rolls the field clearing back; the lock-order and writer guards
-classify all thirteen purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
+classify all fourteen purge functions (operator-only, outside every request path). **P5 still cannot close without the owner's
 approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates
@@ -1593,7 +1606,8 @@ when each migration is written.
 functions a request path calls. **No app grant** for: operator and maintenance functions
 (`identity.bootstrap_super_admin`; the purge functions, Part 2: `audit.purge_candidates`, `audit.purge_expired_events`,
 `audit.clear_expired_request_metadata`, `audit.reserve_purge_run`, `audit.renew_purge_run`,
-`audit.request_purge_report`, `audit.begin_purge_export`, `audit.discard_purge_export`, `audit.confirm_purge_report`,
+`audit.request_purge_report`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`,
+`audit.confirm_purge_report`,
 `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`,
 `audit.release_purge_run`,
 `audit.d9_retention`,
@@ -2716,7 +2730,7 @@ independent of the permission catalog); it is listed with them so it is complete
   mutation-tested like the guard's other checks. The platform reads, cross-tenant by design, stay exempt by
   classification (P5.7).
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its thirteen functions, the reservation, the report request and delivery tables, and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40) — its fourteen functions, the reservation, the report request and delivery tables, and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
@@ -3087,6 +3101,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Reviewer — **P5.8 re-check and addendum review** (on rev 67) | "**[P2] The `AuditEvent.actor` schema cannot represent a recorded invitation acceptance.** The database records `auth.invitation_accepted/success` with a known identity and membership but `actor_audience = NULL` (`migration.sql:123`). The addendum currently says a non-null actor has an audience of `merchant`, `agent`, or `platform` (`TARGET_ARCHITECTURE.md:478`). The contract must allow a null audience for capability-based actions, or define an explicit, accurate mapping. Add a test for this event when implementing the reads; otherwise the endpoint cannot represent all business activity faithfully." "The R19 and logging fixes are confirmed: the guard's inventory no longer relies on parameter spelling, and logs use matched route templates rather than caller-supplied paths. I accept choices **(a)–(h)** in principle, including the required query-plan remeasurement for a business filtered by a platform staff member active across many businesses." "**Verdict: Fix the actor shape before I confirm the addendum.** O19 remains the owner's decision and must be answered before the screens are built. Part 2 retention approval remains separate." | The independent reviewer, 2026-10-17, relayed by Olamide Fadahunsi | **Fixes confirmed; addendum not yet confirmed** — the actor made faithful to the record (`915ad30`: each field as recorded and nullable, nothing inferred; the invitation acceptance tested), rev 68; returned for confirmation | P5.8 |
 | Project lead — **who signs off the rest of P5** (2026-10-18) | Asked to "Act as the reviewer, Execute all the remaining p5 … You have my go ahead". Claude began to confirm the addendum as reviewer; the session's permission check refused it as self-approval, the edit was undone, and three options were put to the project lead: (1) the independent reviewer keeps every sign-off; (2) the project lead gives each verdict on Claude's prepared review; (3) a permission rule letting Claude record approvals. Answer: **"option 1"** | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — every remaining sign-off (the addendum's confirmation, Part 2, the P5.8–P5.10 gates) stays with the independent reviewer; Claude builds each step and stops at its gate. No approval is recorded in Claude's name | P5.8–P5.10 |
 | Review — **the addendum and Part 2** (on rev 70; a review that, by its own statement, records no sign-off) | "**[P1] Failed exports can leave untracked personal-data files.** The purge workflow writes the report before confirmation, then says failures stop before deletion; it doesn't specify cleanup or tracking for a partial or complete file left by a failed confirmation or process crash (`P5_IMPLEMENTATION_PLAN.md:1282`). `purge-reports` only lists confirmed reports, so such a file could be left outside the recovery workflow. Define crash-safe handling and test that failed runs cannot leave untracked exports." "**[P1] The operator's copy is not required to be deleted after receipt.** O11 says the operator deletes their copy as soon as your father confirms receipt in writing (`P5_IMPLEMENTATION_PLAN.md:2964`). The workflow records delivery and says to keep the file until then, but never makes deletion a postcondition or tests it (`P5_IMPLEMENTATION_PLAN.md:1338`). Specify and test that lifecycle before approving Part 2." "The activity-record design now cleanly separates `actorLabel` from the recorded audience, including the null-audience case. I recommend the independent reviewer confirm that addendum. **Part 2 needs changes before approval.** I have not recorded either sign-off." | Relayed by Olamide Fadahunsi (project lead), 2026-10-18 | **Not a sign-off.** The addendum: recommended for confirmation — still awaiting the independent reviewer. Part 2: both findings addressed in its design (rev 71) — exports recorded before their file exists, written under a temporary name and removed on any failure, an unresolved one blocking new runs (#45); the operator's copy destroyed after the owner's written receipt, as a recorded step (#44), before a request is satisfied. Part 2 still awaits the independent reviewer's approval | Part 2; P5.8 |
+| Project lead — **restart cleanup of an export** (2026-10-18) | After revision 72 (a review session's edit, committed as written, `38753d6`: cleanup removes only files the run can prove it created), Claude noted that a restart could never prove it, so every crash during an export would need the operator's attestation, and asked whether to record the file's identity at creation so a restart can prove ownership. Answer: **"Add rev 73 (Recommended)"** | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — revision 73: `record_export_artifact` records the file's device, file number and creation time right after the exclusive create; restart cleanup deletes only a file whose identity matches, and an export without a recorded identity stays manual. Part 2 still awaits the independent reviewer's approval | Part 2 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
@@ -3147,6 +3162,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 73 | 2026-10-18 | **Part 2: restart cleanup proves ownership by file identity** (the project lead's choice, §14). Right after the exclusive create, `record_export_artifact(run_id, identity)` records the file's device, file number and (where reported) creation time on its export, once; after a crash the next run deletes a file at either name only if its identity matches, records the discard and proceeds; any other file is left untouched, and an export with no recorded identity (a crash between create and record, or a platform without stable file numbers) stays for the operator's attestation. `purge_exports.artifact_identity`; tests; footprints, grants and counts updated (fourteen purge functions). Design text only; Part 2 still awaits the independent reviewer's approval. |
 | 72 | 2026-10-18 | **Part 2 export collision safety.** Same-process and crash-recovery cleanup remove only paths this run successfully created; exclusive-create or no-overwrite-rename collisions preserve existing files, with regression coverage including a process stop before discard. If file ownership cannot be established, the export remains unresolved for operator reconciliation. The independent reviewer's approval remains pending. |
 | 71 | 2026-10-18 | **Part 2 design: the review's two findings addressed** (design text only; nothing of Part 2 built). (1) An export is recorded (`audit.purge_exports`, `begin_purge_export`) before its file exists, written as `<path>.partial` (exclusive, owner-only) and renamed only when verified; any failure removes both names and records the discard (#45, `discard_purge_export`); an export left unresolved by a crash blocks every new run (`export_unresolved`) and is listed by `audit:purge-reports` until resolved, by the command or by the operator's attestation. (2) O11 applied: a delivery needs the owner's written receipt; the operator's copy is then destroyed, checked and recorded (#44, `record_report_copy_destroyed`), and a request is satisfied only when every report is delivered with its copy destroyed, or lost; an altered file and a rebuild's scratch database are destroyed too. Tests, footprints, grants, the catalog (#44, #45), the Part 2 list and the P5.10 runbook updated; thirteen purge functions. The review's recommendation on the addendum recorded (§14). Waiting for: the independent reviewer — the addendum's confirmation and Part 2's approval. |
 | 70 | 2026-10-18 | **O19 signed; sign-offs stay independent.** The reviewer's revision 69 edits committed as written (`2b28a3b`); the owner signed the O19 form (`894d309`), recorded in the decision log, the open item and ADR-16. The project lead chose that the independent reviewer keeps every remaining sign-off (§14, "option 1"). Waiting for: the reviewer's confirmation of the addendum as amended in revision 69, and Part 2's approval. |

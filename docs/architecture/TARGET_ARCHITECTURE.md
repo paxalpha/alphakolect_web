@@ -456,8 +456,7 @@ codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
 Frozen on the owner's O4 decision (2026-10-17, on the measured evidence of
 `docs/architecture/evidence/p5-o4-spike/`) and the visibility rules already decided (O3, D8′, D9, CF5). Nothing here is
 built until the reviewer confirms this addendum. **O19** — whether a business's record names the platform team member —
-is answered: "AlphaKolect team", without naming the person (the owner, 2026-10-17, relayed; his signature on the form is
-requested).
+is answered: "AlphaKolect team", without naming the person (the owner, signed 2026-10-17, `894d309`).
 
 **Common to both reads.** Every rule of the frozen lists above applies (`{ items, nextCursor }`, opaque cursor,
 `400 INVALID_CURSOR`), and:
@@ -561,7 +560,7 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | CF1 | All earlier answers confirmed and signed | owner, 2026-10-12 | confirmation CF1 | `fa5a22f` |
 | O4 | Audit-read bounds — owner's preference "one month at a time is fine"; decided at P5.8 step 2 on measured evidence | owner (preference), 2026-10-11 | questions B3 | plan `8b17657` |
 | O4 — decided | Both reads: at most 100 events a page, a window of at most 31 days; the merchant read filters by person only, the platform read by business, person and kind of activity | owner, signed 2026-10-17 | `P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` Q1–Q4, on the spike's evidence | `7497869`; plan `623c52d`; the addendum above |
-| O19 | A business's record shows the platform team's actions as "AlphaKolect team", without naming the person | owner, 2026-10-17 (relayed; signature requested) | `P5_OWNER_TEAM_IN_BUSINESS_RECORD.md` T1 | asked `c78dec8`, answered `4fe4f75`; the addendum above |
+| O19 | A business's record shows the platform team's actions as "AlphaKolect team", without naming the person | owner, signed 2026-10-17 | `P5_OWNER_TEAM_IN_BUSINESS_RECORD.md` T1 | asked `c78dec8`, answered `4fe4f75`, signed `894d309`; the addendum above |
 | O10–O12 | Backup retention, the report copy's handling, a privacy notice | — | `P5_OWNER_PRIVACY_QUESTIONS.md` | `4b4ece9` — **open**, needed at P5.8 step (e) |
 | Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk (**superseded by B1**); atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
 | Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |

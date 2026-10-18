@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 88 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 89 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–83; O20 and O21 decided; rewritten once as a consolidated specification in rev 84, corrected for the critic's rounds 5–8 in revs 85–88; Part 2's approval delegated to Claude by the project lead, 2026-10-18) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–83; O20 and O21 decided; rewritten once as a consolidated specification in rev 84, corrected for the critic's rounds 5–9 in revs 85–89; Part 2's approval delegated to Claude by the project lead, 2026-10-18) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -378,7 +378,7 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.release_purge_run`, `audit.request_purge_report`, `audit.cancel_purge_report_request`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.begin_report_handover`, `audit.record_handover_written`, `audit.record_report_handover`, `audit.record_handover_abandoned`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost` (Part 2; operator only; revs 84–87) | 0: reservation / NKU `NOWAIT` → 0: the purge's own tables, after it | write the reservation row and the run, export, report, handover-attempt, request and manifest tables (no request path touches any of them); #41–#49 inserts (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.release_purge_run`, `audit.request_purge_report`, `audit.cancel_purge_report_request`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.begin_report_handover`, `audit.record_handover_written`, `audit.record_report_handover`, `audit.record_handover_failed`, `audit.record_handover_abandoned`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost` (Part 2; operator only; revs 84–89) | 0: reservation / NKU `NOWAIT` → 0: the purge's own tables, after it | write the reservation row and the run, export, report, handover-attempt, request and manifest tables (no request path touches any of them); #41–#50 inserts (fresh key) |
 | `audit.purge_candidates` (Part 2; operator only; rev 84) | 0: reservation / NKU `NOWAIT`, checked as this run's → 0: the run's row (its read position) and the manifest (page insert) | audit rows read without locks, bounded per call (rev 85) |
 | `audit.purge_expired_events` (Part 2; operator only; rev 84) | 0: reservation / NKU `NOWAIT`, checked as this run's → 0: the manifest page / NKU → 11: audit rows of the page, by id (`DELETE`; nothing else locks them; rev 85) | the page marked processed under its held lock; #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (Part 2; operator only; rev 84 — no reservation) | 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED`, bounded per call | #40 insert (fresh key) |
@@ -814,7 +814,7 @@ and the catalog assigns each atomic pair to exactly one:
     in the API (T11), as in P4;
   - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38, its field clearing #40, report
     requests #42, deliveries #41, losses #43, copies destroyed #44, exports discarded #45, reports confirmed #46,
-    handovers #47, request cancellations #48 and abandoned handovers #49, the containment switch #39): actor
+    handovers #47, request cancellations #48, abandoned handovers #49 and failed handovers #50, the containment switch #39): actor
     `NULL`, as for the bootstrap today.
 
   In every pattern-A function, `request_id`, `ip` and `user_agent` are passed in as **request context**: they are
@@ -897,6 +897,7 @@ once per audience.
 | 47 | `platform.purge_report_handed_over` *new* (Part 2; O11, rev 82) | success | A | `audit.record_report_handover` (operator only, §8.6) | P5.8 tests |
 | 48 | `platform.purge_report_request_cancelled` *new* (Part 2; O21, rev 84) | success | A | `audit.cancel_purge_report_request` (operator only, §8.6) | P5.8 tests |
 | 49 | `platform.purge_report_handover_abandoned` *new* (Part 2; rev 85) | success | A | `audit.record_handover_abandoned` (operator only, §8.6) | P5.8 tests |
+| 50 | `platform.purge_report_handover_failed` *new* (Part 2; rev 89) | success | A | `audit.record_handover_failed` (operator only, §8.6) | P5.8 tests |
 
 **Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
 
@@ -1191,8 +1192,8 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   onto the server.
 
 **Retention design (Part 2, §12) ([Plan], P5.8) — the one controlled exception to append-only. Consolidated in
-revision 84** from revisions 20–83 and the four critic rounds of 2026-10-18 (§14), and corrected in revisions 85–88 for the
-fifth to eighth, on the owner's decisions D9, CF2b,
+revision 84** from revisions 20–83 and the four critic rounds of 2026-10-18 (§14), and corrected in revisions 85–89 for the
+fifth to ninth, on the owner's decisions D9, CF2b,
 CF4, O10, O11, O20 and O21. [Fact] `audit.audit_events` is append-only for every role (grant and trigger,
 `20260927000300:142-147`).
 
@@ -1432,7 +1433,7 @@ which a transaction begun just before its lease expired would still see as live:
   (recovery, an attestation, `--lost`); it is refused for a confirmed or discarded export, and while another live run
   holds the reservation;
 - **no reservation condition** for the report functions — `begin_report_handover`, `record_handover_written`,
-  `record_report_handover`, `record_handover_abandoned`, `record_report_delivery`, `record_report_copy_destroyed`, `record_report_lost` — which take the row only to serialize
+  `record_report_handover`, `record_handover_failed`, `record_handover_abandoned`, `record_report_delivery`, `record_report_copy_destroyed`, `record_report_lost` — which take the row only to serialize
   with runs; they are refused while a page transaction holds it (`lock_not_available`) and the operator retries. A
   report delivered between a plain run's pages only releases rows, which is always safe; a report lost between its
   pages leaves a request awaiting its copy, so the run's next page is refused and the run stops (rev 86) — safe, and the
@@ -1461,35 +1462,44 @@ Nothing was deleted by an export run, so no entry is ever lost: a later run expo
   lock, and the path) — refused unless the report is active and no attempt of it is live (rev 88); the command creates
   `<name>` on the medium **exclusively** (`open` with `wx`; no hard link, so an ordinary FAT or exFAT stick works),
   copies the report into it, flushes, calls `record_handover_written(p_attempt_id, p_diskseq)` and tells the operator
-  to **eject the medium safely and insert it again**. Then `audit:purge-report-handover --report <id> --verify --ejected
-  --to <medium directory>`, a new process, checks the volume's serial against the attempt's (a mismatch is a refusal
-  that changes nothing: it may be another stick), opens the file afresh, hashes it, and calls
-  `record_report_handover(p_attempt_id, p_medium_sha256, p_eject_attested, p_diskseq)`. **The database refuses it**
+  to **eject the medium safely and insert it again**. Then `audit:purge-report-handover --report <id> --verify --to <medium
+  directory>`, a new process, asks the operator **interactively** to confirm the eject by typing the stick's label (rev
+  89: never a flag on the command line, which would become a rubber stamp), checks the volume's serial against the
+  attempt's, opens the file afresh, hashes it, and calls `record_report_handover(p_attempt_id, p_medium_sha256,
+  p_eject_attested, p_diskseq)`. **A serial mismatch, an eject not confirmed, and a disk sequence unchanged or
+  unreadable are refusals that change nothing** (rev 89) — the stick may be another one, or not yet ejected; the
+  operator unplugs it physically (the runbook: a USB stick, never a card in a reader that stays attached) and runs the
+  verification again. **The database refuses it**
   unless the write was recorded, the attempt is unended, the hash equals the confirmed one, the report is still active,
-  **the eject is attested** (`--ejected`, recorded as `eject_attested`) and, where the write recorded a disk sequence,
-  the verification's differs (rev 88). **What this proves, honestly:** a read straight after a write is served from the
+  **the eject is attested** (recorded as `eject_attested`) and, where the write recorded a disk sequence, the
+  verification's is **not null and differs** (revs 88–89: a null never passes). **What this proves, honestly:** a read straight after a write is served from the
   operating system's memory; after a real eject the volume is dismounted and its cached pages dropped, so the read
   comes from the stick. Node has no practical uncached read, and a mount's number is reused by Linux, so the eject is
   the operator's **attestation** on every platform; on Linux 5.15 and later the disk's `diskseq`
   (`/sys/class/block/<disk>/diskseq`, found from the mount's device numbers; a per-boot counter that grows on every
   attach and is never reused) is recorded at the write and must have changed at the verification — a real check where
   the kernel offers it. The verification proves the stick's bytes as far as the eject is true. It records the attempt
-  and writes #47. On a hash mismatch or a failure it deletes what it wrote and records
-  the attempt abandoned itself, noting that the stick **must be wiped or destroyed** (deleting a file leaves its bytes
-  on a FAT stick); the listing flags the attempt until the operator attests its fate. A counterfeit or failing stick is
+  and writes #47. **On a hash mismatch or a failure, the command first re-reads the
+  attempt** (rev 89): if it is `recorded` — a response lost after the record committed — the stick is never touched,
+  and the command prints its number and hash; only while the attempt is known to be unended does it delete what it
+  wrote and call `record_handover_failed(p_attempt_id, p_reason)` — the command's own record, a twentieth function
+  (outcome `abandoned`, **no fate**; it writes its own event, #50 `platform.purge_report_handover_failed`, so each pair keeps
+  one writer): the stick **must be wiped or destroyed** (deleting a file leaves
+  its bytes on a FAT stick), and the listing flags the attempt until the operator attests its fate. A counterfeit or failing stick is
   therefore caught before the owner takes it, as far as the attested eject is true. The command prints the attempt's number, the stick's label and the SHA-256, which the
   owner's written "received" quotes (the runbook's form). **An attempt that stopped** (a killed process, a medium never
   verified) is listed as unended, and **a recorded attempt that is not to be delivered** (the owner says the stick is
   faulty; a replacement is made) is listed as live; either is ended with `audit:purge-report-handover-abandoned
-  --attempt <id> --note <what became of the stick>` — `record_handover_abandoned(p_attempt_id, p_note)`, which sets
-  `abandoned` (unended) or `superseded` (recorded), attests the stick's fate and writes #49. The same call attests the
-  fate of an attempt the command abandoned itself (setting only the fate). It is accepted whatever the report's state,
+  --attempt <id> --note <what became of the stick>` — `record_handover_abandoned(p_attempt_id, p_note)`, the
+  operator's attestation, which sets `abandoned` (unended) or `superseded` (recorded) — keeping `ended_at` as it was for
+  a recorded attempt, the verification's time, so the reminders stay right — attests the stick's fate and writes #49.
+  The same call attests the fate of an attempt `record_handover_failed` abandoned (setting only the fate; rev 89). It is accepted whatever the report's state,
   **except for the delivered attempt**, which is refused (rev 88), and refused for an attempt whose fate is already
   attested. **A live
   attempt other than the delivered one blocks** another attempt, the delivery, a withdrawal, a cancellation and a loss
   of the report (the partial unique index and the functions).
-- **Delivery** — once the owner's written receipt exists: `audit:purge-report-delivered --report <id> --attempt <n> --receipt
-  <reference>` — the attempt the receipt quotes — calls `record_report_delivery(p_report_id, p_attempt_id, p_receipt_reference, p_note)`, refused unless that attempt is the
+- **Delivery** — once the owner's written receipt exists: `audit:purge-report-delivered --report <id> --attempt <id> --receipt
+  <reference>` — the attempt the receipt quotes; "the attempt's number" is its `id` throughout — calls `record_report_delivery(p_report_id, p_attempt_id, p_receipt_reference, p_note)`, refused unless that attempt is the
   report's live recorded attempt, no other attempt of it is unended, and a receipt reference is given; the owner's
   receipt quotes the attempt's number and the stick's label as well as the hash's first 16 characters (the runbook's
   form), so it names the stick, not only the report. In one transaction it sets `delivered_at`, **satisfies the request** (one copy per
@@ -1501,8 +1511,9 @@ Nothing was deleted by an export run, so no entry is ever lost: a later run expo
 - **The operator's copy is destroyed straight away** (O11): the same command, on the writing machine with the marker,
   deletes `<name>` and any `<name>.partial` in the directory — **whatever their content**: the run's name is the
   proof, and an altered file is still personal data — flushes, checks they are gone, calls
-  `record_report_copy_destroyed(p_report_id, p_note)` (#44; the note attests no other copy was kept), then removes the
-  marker. A copy that cannot be destroyed this way is recorded **by attestation** (`--attest <note>`, on the writing
+  `record_report_copy_destroyed(p_report_id, p_note)` (#44; the note attests no other copy was kept) — refused while
+  any attempt of the report other than the delivered one has no attested fate (rev 89: an unaccounted stick is another
+  copy) — then removes the marker. A copy that cannot be destroyed this way is recorded **by attestation** (`--attest <note>`, on the writing
   machine holding the lock: the marker missing, or a retry after a stop between the deletion and the record) or **as
   lost** (`--lost <note>`, the machine or volume gone: an incident in `docs/security/`); `record_report_copy_destroyed`
   and `record_report_lost` take the mode (`automatic` | `attested` | `lost`, recorded in `destroy_mode` and
@@ -1541,7 +1552,8 @@ allowlist): #38 `platform.audit_purged` — per deleted page: `p_as_of`, `run_id
 `tokens_cleared`; #42 `platform.purge_report_requested`; #46 `platform.purge_report_confirmed` (report id, run id,
 count, SHA-256); #47 `platform.purge_report_handed_over`; #41 `platform.purge_report_delivered`; #44
 `platform.purge_report_copy_destroyed`; #43 `platform.purge_report_lost`; #45 `platform.purge_export_discarded`; #48
-`platform.purge_report_request_cancelled`; #49 `platform.purge_report_handover_abandoned` (rev 85). One writer per pair, as the coverage guard requires.
+`platform.purge_report_request_cancelled`; #49 `platform.purge_report_handover_abandoned` (rev 85); #50
+`platform.purge_report_handover_failed` (rev 89). One writer per pair, as the coverage guard requires.
 
 **12. Locks — inside the global order, and never waiting (R40).** Category **0**: the reservation row, `NOWAIT`, then
 the purge's own tables (`purge_runs`, `purge_run_pages`, `purge_run_events`, `purge_exports`, `purge_reports`,
@@ -1639,7 +1651,10 @@ drive remapped, every file step says **directory unavailable** and records nothi
 outcome is recorded — a failure injected on #44 or #45 leaves it and the retried command finishes; **handover and
 delivery** — a medium on the report's own volume is refused; the handover succeeds onto a FAT or exFAT medium; the
 verification runs in a new process; `record_report_handover` is refused without the eject attested, and, where the
-write recorded a disk sequence, with an unchanged one (staged sysfs values); another volume's serial is a
+write recorded a disk sequence, with an unchanged or a null one (staged sysfs values); a serial mismatch, an unconfirmed
+eject and an unchanged sequence change nothing and leave the attempt unended; a response lost after
+`record_report_handover` committed (injected) leaves the stick untouched and the attempt recorded; an attempt abandoned
+by `record_handover_failed` has no fate until the operator's later call sets only the fate; another volume's serial is a
 refusal that changes nothing; a medium whose bytes were changed after the write is caught (a test stage alters the
 file between the two steps); `record_report_handover` is refused before `record_handover_written`; a truncated copy is refused, removed from the medium and the attempt recorded abandoned; an attempt killed
 midway is listed as unended and ended only by `record_handover_abandoned` (#49), which another attempt, a withdrawal,
@@ -1654,7 +1669,8 @@ attempt written 7 days without verification, are flagged; handover functions are
 a report that is not active; a delivery without a handover or a receipt reference is refused; the delivery satisfies the request, removes the
 manifest and releases the rows in one transaction; the operator's copy is deleted whatever its content, recorded (#44),
 then the marker removed; off the writing machine or without the marker only `--attest` or `--lost` records it;
-`record_report_copy_destroyed` before a delivery or a withdrawal, or twice, is refused; **reminders and cancellation**
+`record_report_copy_destroyed` before a delivery or a withdrawal, or twice, or while another attempt of the report has
+no attested fate, is refused; **reminders and cancellation**
 — reports handed over or confirmed 7 days or more without the next step are flagged; a cancellation withdraws the active
 report, releases its rows and writes #48, and its copy must then be destroyed; **loss** — refused once delivered or
 withdrawn; the files deleted before the record and the marker after; the request stays open and the next run exports;
@@ -1676,12 +1692,12 @@ when each migration is written.
 
 **Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
 functions a request path calls. **No app grant** for: operator and maintenance functions
-(`identity.bootstrap_super_admin`; the nineteen purge functions, Part 2: `audit.reserve_purge_run`,
+(`identity.bootstrap_super_admin`; the twenty purge functions, Part 2: `audit.reserve_purge_run`,
 `audit.renew_purge_run`, `audit.release_purge_run`, `audit.purge_candidates`, `audit.purge_expired_events`,
 `audit.clear_expired_request_metadata`, `audit.request_purge_report`, `audit.cancel_purge_report_request`,
 `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`,
 `audit.begin_report_handover`, `audit.record_handover_written`, `audit.record_report_handover`,
-`audit.record_handover_abandoned`,
+`audit.record_handover_failed`, `audit.record_handover_abandoned`,
 `audit.record_report_delivery`,
 `audit.record_report_copy_destroyed`, `audit.record_report_lost`,
 `audit.d9_retention`,
@@ -1696,7 +1712,7 @@ What is enumerated and tested is what **others** may not do: `alphakolect_app` a
 `EXECUTE` on any purge function, no `DELETE` on `audit.audit_events`, and no privilege on the reservation, report and manifest
 tables. **Tests:** the purge runs end to end as the function owner through the migrator connection (export, deletion,
 field clearing, report confirmation, handover, delivery and the copy's destruction, a cancellation, a report lost before
-delivery, a discarded export, an abandoned handover, events #38 and #40–#49); each of the app and readonly roles is
+delivery, a discarded export, an abandoned and a failed handover, events #38 and #40–#50); each of the app and readonly roles is
 refused every purge function and every write to those tables with `insufficient_privilege`.
 
 ### 9.2 Guards that must keep passing
@@ -2805,7 +2821,7 @@ independent of the permission catalog); it is listed with them so it is complete
   mutation-tested like the guard's other checks. The platform reads, cross-tenant by design, stay exempt by
   classification (P5.7).
 - **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
-  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40–#49) — its nineteen functions, the reservation, the report request and delivery tables, and the operator
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40–#50) — its twenty functions, the reservation, the report request and delivery tables, and the operator
   command with its export and failure semantics; indexes; the D9 written policy
   drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
   (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
@@ -2816,10 +2832,10 @@ independent of the permission catalog); it is listed with them so it is complete
   `apps/api/src/modules/identity/bootstrap.ts`, and printing outcomes but never secrets. The purge follows it:
   `apps/api/scripts/audit-purge.ts` (`audit:purge [--dir <directory>]` — a run, and an export run's copy;
   `audit:purge-request-report` and `audit:purge-request-cancel --request <id> --note <reference>`;
-  `audit:purge-reports [--check-files]`; `audit:purge-report-handover --report <id> --to <medium directory>`, then `--verify --ejected` after the medium is
-  ejected and inserted again, and
+  `audit:purge-reports [--check-files]`; `audit:purge-report-handover --report <id> --to <medium directory>`, then `--verify` after the medium is unplugged
+  and inserted again (the eject confirmed interactively by typing the stick's label), and
   `audit:purge-report-handover-abandoned --attempt <id> --note <what became of the stick>`;
-  `audit:purge-report-delivered --report <id> --attempt <n> --receipt <reference>` (and the copy's destruction);
+  `audit:purge-report-delivered --report <id> --attempt <id> --receipt <reference>` (and the copy's destruction);
   `audit:purge-report-destroyed --report <id>`, `audit:purge-report-lost --report <id>` and
   `audit:purge-export-discarded --run <id>`, each with `--attest <note>` or `--lost <note>` where the automatic path has
   no proof — rev 84) and
@@ -2828,7 +2844,7 @@ independent of the permission catalog); it is listed with them so it is complete
   follows it too (`admin:containment`, built in P5.5).
 - **Order inside P5.8 (implementability).** (a) **(Part 2 — waits for its approval, §12)** The **retention purge** first — it does not depend on O4: the
   migration (the dedicated audit guard function and its triggers, the reservation, run, export, report, handover, request and manifest tables, the
-  nineteen functions and three helpers, the `(occurred_at, id)` index if absent), the operator command and
+  twenty functions and three helpers, the `(occurred_at, id)` index if absent), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
   (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
   (e) the **D9 written policy**, drafted from the decisions (including O10–O12) and from the purge and logs as built, and
@@ -3048,7 +3064,7 @@ event commits with the change and an injected failure of its insert leaves the f
   report requests and reports, the manifest, the purge functions, the operator command, its failure semantics and tests;
 - §7.2: L1's sentence on the purge's deletes, L4's description of `audit.audit_events_guard()`, the four operator-only
   footprint rows of the purge functions (the bootstrap and containment rows are Part 1), and read-consistency test (e);
-- §8.1: events #38 and #40–#49, and the catalog override's `GREATEST` rule;
+- §8.1: events #38 and #40–#50, and the catalog override's `GREATEST` rule;
 - §8.2a: rule 2's exception for the purge functions;
 - §8.6: the "Copy before deletion" bullet and the session and link details' clearing (CF4);
 - §9.1: "Purge ownership and privileges", and the purge functions in the list of functions without an app grant;
@@ -3092,6 +3108,8 @@ Part 2 boundary in place (§14, §16).
     the matrix; P5 claims no end-to-end branch isolation for resources that do not exist yet (D7, §7.6).
 
 ## 14. Open items for the reviewer and owner
+
+**Critic review of Part 2, round 9 (2026-10-18, on revision 88; a new fresh-context agent; a final confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds after revision 88 … The rev-88 handover changes are mostly sound"; the statements on the eject and `diskseq` "accurate". Findings: P0 none; P1 none; **P2**, both in the handover and neither able to delete a held row alone — (1) no function could record the command's own abandonment without also attesting the stick's fate; (2) the verification's failure path did not re-read the attempt, so a response lost after the record committed could wipe a stick then handed over as verified; and P3 points (copy destruction with an unaccounted stick, a null `diskseq`, an unchanged `diskseq` after a real eject, `--ejected` as a rubber stamp, the attempt's number, the reminder's time). **Disposition (revision 89):** (1) `record_handover_failed` (the twentieth function, its own event #50) records the command's abandonment with no fate; the operator's `record_handover_abandoned` later sets only the fate; (2) before any cleanup the command re-reads the attempt and never touches a stick whose attempt is recorded; the P3 points applied — `record_report_copy_destroyed` refused while another attempt has no fate, a null disk sequence never passes, an unconfirmed eject and an unchanged sequence are refusals that change nothing, the eject confirmed interactively by typing the stick's label, "the attempt's number" is its id, superseding keeps the verification's time.
 
 **Critic review of Part 2, round 8 (2026-10-18, on revision 87; a new fresh-context agent; a confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds … I found no path that deletes a held row, deletes a row before its retention, or deletes while a copy is awaited. Nothing stalls the two-year rule or CF4." Findings: P0 none; P1 none; **P2**, all in the handover and none risking a deletion — (1) a stick from an automatically abandoned attempt could never get an attested fate; (2) Linux's mount id is reused and proves neither an unmount nor a dropped cache; (3) `record_handover_abandoned` could rewrite the delivered attempt, and one of its tests was impossible; and P3 points (the eject enforced only by the command, wording, the delivery command without the receipt's attempt, the listing and reminders). **Disposition (revision 88):** (1) a fate is attested on every attempt but the delivered one (`fate_attested_at`, `fate_note`), the same call attesting an auto-abandoned one; (2) the eject is the operator's attestation on every platform, **enforced by the database** (`record_report_handover` refuses without it), with the disk's never-reused `diskseq` required to change where Linux offers it (5.15+), and every claim stated "as far as the attested eject is true"; (3) the delivered attempt is refused; the P3 points applied — `--attempt` on the delivery command, the listing and reminders per attempt.
 
@@ -3289,6 +3307,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 89 | 2026-10-18 | **Part 2: the critic's round 9 addressed** (§14). Round 9 again found the deletion-safety core sound and no P0 or P1; its two P2: `record_handover_failed` (twentieth function, #50) records the command's own abandonment without a fate, and the verification re-reads the attempt before any cleanup, never touching a recorded stick. Also copy destruction refused while another stick is unaccounted for, a null disk sequence never passing, refusals that change nothing, the eject confirmed interactively, the attempt id, the reminder's time kept. Design text only. |
 | 88 | 2026-10-18 | **Part 2: the critic's round 8 addressed** (§14). Round 8 again found the deletion-safety core sound and no P0 or P1; its three P2 were handover details: every attempt but the delivered one gets an attested stick fate; the eject is the operator's attestation on every platform, enforced by the database, with Linux's `diskseq` checked where available (the reused mount id dropped); the delivered attempt can no longer be superseded; the delivery command takes the receipt's attempt; listing and reminders per attempt. Design text only. |
 | 87 | 2026-10-18 | **Part 2: the critic's round 7 addressed** (§14). Round 7 found no P0 or P1 and the deletion-safety core intact; its two P2 concerned the handover: one live attempt per report (unended, or recorded and not superseded), a replacement stick only after the recorded attempt is superseded with an attested note on that stick's fate, the delivery naming the live recorded attempt and the receipt quoting its number and the stick's label; the eject enforced by a changed mount id on Linux and attested on Windows. Also `record_handover_written` (nineteen functions), the delivered attempt by composite foreign key, a serial mismatch a refusal, failed sticks flagged for wiping, an unknown page outcome re-read, a dead run's count kept, reminders per attempt, UNC and `subst` drives resolved. Design text only. |
 | 86 | 2026-10-18 | **Part 2: the critic's round 6 addressed** (§14). Round 6 found the deletion-safety core and liveness sound; its P1 and P2 concerned the handover: the medium is now verified by a new process after an eject and re-insertion (a read-back after a write comes from memory), and attempts are rows of `audit.purge_report_handovers`, one unended per report, the delivery naming its attempt. Also: the exceptions to "lock first" listed and the lock held to the last file step; a loss mid-run stops the run; `rows_deleted` recorded at release; a discarded export's manifest removed; a processed page's replay refused; the export's `p_as_of` the reservation's `now()`; network drives refused, shadow copies a runbook rule; the index with `IF NOT EXISTS` in both migrations and in `schema.prisma`; L4 and the copy bullet corrected; tests added. Design text only. |

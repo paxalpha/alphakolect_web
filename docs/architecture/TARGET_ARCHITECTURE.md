@@ -451,11 +451,12 @@ codes `INVALID_CURSOR` (400) and `EMAIL_IN_USE` (409).
 | (params) `listInvitations` | `GET /v1/merchant/invitations` | unchanged | query `status?` (`open` default \| `all`), `cursor?`, `limit?` | `InvitationList`, newest first (unchanged order); `open` = pending and unexpired | + 400 `INVALID_CURSOR` | P5.8 |
 | `listMerchantAuditEvents` · `listPlatformAuditEvents` | `GET /v1/merchant/audit-events` · `GET /v1/platform/audit-events` | `merchant.audit.read` (owner) · `platform.audit.read` | required window `from`, `to`; filters (actor; platform also merchant, event identifier); `cursor?`, `limit?` | **frozen in the addendum below** (O4, 2026-10-17) | see the addendum | P5.8 |
 
-#### Addendum — the activity-record reads (P5.8; drafted 2026-10-17, awaiting the reviewer's confirmation)
+#### Addendum — the activity-record reads (P5.8; drafted 2026-10-17, confirmed by the reviewer 2026-10-19)
 
 Frozen on the owner's O4 decision (2026-10-17, on the measured evidence of
-`docs/architecture/evidence/p5-o4-spike/`) and the visibility rules already decided (O3, D8′, D9, CF5). Nothing here is
-built until the reviewer confirms this addendum. **O19** — whether a business's record names the platform team member —
+`docs/architecture/evidence/p5-o4-spike/`) and the visibility rules already decided (O3, D8′, D9, CF5). **Confirmed by the independent reviewer on 2026-10-19 for the
+design of #33 and #34** (design only — not an implementation approval or a gate review; the P5 plan's §14 holds the
+verdict): the platform-team-member-across-many-businesses query shape is measured before the indexes are final. **O19** — whether a business's record names the platform team member —
 is answered: "AlphaKolect team", without naming the person (the owner, signed 2026-10-17, `894d309`).
 
 **Common to both reads.** Every rule of the frozen lists above applies (`{ items, nextCursor }`, opaque cursor,

@@ -21,7 +21,7 @@ deleted, how a copy reaches you and when our copy is destroyed, and that backups
 - ☐ I approve it with these changes:
 - ☐ Not sure
 
-> Answer:
+> Answer: I approve the policy as written.
 
 ## Q2. How often is the clean-up run?
 
@@ -34,7 +34,7 @@ The more often it runs, the closer to exactly two years an entry is deleted.
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: Once a month, on the first working day
 
 ## Already decided — not asked again
 

@@ -263,9 +263,9 @@ the independent reviewer approved on 2026-10-12 (revision 25, `e6b367d`) and the
 **The owner and the independent reviewer approved this text as written on 2026-10-12** (P5.0's completion rule; see
 the decision log); it is the authoritative specification for Part 1. It states the rules as they are — the reasoning, alternatives and superseded positions are in the P5 implementation plan
 (`docs/architecture/P5_IMPLEMENTATION_PLAN.md`, §16 revision log) and in the decision log at the end of this section.
-**Part 2** — the retention design (deletion of activity entries after two years, its reservation, reports, manifest and
-recovery) — is **not** part of this ADR and is **not** built until the reviewer approves it; it will be added as an
-addendum (ADR-16 Part 2). Where the plan's detailed tables (lock footprints, §7.2; event inventory, §8.1) are cited
+**Part 2** — the retention design (deletion of activity entries after two years, the owner's copy, its handover and
+the clearing of sign-in details) — was approved on 2026-10-18 by Claude under the project lead's delegation, not by an
+independent review, and is added below as **"Addendum — Part 2: the retention of the activity record"**. Where the plan's detailed tables (lock footprints, §7.2; event inventory, §8.1) are cited
 below, they are the implementation contract for Part 1 and must agree with this section; entries marked "(Part 2)"
 there are excluded.
 
@@ -523,6 +523,55 @@ a platform identity whose event has no recorded audience is returned with `actor
 `actorLabel: 'AlphaKolect team'`; the label does not infer or replace the audience. The read event is written before the
 rows, and no rows are returned when it cannot be written; the app's direct `SELECT` is refused.
 
+#### Addendum — Part 2: the retention of the activity record (approved 2026-10-18)
+
+**Status.** Approved 2026-10-18 by Claude under the project lead's delegation ("Once you have approved part 2 it is
+approved") — **not an independent review** — after ten critic rounds by fresh agents, the last five of which found the
+deletion rules and their liveness sound. The implementation contract, with every function, table, lock and test, is the
+P5 plan's §8.6 "Retention design" at revision 90 (`687dee6`); this addendum states the rules it implements and must
+agree with it.
+
+**The owner's rules.** Every activity entry is kept **two years** (calendar years) and then deleted in full, existing
+entries included; an event type's retention may be lengthened by a later phase, never shortened (D9, CF2a). The owner
+may ask for a **copy** of the entries due for deletion — one copy per request; the system keeps none (CF2b, O21 S2).
+The entries in a copy are deleted **only after his written receipt** (O20); every other entry on its normal day (O21
+S1). The copy is handed to him **in person**, on a stick verified in his presence; the operator destroys their own copy
+straight away once he confirms receipt in writing, and he keeps his as long as he decides (O11). He may **cancel** a
+request in writing and is **reminded** when a copy has waited 7 days for his receipt (O21 S3). The IP address and user
+agent kept with sign-ins and links are **cleared** two years after the sign-in ended (the earliest of revocation,
+absolute and idle expiry) or the link was sent (CF4). Backups are kept 35 days (O10, P15).
+
+**How the database enforces them.**
+- **Who can delete.** Only operator-only `SECURITY DEFINER` functions owned by the migrator, through an operator
+  command on the migrator's connection; the app and the reporting role can neither delete activity entries nor run
+  the purge. The activity table keeps its own guard: `UPDATE` and `TRUNCATE` always refused; a `DELETE` only inside a
+  live plain purge run, of a row past its retention, not held by an active copy, while no request awaits its copy. The
+  ledger's guard is unchanged.
+- **Copies hold rows.** A requested copy is made first — the next run exports and deletes nothing — and from its
+  confirmation its rows are **held**: the purge and the guard skip them. Its delivery, recorded only after the stick was
+  verified in the owner's presence and his written receipt exists, releases them to the normal purge. A copy lost before
+  delivery is simply made again from the rows, which are still there; no backup or rebuild is ever needed.
+- **Every row is deleted by identity**, page by page from a manifest the database records itself, with a read position
+  the database keeps, so no defect can skip or add a row; a row committed late is left for a later run.
+- **Files of personal data are tracked from creation to destruction**: the report file, under a name unique to its run,
+  in a local, owner-only, unsynced folder; a run marker proving the directory; every stick a handover writes; and the
+  operator's copy, destroyed and recorded. A crash leaves an export or a stick recorded and listed until it is resolved,
+  automatically, by attestation, or — for a lost machine — as an incident.
+- **One operator command at a time**: a kernel-held lock (a named pipe on Windows, an abstract socket on Linux) and a
+  database reservation judged with the database's clock; every wait is `NOWAIT` or `SKIP LOCKED`, inside the global
+  lock order.
+- **The clearing** of sign-in details runs in small batches on every invocation, independent of runs, copies and
+  reservations.
+
+**Events** (operator, atomic): #38 entries purged (per page), #40 request details cleared (per batch), #42 copy
+requested, #46 copy confirmed, #47 handed over, #41 delivered, #44 operator's copy destroyed, #43 copy lost, #45 export
+discarded, #48 request cancelled, #49 handover abandoned (with the stick's fate), #50 handover failed.
+
+**Residual risks, accepted.** The eject before a stick's verification is the operator's attestation wherever Linux
+offers no `diskseq`; the stick's fate, the operator's copy's destruction and the report folder's encryption and freedom
+from sync, backup and shadow copies rest on the operator's attestations; the migrator is trusted, as in the P1 role
+model; while a request awaits its copy nothing is deleted, so a scheduled run (P12) must alert on it.
+
 #### Rollout
 
 Additive steps first (catalog and resolver change no access), then the API switch (unchanged results for existing
@@ -565,7 +614,9 @@ retention **design** take effect with the Part 2 addendum; the decisions themsel
 | Approach | Lock-order checker built first, stop and report if unreliable; ordinary reads stay API-only and are documented with their residual risk (**superseded by B1**); atomic audit kept, P15 alerts required; ADR-16 written clean | Olamide Fadahunsi (project lead), 2026-10-12 | P5.0 instruction after the author's critique of Part 1 | this section, `dd60c84` |
 | Reviewer — Part 1 | "Part 1 of revision 25 (`e6b367d`) is approved." (a first approval on revision 22 was withdrawn and corrected) | independent reviewer, 2026-10-12 | review | plan `5d824e9` (corrections `c533e58`) |
 | Owner go-ahead G1 | "yes, start now with Part 1." | owner, 2026-10-12 | `P5_OWNER_GO_AHEAD.md` | `951b909`; plan `c533e58` |
-| Reviewer — Part 2 | — | — | — | **pending** |
+| O20 | Entries in a requested copy deleted only after the owner's written receipt | owner, signed 2026-10-18 | `P5_OWNER_REPORT_COPY_TIMING.md` C1 | `65dd6d9`, `6b5e318`; plan rev 80 |
+| O21 | Other entries deleted on their normal day; one copy per request; cancellation in writing and a 7-day reminder | owner, signed 2026-10-18 | `P5_OWNER_COPY_REQUEST_SCOPE.md` S1–S3 | `35af686`; plan rev 84 |
+| Part 2 | The retention design of the P5 plan §8.6 (revision 90) approved for implementation | Claude, under the project lead's delegation of 2026-10-18 — **not an independent review** | plan §14; ten critic rounds | plan `8b155eb`; the addendum above |
 | B1 | Every permission-gated read is also checked in the database — the profile, branches, roles, the catalog and the invitation list get read functions with permission checks; the app loses direct `SELECT` on those tables (P5.5) | owner, 2026-10-12 | ADR-16 approval form B1: "Add the database check now … an extra layer of protection" | `d4ac17e`; this section |
 | ADR-16 text — owner | "Yes i approve ADR-16 for Part 1, with the answers above." Part A all correct; B1 as above; C1 asked for a recommendation (answered in the follow-up, next row) | owner, 2026-10-12 | `P5_OWNER_ADR16_APPROVAL.md` | `d4ac17e` |
 | ADR-16 follow-up — owner | C1: the rule is kept, with a standby database, continuous backups and alerts required at go-live; C2: at most 5 minutes of activity lost and service back within 1 hour; A3 confirmed: only the owner manages the platform team, person by person | owner, 2026-10-12 | `P5_OWNER_ADR16_FOLLOWUP.md` | `130fbda`; availability consequence above |

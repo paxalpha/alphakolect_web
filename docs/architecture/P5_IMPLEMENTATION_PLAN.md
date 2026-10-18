@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 78 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 79 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–78) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–79) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -1271,10 +1271,25 @@ The exception is:
 7. **the operator command and its failure semantics (R36).** Every purge, stale-export recovery, report rebuild,
    report-delivery/destruction, and report-file inspection command first acquires the same kernel-held per-user OS lock,
    before any database reservation or filesystem access, and holds it through the command's final database transition.
-   If the lock is unavailable, the command refuses without reserving a run or touching a file. The persistent lock file
-   is never unlinked or replaced; the lock is released only when the command has no further filesystem or database
-   transition to perform. One purge run then proceeds in this order:
-    0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and whether a report is
+   If the lock is unavailable, the command refuses without reserving a run or touching a file; the lock is released
+   only when the command has no further filesystem or database transition to perform.
+
+   **The lock, concretely (rev 79).** Node has no file-locking call, and the usual lock libraries judge a lock stale
+   by its age — the timestamp weakness revisions 73–78 removed. So the lock is not a file: it is a **listening endpoint
+   the operating system owns on the process's behalf and frees when the process ends, however it ends**. On Windows, a
+   named pipe `\\.\pipe\alphakolect-purge-<user>` (Node's pipe server claims the first instance of the name, so a
+   second command's `listen` fails with `EADDRINUSE`); on Linux, a socket in the abstract namespace
+   (`\0alphakolect-purge-<uid>` — never a file, gone when its process dies). `<user>`/`<uid>` is the operator's OS
+   account, so the lock key names the account. The command accepts no connection on it (any is closed at once) and
+   spawns no child process, so nothing else can keep it alive. On any other platform the report-file commands are
+   disabled. The commands run directly on the operator's machine, never in a container (an abstract socket is private
+   to its network namespace); `writer_host_id` is the machine's own id (`/etc/machine-id`; Windows `MachineGuid`). A
+   name taken by another program makes the commands refuse — fail closed, never a wrong lock. No lock file exists, so
+   none can go missing, stale or be replaced. [Fact] Probed on 2026-10-18 with Node 24 (a holder process and a second
+   listener): on Windows the second `listen` on the pipe fails with `EADDRINUSE`, a connection to the holder is closed and
+   changes nothing, and killing the holder frees the name at once; on Linux (`node:24-slim`) the same, with no file
+   created. One purge run then proceeds in this order:
+   0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and whether a report is
       **pending** (R44, below), or fails at once if another run holds a live reservation — before anything is read,
       written or deleted;
    1. with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests); each
@@ -1286,9 +1301,8 @@ The exception is:
       synced or backed up** (R52 step 1). The command already holds the kernel lock acquired before reservation. It
       passes the stable host id and lock key to
       `begin_purge_export(run_id, directory, writer_host_id, writer_lock_key)`, which inserts this run's row of
-      `audit.purge_exports` (one per run) only if this run still holds the live reservation. The persistent lock file
-      is owner-only, is never unlinked or replaced, and a missing lock file while unresolved exports exist fails
-      closed. No detached child or worker may write the report files. If the platform cannot provide a reliable kernel
+      `audit.purge_exports` (one per run) only if this run still holds the live reservation. The lock key recorded is
+      the endpoint's name (rev 79). No detached child or worker may write the report files. If the platform cannot provide a reliable kernel
       process lock, commands that touch report files are disabled there. The report's name is fixed by the run:
       `<name>` =
       `alphakolect-purge-report-<run_id>.jsonl`, where `run_id` is the new UUID `reserve_purge_run` generated for this
@@ -1591,8 +1605,12 @@ the old `begin_purge_export` is refused because its reservation is stale, before
 registration, recovery on another host cannot acquire the recorded-host lock and refuses to inspect/delete files,
 discard the export, or start another purge while the old writer holds it; after the process exits, the OS releases the
 lock and recovery acquires it, cleans only run-named files and records the discard; a stale process resumed after
-losing its reservation revalidates and is refused before filesystem work; a missing or replaced lock file, unreachable
-host or unsupported lock primitive leaves the export unresolved; the lock file is never unlinked or replaced;
+losing its reservation revalidates and is refused before filesystem work; an unreachable host or an unsupported
+platform leaves the export unresolved; **the lock itself (rev 79)** — with real processes: a child command holding the
+lock (paused) makes a second command refuse with no reservation and no file touched; killing the child (no clean exit)
+frees the lock at once and the second command proceeds; the endpoint name taken by an unrelated listener makes every
+report-file command refuse; a connection to the endpoint is closed and changes nothing; on an unsupported platform the
+commands refuse before any reservation;
 `record_export_artifact` is
 refused a second time, for another run, without the live
 reservation, and for a confirmed or discarded export; **the rebuild's file (rev 75)** — a rebuild killed mid-write
@@ -3240,6 +3258,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 79 | 2026-10-18 | **Part 2: the kernel-held lock made concrete.** Node has no file-locking call and the common lock libraries judge staleness by age, so revision 78's lock file could not be built as written. The lock is now a listening endpoint the OS frees when its process ends: a named pipe on Windows, an abstract-namespace socket on Linux, keyed by the operator's account; other platforms and containers are refused; no lock file exists. Tests with real processes (a paused holder, a killed holder, a squatted name). The purge procedure's list indentation fixed. Design text only; Part 2 still awaits the independent reviewer. |
 | 78 | 2026-10-18 | **Part 2 stale-writer fence uses a kernel-held OS lock.** Replaces revision 77's host/PID/process-start-token check, whose token might repeat or be unavailable. Exporters hold an exclusive process lock before registration through confirmation/discard; recovery must acquire the same lock before touching files. A stale process cannot resume filesystem work after recovery; unavailable lock support, host or lock file fails closed. Tests pause the exporter before/after lock acquisition and around registration/file creation. Design text only; Part 2 still awaits the independent reviewer. |
 | 77 | 2026-10-18 | **Part 2 stale-writer recovery fence.** `begin_purge_export` records a stable host id, PID and OS process-start token before filesystem work. Recovery must verify that exact process instance has exited before inspecting files or discarding; a live, unreachable or unverifiable writer keeps the export unresolved and blocks new runs. Tests pause the writer before create and between create and artifact recording, then verify recovery refuses until termination. Design text only; Part 2 still awaits the independent reviewer's approval. |
 | 76 | 2026-10-18 | **Part 2: the export made portable** (found while resolving what could block Part 2). Node's `rename` overwrites on POSIX, so the no-overwrite rename is a hard `link` then an `unlink` (a stop between leaves both names on one file, removed by name); where a directory cannot be flushed (Windows), the run says so and relies on the file's flush, the read-back after the rename and the recorded SHA-256, with a later loss found and rebuilt (R53). Tests added. Design text only; Part 2 and the addendum still await the independent reviewer. |

@@ -480,6 +480,11 @@ requested).
   email), `target` (`{ type, id }` or `null`), `summary` (the catalog's allowlisted fields for that event, never
   credentials, tokens or request bodies), `ip` and `userAgent` (strings, or `null` where the reader may not see them —
   the fields are always present). The platform read adds `merchantId` (`null` for a platform-wide event).
+- **Merchant-read display label:** each merchant-read item also has `actorLabel`, either `'AlphaKolect team'` or
+  `null`. It is `'AlphaKolect team'` when the event's actor identity has a platform membership; otherwise it is `null`.
+  This label is separate from the recorded actor fields and never changes `actor.audience`. For platform-team actors,
+  the merchant read withholds `membershipId` and `email` as `null`, while preserving `audience` exactly as recorded,
+  including `null`.
 - **`actor`:** `null` when the event records no person; otherwise `{ audience, membershipId, email }`, **each as
   recorded and each nullable on its own** — the record's actor columns are independent, and nothing is inferred
   (amended at the reviewer's addendum review, 2026-10-17): `audience` is `'merchant'`, `'agent'` or `'platform'` when the
@@ -496,7 +501,7 @@ requested).
 
 | Operation | Method and path | Authorization | Filters (each optional, combinable) | What the reader sees | Built in |
 |---|---|---|---|---|---|
-| `listMerchantAuditEvents` (#33, `audit.read_merchant_events`) | `GET /v1/merchant/audit-events` | `merchant.audit.read` — the owner only (D8′) | `membershipId`: one member of the business, any status — that person's events in this business (O3; **by person only**, O4 Q3) | every event of the business only (the merchant from the session, R19), refused attempts included (O3), with `ip` and `userAgent` (D9) — except the platform team's actions, shown **without** them (CF5); every other actor as recorded, with email; the platform team always as `{ audience: 'platform', membershipId: null, email: null }` — "AlphaKolect team", not naming the person (**O19**) | P5.8 |
+| `listMerchantAuditEvents` (#33, `audit.read_merchant_events`) | `GET /v1/merchant/audit-events` | `merchant.audit.read` — the owner only (D8′) | `membershipId`: one member of the business, any status — that person's events in this business (O3; **by person only**, O4 Q3) | every event of the business only (the merchant from the session, R19), refused attempts included (O3), with `ip` and `userAgent` (D9) — except the platform team's actions, shown **without** them (CF5); every other actor as recorded, with email; platform-team actions have `actorLabel: 'AlphaKolect team'`, with membership and email withheld and `audience` preserved as recorded, including `null` (**O19**) | P5.8 |
 | `listPlatformAuditEvents` (#34, `audit.read_platform_events`) | `GET /v1/platform/audit-events` | `platform.audit.read` (grantable; the super admin holds every platform permission) | `merchantId` (one business), `membershipId` (one person, by any of their memberships — all of that person's events), `event` (one catalog identifier) (O4 Q4) | every event on the platform, each actor with `membershipId` and email; `ip` and `userAgent` **to the super admin only** — `null` for a platform staff member, whatever their grants (D9, F3) | P5.8 |
 
 **The record of a read.** #33 is written with the business as `merchant_id`, so the owner's own look at the record is in
@@ -514,8 +519,10 @@ businesses, the shape the spike did not cover. Footprints as in the plan (§7.2)
 merchant read returns no other business's event under any filter or cursor; the window, page and cursor rules on both;
 `ip` and `userAgent` shown and withheld exactly as above (own people, platform team, super admin, platform staff);
 every actor shape the writers record, returned as recorded — an invitation acceptance included (a person and a
-membership, no audience) — and the platform team unnamed in a business's record whatever its audience; the read event
-written before the rows, and no rows when it cannot be written; the app's direct `SELECT` refused.
+membership, no audience) — and the platform team unnamed in a business's record whatever its audience. In particular,
+a platform identity whose event has no recorded audience is returned with `actor.audience: null` and
+`actorLabel: 'AlphaKolect team'`; the label does not infer or replace the audience. The read event is written before the
+rows, and no rows are returned when it cannot be written; the app's direct `SELECT` is refused.
 
 #### Rollout
 

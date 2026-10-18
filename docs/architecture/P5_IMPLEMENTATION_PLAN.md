@@ -1,12 +1,9 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 27 — PART 1 APPROVED** (independent reviewer, 2026-10-12, on `e6b367d`) **and the owner's go-ahead
-for Part 1 given** (G1, 2026-10-12): **P5.0 work done** — ADR-16 drafted (`TARGET_ARCHITECTURE.md` §3.5), awaiting approval of its text (§10, §16). Part 2 (retention design) is not approved and is not
-built until it is. (Owner review A–E; independent reviews R1–R54 and fixes A–D
-applied; self-review cycles
-recorded in §16; every owner question asked before rev 19 answered — O3, O5, O6, O8, O9 decided, O7 resolved, D5 and D8 superseded, D9
-decided; owner confirmation CF1–CF5 signed 2026-10-12; O4 by design decided at P5.8 step 2; O10–O12 (privacy, needed by P5.8 step e) open; decision log in §14;
-Part 2 must be approved before P5.8 step a).** Implementation of Part 1 is authorized (§12, §14).
+**Status: revision 69 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+addendum remains unconfirmed: this review requests that the business-facing platform-team label be separated from the
+recorded actor audience. O19 is answered but still requires the owner's signature before the screens are built. Part 2
+(retention design) remains unapproved, so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -2922,6 +2919,12 @@ Part 2 boundary in place (§14, §16).
 
 ## 14. Open items for the reviewer and owner
 
+**Reviewer — P5.8 addendum re-review (2026-10-17, on rev 68): Changes requested.** The merchant-read row maps the
+platform-team display to `actor.audience: 'platform'`, which can overwrite a recorded `null` audience. Keep the recorded
+audience unchanged and represent "AlphaKolect team" with a separate `actorLabel`; require a regression test for a
+platform identity whose event has no recorded audience. The addendum is not confirmed. O19 signature and Part 2
+approval remain separate gates.
+
 **Decision records (R26).** A decision exists only when it is recorded, not when this document is edited. Each owner
 decision gets an entry in the **ADR-16 decision log** with: the item (e.g. O7); the option selected, quoting the
 owner's answer; the decision-maker; the date; the source (for the owner's answers,
@@ -3067,6 +3070,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 69 | 2026-10-17 | **P5.8 addendum re-review: changes requested.** The merchant-read row used `audience: 'platform'` as the team label, conflicting with the recorded nullable audience. Separate `actorLabel` from actor fields, preserve `audience` as stored, and test a platform identity with no recorded audience. The addendum remains unconfirmed; O19 signature and Part 2 approval remain separate gates. |
 | 68 | 2026-10-17 | **The reviewer's re-check: both fixes confirmed; the addendum's actor fixed.** (a)–(h) accepted in principle; `AuditEvent.actor` now carries each actor field as recorded and nullable — an invitation acceptance has no audience — with a test required (`915ad30`); **O19 answered** (`4fe4f75`, relayed, signature requested): "AlphaKolect team", applied in the addendum. Returned for the addendum's confirmation. |
 | 67 | 2026-10-17 | **The ADR-16 addendum drafted** (`cbe8467`): both audit-read contracts frozen on O4 and the visibility decisions, eight judgement calls (a)–(h) recorded under §10 P5.8; ADR-16's Logs paragraph amended to the route template; **O19** asked of the owner (`c78dec8`). For the reviewer: the re-check of rev 66's fixes and the confirmation of the addendum. |
 | 66 | 2026-10-17 | **The P5.8 hold-point review: changes requested, both findings fixed.** (R19) the guard's inventory no longer depends on a session parameter's name, and the name is checked (`12f839c`); (logs) the completion line names the matched contract route, never the path as sent (`2134b80`), §8.6 amended; a parallel-isolation flake in the team-list test fixed (`b53ff00`). The verdict recorded in §14. Returned to the reviewer for re-check. |

@@ -2,9 +2,8 @@
 
 **For:** the owner of AlphaKolect
 **Prepared:** 18 October 2026
-**Why:** The clean-up of old activity entries is built, following your decisions. Before this stage can close, three
-things need you: your approval of the written policy, how often the clean-up runs, and what happens to the planning
-documents when the work is merged.
+**Why:** The clean-up of old activity entries is built, following your decisions. Before this stage can close, two
+things need you: your approval of the written policy, and how often the clean-up runs.
 
 As before, **"Not sure" is a fine answer.**
 
@@ -37,17 +36,10 @@ The more often it runs, the closer to exactly two years an entry is deleted.
 
 > Answer:
 
-## Q3. The planning and review documents
+## Already decided — not asked again
 
-While building this stage we kept planning records in the code history: the plan, the review notes and the evidence.
-When the work is merged, they can stay in the history, or be removed first.
-
-- ☐ **Keep them in the history** *(Our suggestion: they show why each decision was made, and hold no passwords or
-  personal data.)*
-- ☐ Remove them before the merge
-- ☐ Not sure
-
-> Answer:
+What happens to the planning and review documents at the merge: you answered this on 14 October 2026 ("Keep them",
+question D1 of `P5_OWNER_REMAINING_QUESTIONS.md`). They stay in the history.
 
 ---
 

@@ -13,8 +13,8 @@ import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 //   1. another tenant's resource, addressed by its real id → 404 NOT_FOUND, the same answer as for an id that does
 //      not exist, and the other tenant's data is unchanged afterwards;
 //   2. collection endpoints answer with nothing of the other tenant;
-//   3. same tenant, wrong kind: staff get 403 FORBIDDEN wherever the contract documents it (T9), and success
-//      elsewhere;
+//   3. same tenant, wrong kind: staff get 403 FORBIDDEN wherever the declaration requires a permission (T9), and
+//      success elsewhere;
 //   4. wrong audience or transport: agent tokens on merchant endpoints, merchant cookies on agent endpoints, and
 //      platform sessions are all refused.
 
@@ -196,7 +196,9 @@ describe('collections show nothing of another tenant', () => {
 
 describe('same tenant, wrong kind (T9)', () => {
   const merchantEndpoints = TENANT_ENDPOINTS.filter(([, e]) => e.audience === 'merchant');
-  const forbids = (e: EndpointContract) => /^FORBIDDEN/.test(e.responses[403]?.description ?? '');
+  // From the declaration, never the description (P5.9): this staff member holds no grant, so every endpoint that
+  // requires a permission refuses them. The full actor matrix is authorization-matrix.test.ts.
+  const forbids = (e: EndpointContract) => e.authorization.class === 'permission';
 
   // ADR-15 T5/T7: a staff branch restriction is stored and re-read per request, but no branch-scoped data exists in
   // P4, so nothing reads it yet. That is safe only while staff and agents can reach their own membership and nothing
@@ -211,7 +213,7 @@ describe('same tenant, wrong kind (T9)', () => {
   });
 
   it.each(merchantEndpoints)(
-    '%s: staff get 403 where the contract documents FORBIDDEN, success otherwise',
+    '%s: staff without a grant get 403 where the declaration requires a permission, success otherwise',
     async (id, e) => {
       const before = await snapshot(A.merchantId);
       const res = await send(id, e, { kind: 'cookie', token: A.staff.token }, (p) => RESOLVERS[p]!(A), A);

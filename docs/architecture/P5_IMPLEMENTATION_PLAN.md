@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 80 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 81 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–80; O20 decided) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–81; O20 decided, O21 asked) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -295,7 +295,7 @@ rules that make that set finite and checkable:
 
 | # | Category | Mode |
 |---|---|---|
-| 0 | `audit.purge_reservation` — the purge's run-wide reservation row, maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40, R43); never by a request path | `FOR NO KEY UPDATE NOWAIT` |
+| 0 | `audit.purge_reservation` — the purge's run-wide reservation row, maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40, R43); never by a request path. After it, in the same transaction, the purge's own tables (`purge_runs`, `purge_exports`, `purge_reports`, `purge_report_requests`, `purge_run_pages`; Part 2, rev 81), written only by purge functions | `FOR NO KEY UPDATE NOWAIT`; the purge tables written after it |
 | 1 | `identity.platform_memberships` (actor and target, one helper call, sorted) | `FOR SHARE` for the actor; `FOR NO KEY UPDATE` for a target whose row or grants change |
 | 2 | `tenancy.merchants` | `FOR SHARE`; `FOR NO KEY UPDATE` when the merchant row changes (lifecycle, transfer, profile) |
 | 3 | `tenancy.merchant_memberships` — actor and targets together | `FOR NO KEY UPDATE` in writes; `FOR SHARE` in sensitive reads |
@@ -306,6 +306,7 @@ rules that make that set finite and checkable:
 | 8 | `tenancy.branches` | `FOR SHARE`; `FOR NO KEY UPDATE` for a branch being edited |
 | 9 | grant rows (`role_permissions`, platform grants) | written only after their parent (7 or 1) is held `FOR NO KEY UPDATE` |
 | 10 | `identity.sessions` (revocation) | `UPDATE` |
+| 11 | `audit.audit_events` rows — the purge's deletion by id only (Part 2, rev 80); nothing else locks them | `DELETE` |
 
 Flows that start from a token or challenge identify their rows with an **unlocked lookup**, then lock in this order
 and **re-check** what the lookup found (still unconsumed, unexpired, same identity) before acting. Locks are taken by
@@ -375,9 +376,9 @@ sorted, de-duplicated id array, whatever the actor's position in it.
 | **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
 | `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
 | `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
-| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52; revs 71, 73) | 0: reservation / NKU `NOWAIT` | write the reservation row, the export and report tables, and delete manifest rows per the manifest lifecycle (no request path touches any of them); #41–#45 inserts (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.request_purge_report`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`, `audit.release_purge_run` (Part 2; operator only; R43–R45, R52; revs 71, 73) | 0: reservation / NKU `NOWAIT` → 0: the purge tables, after it (rev 81) | write the reservation row, `purge_runs`, the export, report and request tables, and delete manifest rows per the manifest lifecycle (no request path touches any of them); #41–#45 inserts (fresh key) |
 | `audit.purge_candidates` (Part 2; operator only; R43) | 0: reservation / NKU `NOWAIT`, checked as this run's (renewed) | audit rows read without locks; manifest page insert (fresh key, R53) |
-| `audit.purge_expired_events` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 11: audit rows of the page, by id (`DELETE`; nothing else locks them; rev 80) | manifest page marked deleted; on the last page of a delivered report, the request satisfied; #38 insert (fresh key) |
+| `audit.purge_expired_events` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 0: the purge tables (manifest page; on the last page of a delivered report, the report and the request) → 11: audit rows of the page, by id (`DELETE`; nothing else locks them; revs 80–81) | manifest page marked deleted; on the last page of a delivered report, `rows_deleted_at`, `satisfied_at` and the manifest removed; #38 insert (fresh key) |
 | `audit.clear_expired_request_metadata` (Part 2; operator only; R40) | 0: reservation / NKU `NOWAIT`, checked as this run's → 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED` | #40 insert (fresh key) |
 
 **Why these read footprints and no more (R20).** A sensitive read locks only the rows that carry the actor's
@@ -809,7 +810,8 @@ and the catalog assigns each atomic pair to exactly one:
     compared with the invitation, never written as the actor. The password check of the invitation-link path remains
     in the API (T11), as in P4;
   - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38, its field clearing #40, report
-    requests #42, deliveries #41 and losses #43, the containment switch #39): actor
+    requests #42, deliveries #41, losses #43, copies destroyed #44 and exports discarded #45, the containment switch
+    #39): actor
     `NULL`, as for the bootstrap today.
 
   In every pattern-A function, `request_id`, `ip` and `user_agent` are passed in as **request context**: they are
@@ -1114,8 +1116,8 @@ Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision 
   hold them: `identity.sessions` (`created_ip`, `user_agent`, `20261003000100_identity_schema:48-49`) and
   `identity.one_time_tokens` (`requested_ip`, `:74`). No endpoint exposes them, and P5 adds none, so no one sees them
   through the system. Their rows are referenced by other rows (refresh tokens reference sessions), so they are not
-  deleted (L1); instead the purge **clears these fields** on sessions that ended (revoked or past their absolute
-  expiry) more than two years ago and on links sent more than two years ago that are already used or expired —
+  deleted (L1); instead the purge **clears these fields** on sessions that ended (at the earliest of revocation,
+  absolute expiry and idle expiry — rev 80) more than two years ago and on links sent more than two years ago that are already used or expired —
   the same two-year rule, with the exact conditions in the retention design below (R37).
 - **Application logs (rev 19).** [Fact] Every request is logged by `pino-http`, whose request serializer writes the
   client's `remoteAddress`, `remotePort` and **all headers** — `user-agent` and any `x-forwarded-for` included
@@ -1208,29 +1210,37 @@ The exception is:
    **eligibility as of a moment** `p_as_of` (refused if later than `now()`): an audit row is eligible when
    `occurred_at < p_as_of − COALESCE(retention_override, audit.d9_retention())` for its pair (R42). Because `p_as_of` can never be in the future, an operator
    can only make the eligible set smaller, never shorten the retention:
-   - `audit.purge_candidates(p_run_id, p_as_of, p_after_id, p_limit)` — reads audit rows without locking them, paged
-     by `id`; its writes are exactly two — renewing this run's reservation (R43), which it checks first like every purge
-     function, and recording each page it returns in the manifest, `audit.purge_run_pages` (R53) — and it never writes an
-     audit event or touches an audit row, so a long export keeps the run alive page by page. It returns up to
+   - `audit.purge_candidates(p_run_id, p_as_of, p_page_no, p_after_id, p_limit)` — reads audit rows without locking
+     them, paged by `id`; its writes are exactly two — renewing this run's reservation (R43), which it checks first like
+     every purge function, and recording the page it returns as page `p_page_no` of this run's manifest,
+     `audit.purge_run_pages` (R53) — and it never writes an audit event or touches an audit row. **Idempotent per page
+     (rev 81):** a repeated call with a page number already recorded returns that page exactly as recorded, so a lost
+     response and a retry never add a page; a page number other than the next one is refused. It returns up to
      `p_limit` eligible rows with `id > p_after_id`, in `id` order, each with its `id` and its **canonical text**, and
-     the page's SHA-256 digest. **Canonical text and file bytes (rev 80):** one function,
+     the page's SHA-256 digest. **Canonical text and file bytes (rev 80):** one helper,
      `audit.event_canonical_text(audit.audit_events)` — `to_jsonb(row)::text` with `TimeZone` pinned to `UTC`, so a
-     `timestamptz` renders the same whatever the caller's session — gives every row's text, for the export and for every
-     digest check; a page's bytes are its rows' texts **each followed by one `\n`**, in `id` order, UTF-8; the report
-     file is its pages' bytes concatenated in page order, with nothing before, between or after; a page digest is the
-     SHA-256 of that page's bytes, so it is recomputed from the file exactly. It is **refused** once this run has begun
-     an export (rev 80), so no page can join a manifest after the report was written;
-   - `audit.purge_expired_events(p_run_id, p_as_of, p_source_run_id, p_page_no, p_ids, p_expected_digest)` — **deletes by
-     identity, never by predicate (R38), and only a page of a manifest (rev 80).** The page is page `p_page_no` of
-     the manifest of run `p_source_run_id`, which must be **either** this run, when no report request is open, **or**
-     the run of a **delivered** report of the open request (O20, below) — any other source, a page number the manifest
-     does not have, or, for a report, a page above the page count frozen at its confirmation, is refused. It re-reads
-     **those** rows and raises — deleting nothing — unless the ids equal the manifest page's, every id exists, every
-     row is still eligible as of `p_as_of`, and the digest of their canonical texts equals both `p_expected_digest` and
-     the manifest's; then it deletes `WHERE id = ANY(p_ids)`, raises unless the number deleted equals the number of
-     ids, and marks the manifest page deleted. Audit rows are immutable (append-only), so rows identified by id cannot
-     change between the check and the delete, and rows only age, so a row eligible when a report was written is still
-     eligible when it is deleted later. An eligible row that commits **after** its run's pages were read — possible,
+     `timestamptz` renders the same whatever the caller's session — gives every row's text; a page's bytes are its rows'
+     texts **each followed by one `\n`**, in `id` order, UTF-8; the report file is its pages' bytes concatenated in page
+     order, with nothing before, between or after; a page digest is the SHA-256 of that page's bytes, and the
+     **manifest digest** is the SHA-256 of the page digests (hex, each followed by `\n`) in page order. In an export run
+     it is refused until the run's export has recorded its file (so each page is written as it is read — rev 81, no
+     report is ever held in memory whole), and in every run once the run's report is confirmed or its export
+     discarded, so no page joins a manifest after the report was checked;
+   - `audit.purge_expired_events(p_run_id, p_as_of, p_source_run_id, p_page_no)` — **deletes by identity, never by
+     predicate (R38), and only a page of a manifest.** The page is page `p_page_no` of the manifest of run
+     `p_source_run_id`, which must be **either** this plain run's own manifest **or** the frozen manifest of an active,
+     **delivered** report (O20, below) — any other source, a page number the manifest does not have, or, for a report, a
+     page above its frozen page count, is refused, and so is a page already marked deleted. Its ids are the manifest
+     page's, never the caller's. It raises — deleting nothing — unless every id still exists; then, **if every row is
+     eligible under the guard's rule as of the transaction's `now()`**, it deletes `WHERE id = ANY(<the page's ids>)`,
+     raises unless the number deleted equals the number of ids, and marks the page deleted. **A page with a row not
+     (or no longer) eligible is not an error (rev 81):** if the retention was lengthened after the report was written
+     (a redefined `audit.d9_retention()`, or a later override), the function returns `not_yet_eligible`, deletes
+     nothing, and the run goes on to the next page; the page waits for a later run. **The content is not re-hashed at
+     deletion (rev 81):** audit rows are immutable (append-only), so a page's ids identify exactly the rows that were
+     exported, and the bytes were checked once, when the report was confirmed against its manifest (below); re-hashing
+     at deletion would make every later change of the table's columns, of `to_jsonb`'s rendering or of the canonical
+     function stop deletion for good. An eligible row that commits **after** its run's pages were read — possible,
      because `occurred_at` is its transaction's **start** time, so a long transaction can commit an already-old event
      late — is in no manifest page and is therefore never deleted by that run: it stays for a later run.
      `purge_candidates` writes no event of its own: it is reachable only by the operator role, which as the table owner
@@ -1284,112 +1294,130 @@ The exception is:
    (integer), `rows_deleted` (integer), `page_digest` (string), `report_id` (string, present for a reported
    deletion); #40 — `p_as_of`, `run_id` (strings), `sessions_cleared`, `tokens_cleared` (integers). Counts per event
    type are not kept: the manifest and the report hold the ids, and a takeover is recorded in `audit.purge_runs`;
-7. **the operator command and its failure semantics (R36; restructured in rev 80 for O20).** **O20, decided by the
-   owner on 2026-10-18 (§14):** when he has asked for a copy, the entries it covers are deleted **only after he confirms
-   he has it** — "only after I confirm you have the copy". So a requested copy is never the only record of anything
-   until it is in his hands: the entries stay in the database until his written receipt is recorded, and a copy lost
-   before then is simply made again. A run is therefore one of three kinds, decided by the database at reservation:
+7. **the operator command and its failure semantics (R36; restructured in revs 80–81 for O20).** **O20, decided by
+   the owner on 2026-10-18 (§14):** when he has asked for a copy, the entries it covers are deleted **only after he
+   confirms he has it** — "only after I confirm you have the copy". So a requested copy is never the only record of
+   anything until it is in his hands: the entries stay in the database until his written receipt is recorded, and a
+   copy lost before then is simply made again. **O21** (asked 2026-10-18, §14) decides what else happens while a request
+   is open — whether other old entries go on being deleted (S1), whether a request covers one copy or every clean-up
+   (S2), and cancellation and reminders (S3). Until it is answered, this design takes the reading that deletes least —
+   nothing is deleted while a request is open except the rows of a report the owner has received; one copy per request;
+   no cancellation — and the request path is not built before O21 is recorded.
 
-   - **plain run** (no report request open): read every eligible page into this run's manifest, delete those pages
-     (each page's ids and digest checked against the manifest), then clear request metadata;
-   - **export run** (a request is open and has no report waiting for delivery): read every eligible page into this
-     run's manifest, write and confirm the report, **delete nothing**; then clear request metadata;
-   - **reported-deletion run** (a request is open and one of its reports is delivered): delete exactly that report's
-     manifest pages not yet deleted — nothing else — then clear request metadata; the deletion of its last page
-     satisfies the request (below).
-   - While a request's report is **confirmed but not yet delivered**, a run deletes nothing and only clears request
-     metadata: the report is waiting for the owner.
+   **The kind of run, decided by `reserve_purge_run` in this order (rev 81):**
+   1. an export is **unresolved** (below) → **clearing-only run**: nothing is exported or deleted; the command reports
+      the export and clears request metadata (item 4), so CF4 never waits on a stuck export;
+   2. a request is open and has an **active** report (neither lost nor fully deleted) that is **delivered** →
+      **reported-deletion run**: deletes exactly that report's frozen manifest pages not yet deleted — nothing else — and
+      the deletion of its last page satisfies the request (below);
+   3. a request is open and its active report is **confirmed but not delivered** → **waiting run**: deletes nothing,
+      clears request metadata; the report is waiting for the owner;
+   4. a request is open and has no active report → **export run**: writes and confirms a report, deletes **nothing**;
+   5. no request is open → **plain run**: deletes the eligible rows, page by page from its own manifest.
+   A request has **at most one active report** (a partial unique index, below), so the kinds never overlap. Every kind
+   ends by clearing request metadata (item 4) **in its own transaction, attempted whatever happened before** while the
+   run still holds its reservation (rev 81): a failed page or export never stops the clearing.
 
-   **The lock (revs 78–79).** Every command that reserves a run, touches a report file or resolves an export — the purge,
-   stale-export recovery, delivery and destruction, recording a loss, and the report listing (it reads the files) —
-   first acquires one **kernel-held lock**, before any database reservation or file access, and holds it through its
-   last database transition; if the lock is unavailable it refuses, having reserved nothing and touched no file. Node
-   has no file-locking call, and the usual lock libraries judge a lock stale by its age — the timestamp weakness
-   revisions 73–78 removed — so the lock is not a file: it is a **listening endpoint the operating system owns on the
-   process's behalf and frees when the process ends, however it ends**. On Windows, a named pipe
-   `\\.\pipe\alphakolect-purge-<user>` (Node's pipe server claims the first instance of the name, so a second command's
-   `listen` fails with `EADDRINUSE`); on Linux, a socket in the abstract namespace (`\0alphakolect-purge-<uid>` — never
-   a file, gone when its process dies). `<user>`/`<uid>` is the operator's OS account. The command accepts no
-   connection on it (any is closed at once) and spawns no child process, so nothing else can keep it alive. On any
-   other platform the commands are disabled. `writer_host_id` is the machine's own id (`/etc/machine-id`; Windows
-   `MachineGuid`), **on Linux joined with the network namespace's inode** (`/proc/self/ns/net`) — an abstract socket is
-   private to its namespace, so two containers sharing a machine id never share a host id (rev 80); a missing or empty
-   machine id refuses the commands. A name taken by another program makes the commands refuse — fail closed, never a
-   wrong lock; the runbook says how to find that program. No lock file exists, so none can go missing, stale or be
-   replaced. [Fact] Probed on 2026-10-18 with Node 24 (a holder process and a second listener): on Windows the second
-   `listen` on the pipe fails with `EADDRINUSE`, a connection to the holder is closed and changes nothing, and killing
-   the holder frees the name at once; on Linux (`node:24-slim`) the same, with no file created.
+   **The lock (revs 78–79, 81).** Every command that reserves a run, touches a report file or resolves an export — the
+   purge, stale-export recovery, delivery and destruction, recording a loss — first acquires one **kernel-held lock**,
+   before any database reservation or file access, and holds it through its last database transition; if the lock is
+   unavailable it refuses, having reserved nothing and touched no file. Node has no file-locking call, and the usual lock
+   libraries judge a lock stale by its age — the timestamp weakness revisions 73–78 removed — so the lock is not a file:
+   it is a **listening endpoint the operating system owns on the process's behalf and frees when the process ends,
+   however it ends**. On Windows, a named pipe `\\.\pipe\alphakolect-purge-<SID>` — the operator account's security
+   identifier, never `DOMAIN\user`, whose backslash would break the name (rev 81) — (Node's pipe server claims the first
+   instance of the name, so a second command's `listen` fails with `EADDRINUSE`); on Linux, a socket in the abstract
+   namespace (`\0alphakolect-purge-<uid>` — never a file, gone when its process dies). The command accepts no connection
+   on it (any is closed at once) and spawns no child process, so nothing else can keep it alive. On any other platform
+   the commands are disabled. **The commands run on a persistent machine, never in a container** (an abstract socket is
+   private to its network namespace, which a container recreates): on Linux they refuse when they detect one (`/.dockerenv`,
+   or PID 1's cgroup naming a container runtime), and the runbook says so. `writer_host_id` is the machine's own id
+   (`/etc/machine-id`; Windows `MachineGuid`), on Linux joined with the network namespace's inode (`/proc/self/ns/net`), so
+   a recreated namespace never matches an old export and fails closed; a missing or empty machine id refuses the
+   commands. The machine itself must not be cloned while a report exists (a clone is a copy of the report — the runbook).
+   A name taken by another program makes the commands refuse — fail closed, never a wrong lock; the runbook says how to
+   find that program. No lock file exists. [Fact] Probed on 2026-10-18 with Node 24 (a holder process and a second
+   listener): on Windows the second `listen` on the pipe fails with `EADDRINUSE`, a connection to the holder is closed
+   and changes nothing, and killing the holder frees the name at once; on Linux (`node:24-slim`) the same, with no file
+   created.
 
    **One run, in this order:**
    0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and the run's kind, or fails at once
-      if another run holds a live reservation, or with `export_unresolved` while an export of a run that no longer
-      holds the reservation is neither confirmed nor discarded (below) — before anything is read, written or deleted.
-      It records the run in `audit.purge_runs` (rev 80; one row per run, never deleted, no personal data), including
-      the run whose expired reservation it took over, so a takeover is recorded even if the new run then fails;
-   1. **plain or export run:** with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids,
-      texts, page digests); each page renews the reservation, so an export of any size stays within the lease. An
-      export run with **no** eligible row writes no file and confirms no report: the request stays open for a later
-      run;
-   2. **export run only — the report file.** The operator names a **directory**: never in the repository or on the
-      server; a local folder only their account can read, **not synced or backed up**, on a disk with full-disk
-      encryption (rev 80: an `unlink` leaves the bytes on the disk). `begin_purge_export(run_id, directory,
-      writer_host_id, writer_lock_key)` inserts this run's row of `audit.purge_exports` (one per run), refused unless
-      this run holds the live reservation and is an export run; it is recorded **before the file exists** (rev 71). The
-      report's name is fixed by the run: `<name>` = `alphakolect-purge-report-<run_id>.jsonl`, `run_id` being the new
-      UUID `reserve_purge_run` generated and recorded. **That name is the proof of ownership** (rev 75): unique to the
-      run, stored in the database and outside the report's contents, used by nothing else — no timestamp or file number
-      is relied on, and the report's bytes are unchanged. The command creates `<name>.partial` in that directory
-      **exclusively** (refused if `<name>` or `<name>.partial` exists, which only a file deliberately planted under the
-      run's name could cause) and readable by its owner only (mode `0600`; where the platform has no such modes, the
-      folder's permissions do it), and at once calls `record_export_artifact(run_id)`, which records, once, that this
-      run's file exists. Then it writes all pages, flushes the file (`fsync`), reads it back and checks every page's
-      bytes against that page's database digest, records the file's SHA-256, and renames it to `<name>` **without
-      overwriting** — Node's `rename` replaces an existing file on POSIX, so the rename is a hard `link` of
-      `<name>.partial` to `<name>`, refused if `<name>` exists, then an `unlink` of `<name>.partial` (a stop between the
-      two leaves both names on one file, which every cleanup removes by name) — and flushes the directory; where the
-      platform cannot flush a directory (Windows refuses `fsync` on one), the command says so in its output and in the
-      confirmation's note, and relies on the file's flush, a read-back of `<name>` after the rename and the recorded
-      SHA-256 (rev 76). Throughout, it calls `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44). When
-      — and only when — the read-back passes and the rename is done, it calls `confirm_purge_report(run_id, row count,
-      file SHA-256, file location)`, which inserts this run's report for the open request — refused unless the run holds
-      the live reservation, the count equals the manifest's rows, the location equals the recorded directory and
-      `<name>`, and this run's export recorded its file and is unresolved — **freezes the report's manifest** (its page
-      count and a digest over its page digests, stored on the report: rev 80), and marks the export **confirmed**, in
-      one transaction; then it prints the report id, path, SHA-256 and count;
+      if another run holds a live reservation — before anything is read, written or deleted. It records the run in
+      `audit.purge_runs` (one row per run, never deleted, no personal data), including the run whose expired reservation
+      it took over, so a takeover is recorded even if the new run then fails;
+   1. **plain run:** page by page, `purge_candidates(run_id, p_as_of, n, after, limit)` then
+      `purge_expired_events(run_id, p_as_of, run_id, n)`, each page in its own transaction with its own #38 event;
+   2. **export run — the report file.** The operator names a **directory**: never in the repository or on the server
+      (the command refuses one inside a git work tree); a local folder only their account can read, **not synced or
+      backed up**, on a disk with full-disk encryption (an `unlink` leaves the bytes on the disk), on a file system with
+      hard links (NTFS, ext4, APFS — FAT and exFAT have none, and the link below fails there). In order:
+      1. `begin_purge_export(run_id, directory, writer_host_id, writer_lock_key)` inserts this run's row of
+         `audit.purge_exports` (one per run), refused unless this run holds the live reservation and is an export run —
+         the export is recorded **before any file exists** (rev 71);
+      2. **the run's marker (rev 81):** the command creates `alphakolect-purge-run-<run_id>.marker` in the directory,
+         exclusively — it holds the run id and the machine id, no personal data. The marker proves, later, that a
+         directory **is** the run's directory on the run's volume: recovery, a loss and the destruction all refuse
+         unless it is there (an unmounted volume, a remapped drive letter or another machine shows no marker, and is
+         reported as **directory unavailable**, never as "missing"). The marker is deleted last, after the report's
+         files;
+      3. the report's name is fixed by the run: `<name>` = `alphakolect-purge-report-<run_id>.jsonl`, `run_id` being the
+         new UUID `reserve_purge_run` generated and recorded. **That name is the proof of ownership** (rev 75): unique to
+         the run, stored in the database and outside the report's contents — no timestamp or file number is relied on,
+         and the report's bytes are unchanged. The command creates `<name>.partial` **exclusively** (refused if `<name>`
+         or `<name>.partial` exists, which only a file deliberately planted under the run's name could cause), readable by
+         its owner only (mode `0600`; where the platform has no such modes, the folder's permissions do it), and at once
+         calls `record_export_artifact(run_id)`, which records, once, that this run's file exists;
+      4. **page by page** (rev 81): `purge_candidates(run_id, p_as_of, n, after, limit)`, then the page's bytes appended
+         to `<name>.partial` — the report is streamed, never held in memory whole; the reservation renews with every page,
+         and the command also calls `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44);
+      5. it flushes the file (`fsync`), **reads it back**, recomputes every page's digest and the manifest digest **from
+         the file's own bytes**, and the file's SHA-256; then renames it to `<name>` **without overwriting** — Node's
+         `rename` replaces an existing file on POSIX, so the rename is a hard `link` of `<name>.partial` to `<name>`,
+         refused if `<name>` exists, then an `unlink` of `<name>.partial` (a stop between the two leaves both names on
+         one file, which every cleanup removes by name) — and flushes the directory; where the platform cannot flush a
+         directory (Windows refuses `fsync` on one), the command says so in its output and the confirmation's note, and
+         relies on the file's flush, a read-back of `<name>` after the rename and the recorded SHA-256 (rev 76);
+      6. `confirm_purge_report(run_id, row count, page count, manifest digest, file SHA-256, file location)` — the
+         count, page count and manifest digest are the ones **computed from the file** — inserts this run's report for
+         the open request, refused unless the run holds the live reservation; the count, page count and manifest digest
+         **equal the database's own manifest** (rev 81: so a file with a page written twice or skipped is never confirmed,
+         and nothing absent from the owner's copy can be deleted later); the location equals the recorded directory and
+         `<name>`; and this run's export recorded its file and is unresolved. In one transaction it **freezes the report's
+         manifest** (page count and manifest digest stored on the report) and marks the export **confirmed**; then the
+         command prints the report id, path, SHA-256 and count.
 
-      **A failure here deletes nothing anywhere** — no row is deleted in an export run at all — and the command
-      **removes only files it created** (rev 72): `<name>.partial` if its exclusive create succeeded, `<name>` if its
-      own link succeeded; it flushes the directory, checks they no longer exist, and calls
-      `discard_purge_export(run_id, note)`, which marks the export **discarded** (#45). If the exclusive create or the
-      link is refused because a file is already there, that file is never removed, and the export goes to the operator.
+      **A failure in the export deletes nothing anywhere** — no row is deleted in an export run at all. Before any
+      cleanup the command **re-reads the export's state** (rev 81): if a confirmation's outcome was unknown and it did
+      commit, the report stands and no file is touched. Otherwise the command **removes only files it created**
+      (rev 72): `<name>.partial` if its exclusive create succeeded, `<name>` if its own link succeeded, then the marker;
+      it flushes the directory, checks they no longer exist, and calls `discard_purge_export(run_id, note)`, which marks
+      the export **discarded** (#45). If the exclusive create or the link is refused because a file is already there,
+      that file is never removed, and the export goes to the operator.
+
       **An export the command could not clean up is never forgotten:** it stays **unresolved**, `audit:purge-reports`
-      lists it, and `reserve_purge_run` refuses every new run with `export_unresolved` while it exists and its run no
-      longer holds the reservation. The next command resolves it first, holding the lock: **recovery binds the
-      recorded `writer_lock_key` on the recorded host** (`writer_host_id` must equal its own), so it proceeds only once
-      no process of the old run is alive there (revs 78–79); if the export recorded its file, the files bearing the
-      run's name are its own, and the command deletes `<name>.partial` and `<name>` if present, flushes the directory,
-      checks both are gone — no process of that run can write them while the lock is held — and records the discard.
-      A file of any other name is never touched. **If the export recorded no file** — the process stopped between the
-      create and the record, or the create was refused — there is no proof: the operator inspects the directory
-      **holding the lock**, removes only this run's files, and records the outcome with
-      `audit:purge-export-discarded --run <id> --note <how it was resolved>`, an attestation. **A lost host (rev 80):**
-      if the recorded machine is gone for good (dead, stolen, reinstalled), its lock can never be taken; the operator
-      records it with `audit:purge-export-discarded --run <id> --host-lost --note <what happened>` —
-      `discard_purge_export(run_id, note, p_host_lost => true)`, accepted without the lock only when the run's
-      reservation is not live — the note records that the owner was told, and the incident (a lost machine that may
-      hold a partial report) is recorded in `docs/security/`. Nothing was deleted, so no entry is lost; the next run
-      exports again. `discard_purge_export` is refused for a confirmed export and for another run's export while that
-      run's reservation is live;
-   3. **plain or reported-deletion run — the deletions:** page by page, `purge_expired_events(run_id, p_as_of, source
-      run, page number, page ids, page digest)`, each in its own transaction with its own #38 event. If a call raises,
-      that page deletes nothing and the run stops; if a commit's outcome is unknown (a lost connection), the page was
-      deleted whole or not at all, and the next run's checks find which (an id already gone refuses the page; a page
-      marked deleted is skipped). A reported-deletion run reads the pages from the delivered report's frozen manifest,
-      never from `purge_candidates`. **Invariant: while a request is open, every row deleted is a row of a report the
-      owner has received** (O20); with none open, every row deleted is a row of the deleting run's own manifest;
-   4. after the deletions (or at once, in an export run or a run waiting for delivery), call
-      `clear_expired_request_metadata(run_id, p_as_of)` (no export: these fields are not part of the report the owner
-      asked for, and clearing destroys no row);
+      lists it, and every run is a clearing-only run until it is resolved. The next command resolves it first,
+      **holding the lock**: recovery binds the recorded `writer_lock_key` on the recorded host (`writer_host_id` must
+      equal its own), so it proceeds only once no process of the old run is alive there (revs 78–79), and only if the
+      run's **marker is in the recorded directory** (rev 81); then, if the export recorded its file, the files bearing the
+      run's name are its own: it deletes `<name>.partial` and `<name>` if present, then the marker, flushes the
+      directory, checks they are gone — no process of that run can write them while the lock is held — and records the
+      discard. A file of any other name is never touched. **If the export recorded no file**, or the marker is not
+      there, there is no proof: the operator inspects the directory **holding the lock**, removes only this run's files,
+      and records the outcome with `audit:purge-export-discarded --run <id> --note <how it was resolved>`, an
+      attestation. **A lost machine or volume:** if the recorded machine, or the volume holding the directory, is gone for
+      good (dead, stolen, reinstalled, a lost stick), its lock or marker can never be reached; the operator records it
+      with `audit:purge-export-discarded --run <id> --lost --note <what happened>` — `discard_purge_export(run_id, note,
+      p_lost => true)`, accepted without the lock only when the run's reservation is not live — the note records that the
+      owner was told, and the incident (a lost machine or volume that may hold a partial report) is recorded in
+      `docs/security/`. Nothing was deleted, so no entry is lost; a later run exports again. `discard_purge_export` is
+      refused for a confirmed export and for another run's export while that run's reservation is live;
+   3. **reported-deletion run — the deletions:** page by page from the delivered report's frozen manifest — never from
+      `purge_candidates` — `purge_expired_events(run_id, p_as_of, report's run, page number)`, each in its own
+      transaction with its own #38 event; a page returning `not_yet_eligible` is left for a later run and the run goes
+      on;
+   4. **every kind:** `clear_expired_request_metadata(run_id, p_as_of)` (no export: these fields are not part of the
+      report the owner asked for, and clearing destroys no row), attempted whatever happened above;
    5. **release the reservation** with `release_purge_run(run_id, completed)`, also when a step above failed (the
       command always tries); `completed` is true only after every step committed, and is recorded on the run. If the
       process dies first, the reservation simply expires (below);
@@ -1397,10 +1425,16 @@ The exception is:
       until it is handed to the owner, and destroys it as soon as he confirms receipt in writing (O11) — the written D9
       policy says so, and the database records each step.
 
+   In steps 1 and 3, if a call raises, that page deletes nothing; if a commit's outcome is unknown (a lost connection),
+   the page was deleted whole or not at all, and the page's mark says which. **Invariant: while a request is open, every
+   row deleted is a row of a report the owner has received** (O20); with none open, every row deleted is a row of the
+   deleting run's own manifest.
+
    **Run-wide reservation (R43).** A purge run is several transactions (reservation, one per page, the clearing,
    release), so a lock held by one transaction cannot reserve the whole run. The one row of `audit.purge_reservation`
    (`run_id`, `p_as_of`, `reserved_at`, `renewed_at`) is the reservation instead, written in transactions of its own —
-   no advisory lock (they fail the lock-order guard):
+   no advisory lock (they fail the lock-order guard). Times are `clock_timestamp()`, never `now()` (rev 81): `now()` is
+   the transaction's start, so a long page transaction would renew a lease that is already stale.
    - `reserve_purge_run(p_as_of)` takes the row `FOR NO KEY UPDATE NOWAIT`; if it holds a **live** reservation —
      `renewed_at` within the lease, `audit.purge_lease()` = 15 minutes (`STABLE`, like `d9_retention`) — it raises
      `purge_run_active` at once; otherwise (free, or expired after a crash) it writes a new `run_id` and the run's
@@ -1408,36 +1442,38 @@ The exception is:
    - every other purge function that takes `p_run_id` takes the row `FOR NO KEY UPDATE NOWAIT` as its first step and
      raises — doing nothing — unless it holds **this** run's live reservation with the same `p_as_of`; it then renews
      `renewed_at`. Pages are bounded (`p_limit`), so a live run renews well within the lease;
-   - `renew_purge_run(p_run_id)` — the heartbeat: checks this run's live reservation under `NOWAIT` and renews it;
-     refused (and the run must stop) if the reservation is no longer this run's;
+   - `renew_purge_run(p_run_id)` — the heartbeat: refused, under the same rule (this run's live reservation), and the
+     run must then stop;
    - `release_purge_run(p_run_id, p_completed)` frees the row if it still holds this run and records the outcome on
      the run's `audit.purge_runs` row.
 
-   **What a takeover can and cannot do (rev 80, replacing R44's earlier scenario).** A takeover happens only between
-   the old run's transactions and only after its lease expired. In an **export run**, once the old run has begun its
-   export, no takeover is possible until that export is confirmed or discarded (`export_unresolved`), and on the same
-   host the old run's process also holds the kernel lock; before it began, a takeover is possible and the old run's
-   `begin_purge_export` is then refused, before any file exists. In a **plain or reported-deletion run**, a takeover
-   continues where the old run stopped: pages already deleted are marked so and skipped, and the old run, resumed, is
-   refused at its next call and deletes nothing.
+   **What a takeover can and cannot do (revs 80–81, replacing R44's earlier scenario).** A takeover happens only between
+   the old run's transactions and only after its lease expired; the new run gets its own kind and its own `run_id`. In
+   an **export run**, once the old run has begun its export, every new run is a clearing-only run until that export is
+   confirmed or discarded, and on the same host the old run's process also holds the kernel lock; before it began, a
+   takeover is possible and the old run's `begin_purge_export` is then refused, before any file exists. A **plain run**
+   that took over starts its own manifest (the old run's undeleted rows are simply read again); a **reported-deletion
+   run** that took over continues the report's frozen manifest, skipping the pages marked deleted. The old run, resumed,
+   is refused at its next call and deletes nothing.
 
    **A requested report is a database fact (R44, R45; restructured for O20).** The owner's request (F4/CF2b) is not an
    option of one run. Its state lives in the audit schema (no tenant data, migrator-owned, nothing granted to the app):
    `audit.purge_report_requests` (`id`, `requested_at`, `note`, `satisfied_at`) and `audit.purge_reports` (`id`,
    `request_id`, `run_id`, `p_as_of`, `confirmed_at`, `row_count`, `page_count`, `manifest_digest`, `file_sha256`,
-   `file_location`, `delivered_at`, `receipt_reference`, `delivery_note`, `copy_destroyed_at`, `destroy_note`,
-   `lost_at`, `loss_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
-   inserts an **open** request. A request cannot be withdrawn: it stays open until it is satisfied.
+   `file_location`, `delivered_at`, `receipt_reference`, `delivery_note`, `rows_deleted_at`, `copy_destroyed_at`,
+   `destroy_note`, `lost_at`, `loss_note`, `host_lost`). `request_purge_report(p_note)` (operator-only, refused while a
+   run holds a live reservation) inserts an **open** request. Whether a request can be withdrawn is O21 (S3); until it is
+   decided, it cannot: a request stays open until it is satisfied.
 
    **The manifest (R53).** Every page `purge_candidates` hands out is recorded in `audit.purge_run_pages` (`run_id`,
    `page_no`, the ordered event ids, the page digest, `deleted_at`) in the same transaction that returns it, so the
    database knows exactly what it handed out — the ids are UUIDs, no personal data. A report's manifest is frozen at its
-   confirmation (page count and a digest over the page digests), and a reported-deletion run deletes exactly those
-   pages. **Lifecycle:** a plain run's manifest is removed when its run releases; an export run's manifest is kept with
-   its report until the report's rows are all deleted (it is what they are deleted by), or until the report is
-   recorded lost; the manifest of an export run that stopped without confirming is removed by the next
-   `reserve_purge_run` (no later run uses another run's unconfirmed manifest). [Plan] No foreign key references the
-   manifest, so these deletions are allowed by L1.
+   confirmation and checked against the file there; a reported-deletion run deletes exactly those pages. **Lifecycle
+   (rev 81):** a plain run's manifest is removed when its run releases, or, if the run died, by the next
+   `reserve_purge_run`; an export run's manifest is kept with its report until the transaction that deletes the
+   report's last page, or until the report is recorded lost, and removed there; the manifest of an export that was
+   discarded, or that stopped without confirming, is removed when the export is discarded. [Plan] No foreign key
+   references the manifest, so these deletions are allowed by L1.
 
    **Delivery (R45, R48; O11).** Confirmation proves a file was written and checked, not that it reached the owner. The
    report is handed to him in person (O11); he confirms receipt with a short signed or emailed "received". Only then
@@ -1449,38 +1485,46 @@ The exception is:
    database cannot know; the delivery is the **operator's attestation**, made only once his written receipt exists, and
    it is what allows the report's rows to be deleted (O20).
 
-   **Then the operator's copy is destroyed (O11, revs 71, 80).** Right after the delivery commits, the same command —
-   **on the machine that wrote the report** (its id must equal the export's `writer_host_id`; elsewhere it refuses) —
-   checks that the file is at its recorded location with the confirmed SHA-256, deletes it and any `<name>.partial`,
-   flushes the directory, checks they no longer exist, and calls `record_report_copy_destroyed(p_report_id, p_note)`,
-   which sets `copy_destroyed_at` and writes `platform.purge_report_copy_destroyed` (#44); the note attests that the
-   operator kept no other copy. If the file is **not there at the start**, the command refuses unless the operator
-   states where it went (`--attest-absent <note>`, recorded in the destroy note): "already gone" is never assumed.
-   `record_report_copy_destroyed` is refused before the delivery and when already recorded. If the command stops
-   between the delivery and the destruction, `audit:purge-reports` lists the report as **delivered, copy not
-   destroyed**, and `audit:purge-report-destroyed --report <id>` finishes it, under the same rules.
+   **Then the operator's copy is destroyed (O11, revs 71, 80–81).** Right after the delivery commits — the command first
+   re-reads the report's state, so an unknown delivery outcome is never mistaken — the same command, **on the machine
+   that wrote the report** (its id must equal the export's `writer_host_id`; elsewhere it refuses) and **with the run's
+   marker in the recorded directory**, checks that the file is at its recorded location with the confirmed SHA-256,
+   deletes it and any `<name>.partial`, then the marker, flushes the directory, checks they no longer exist, and calls
+   `record_report_copy_destroyed(p_report_id, p_note)`, which sets `copy_destroyed_at` and writes
+   `platform.purge_report_copy_destroyed` (#44); the note attests that the operator kept no other copy. If the file is
+   **not there at the start** while the marker is, the command refuses unless the operator states where it went
+   (`--attest-absent <note>`, recorded in the destroy note): "already gone" is never assumed. If the machine or the
+   volume is gone for good, `audit:purge-report-destroyed --report <id> --lost --note <what happened>` records the
+   destruction as an attestation without the lock or the marker (`p_lost`, `host_lost` set), the incident recorded in
+   `docs/security/` (a lost machine holding a delivered copy). `record_report_copy_destroyed` is refused before the
+   delivery and when already recorded. If the command stops between the delivery and the destruction,
+   `audit:purge-reports` lists the report as **delivered, copy not destroyed**, and `audit:purge-report-destroyed
+   --report <id>` finishes it, under the same rules.
 
-   **A report lost before delivery (rev 80, simpler under O20).** If the file is missing or altered before it is handed
-   over, nothing has been deleted: the operator records it with `record_report_lost(p_report_id, p_note)` —
-   operator-only, refused for a report already delivered — which writes `platform.purge_report_lost` (#43). On the
-   writing machine, the command first deletes any file still bearing the run's name (`<name>`, `<name>.partial`) and
-   checks they are gone; for a lost host it takes the same attested path as an export (`--host-lost`, the incident in
-   `docs/security/`). The report's manifest is removed; **the request stays open**, and the next run is an export run
-   that makes a new report from the rows, which are still there. No backup and no rebuild is ever needed: the
-   rebuild-from-backup of revisions 21–75 (its scratch database, its rebuilt file) is withdrawn.
+   **A report lost before delivery (revs 80–81).** If the file is missing or altered before it is handed over, nothing
+   has been deleted: the operator records it with `record_report_lost(p_report_id, p_note)` — operator-only, refused for
+   a report already delivered — which writes `platform.purge_report_lost` (#43). It is recorded **on the writing
+   machine with the run's marker present**: the command first deletes any file still bearing the run's name (`<name>`,
+   `<name>.partial`), then the marker, and checks they are gone; elsewhere, or without the marker, it refuses unless
+   `--lost` attests the machine or volume lost (`host_lost` set, the incident in `docs/security/`). The report's manifest
+   is removed; **the request stays open**, and the next run is an export run that makes a new report from the rows,
+   which are still there. No backup and no rebuild is ever needed: the rebuild-from-backup of revisions 21–75 (its
+   scratch database, its rebuilt file) is withdrawn.
 
-   **When a request is satisfied (rev 80).** In the transaction where `purge_expired_events` deletes the **last**
-   undeleted page of a delivered report's frozen manifest, it sets the request's `satisfied_at` — one function, one
-   moment, nothing to re-evaluate later. Later runs are plain runs. The operator's copy is tracked separately:
-   `audit:purge-reports` lists every delivered report whose copy is not yet destroyed until it is.
+   **When a request is satisfied.** In the transaction where `purge_expired_events` deletes the **last** undeleted page
+   of a delivered report's frozen manifest, it sets the report's `rows_deleted_at` and the request's `satisfied_at` and
+   removes the manifest — one function, one moment, nothing to re-evaluate later. The operator's copy is tracked
+   separately: `audit:purge-reports` lists every delivered report whose copy is not yet destroyed until it is.
 
-   `audit:purge-reports` lists, straight from the database (and, for files, holding the lock): every unresolved export
-   (run, directory, started), every confirmed report waiting for delivery (id, run, request, count, SHA-256, recorded
-   location, with its file checked as present and matching, **missing** or **altered**), every delivered report whose
-   rows are not all deleted, and every delivered report whose copy is not yet destroyed. Each request, delivery,
-   destruction, loss and discard writes an atomic event (#42, #41, #44, #43, #45).
+   `audit:purge-reports` lists, straight from the database and **without the lock** (rev 81: state can be read while a
+   run is in progress): every unresolved export (run, directory, started), every active report (id, run, request,
+   count, SHA-256, recorded location, delivered or not, pages deleted), and every delivered report whose copy is not yet
+   destroyed. With `--check-files`, it takes the lock and, on the writing machine with the marker present, checks each
+   undelivered report's file as present and matching, **missing** or **altered**; elsewhere, or without the marker, it
+   says **directory unavailable**. Each request, delivery, destruction, loss and discard writes an atomic event (#42,
+   #41, #44, #43, #45). Notes are the operator's own words: the runbook says to keep personal data out of them.
 
-   **State rules, enforced by the database (R47, R54; rev 80).**
+   **State rules, enforced by the database (R47, R54; revs 80–81).**
    - `audit.purge_reservation` holds **exactly one row** — key `id boolean PRIMARY KEY DEFAULT true CHECK (id)`,
      inserted by its migration, never deleted. `util.authorization_containment` (§11.1) uses the same one-row key.
    - `audit.purge_runs`: one row per run, written by `reserve_purge_run` and `release_purge_run` only; never deleted.
@@ -1489,27 +1533,33 @@ The exception is:
      serialize, and if a request is already open it refuses with `report_request_open` and returns its id. A request
      moves only from open to satisfied, never back.
    - `audit.purge_reports`: at most one report per run (`UNIQUE (run_id)`), linked at confirmation to the open
-     request; **at most one report per request waiting for delivery** (a partial unique index on `request_id` where
-     neither delivered nor lost), so a run never makes a second copy while one is with the operator; confirmed once;
-     then **exactly one terminal state, once** — **delivered** or **lost** — `CHECK (delivered_at IS NULL OR lost_at
-     IS NULL)`, enforced by both functions too; the copy's destruction only after a delivery — `CHECK
-     (copy_destroyed_at IS NULL OR delivered_at IS NOT NULL)`; never deleted.
+     request; **at most one active report per request** — a partial unique index on `request_id` `WHERE lost_at IS NULL
+     AND rows_deleted_at IS NULL` (rev 81) — so no run makes a second copy while one is with the operator or its rows
+     are being deleted; confirmed once; then **exactly one terminal state, once** — **delivered** or **lost** — `CHECK
+     (delivered_at IS NULL OR lost_at IS NULL)`, enforced by both functions too; `rows_deleted_at` only after a delivery
+     and the copy's destruction only after a delivery — `CHECK (rows_deleted_at IS NULL OR delivered_at IS NOT NULL)`,
+     `CHECK (copy_destroyed_at IS NULL OR delivered_at IS NOT NULL)`; never deleted.
    - `audit.purge_exports` (`run_id` unique, `directory`, `writer_host_id`, `writer_lock_key`, `started_at`,
-     `artifact_recorded_at` — set once —, `outcome` `NULL` | `confirmed` | `discarded`, `ended_at`, `note`,
-     `host_lost`): one row per export run that began; its outcome moves once, from unresolved to confirmed (in
-     `confirm_purge_report`'s transaction) or to discarded, never back; never deleted.
-   - These rows hold paths, hashes, counts and notes — no personal data of the businesses' people.
+     `artifact_recorded_at` — set once —, `outcome` `NULL` | `confirmed` | `discarded`, `ended_at`, `note`, `lost`): one
+     row per export run that began; its outcome moves once, from unresolved to confirmed (in `confirm_purge_report`'s
+     transaction) or to discarded, never back; never deleted.
+   - These rows hold paths, hashes, counts and the operator's notes — no data of the businesses' people.
 
    **Purge lock footprint (R40) — inside the global order, and never waiting.** Every purge transaction first takes
    the reservation row `FOR NO KEY UPDATE NOWAIT` — category **0**, maintenance only, never touched by a request
    path. Its other locks:
+   - **the purge's own tables — category 0, after the reservation row (rev 81):** `audit.purge_runs`,
+     `audit.purge_exports`, `audit.purge_reports`, `audit.purge_report_requests` and `audit.purge_run_pages` are written
+     only by purge functions, each of which holds the reservation row first, and by no request path; so every purge
+     transaction is serialized by that row and these writes cannot wait. The guard's category map gains them at 0, with
+     a rule that they follow the reservation row in the same transaction, and a mutation test (a write to any of them in
+     a function that has not taken the reservation row first) fails the guard;
    - **audit rows (deletion by id) — category 11 (rev 80):** `audit.audit_events` joins the guard's global order as
      category 11, after every other category, maintenance only. A `DELETE` locks the rows it removes, but nothing else
      ever locks `audit.audit_events` rows — request paths only insert new rows, no foreign key references the table,
      `UPDATE` and every other `DELETE` are refused by the append-only guard, and a second purge is excluded by the
-     run-wide reservation (R43) — so these deletes cannot wait. The guard's category map (`lock-analysis.ts`
-     `CATEGORY`) gains the table, `purge_expired_events`' planned footprint is `0 → 11`, and a mutation test (a
-     `DELETE` of audit rows in any other function) fails the guard;
+     run-wide reservation (R43) — so these deletes cannot wait. `purge_expired_events`' planned footprint is
+     `0 → 0 (purge tables) → 11`, and a mutation test (a `DELETE` of audit rows in any other function) fails the guard;
    - **category 5, then category 10 (field clearing):** `SKIP LOCKED`, so they cannot wait either. [Fact] Request
      paths never lock an eligible token (consumption and supersession touch only unconsumed, unexpired tokens:
      `20261003000200:80-89`, `20261004000200:43-45`), but they **can** lock an eligible session: revocations update
@@ -1525,8 +1575,8 @@ The exception is:
    or deletes `audit.audit_events` rows, and no foreign key references the table.
 
    A report can therefore never be lost to a deletion: while a request is open, the database deletes only rows of a
-   report the owner has received, identified by id, page by page from its frozen manifest (O20). Until a job runner
-   exists (P12) the command is run by hand; the D9 written policy states how often.
+   report the owner has received, identified by id, page by page from its frozen manifest, which was checked against
+   the file (O20). Until a job runner exists (P12) the command is run by hand; the D9 written policy states how often.
 
 Tests: rows younger than their retention period always survive, whatever `p_as_of`; **boundary (R41)** — for the
 audit deletion, the guard's age check, session clearing and token clearing alike: a time exactly at the cutoff is
@@ -1538,30 +1588,37 @@ pair has an override; a `p_as_of` in the future is refused by every purge functi
 execute any purge function (`reserve_purge_run`, `renew_purge_run`, `request_purge_report`, `purge_candidates`,
 `begin_purge_export`, `record_export_artifact`, `discard_purge_export`, `confirm_purge_report`,
 `purge_expired_events`, `clear_expired_request_metadata`, `record_report_delivery`, `record_report_copy_destroyed`,
-`record_report_lost`, `release_purge_run`) or delete directly; an `UPDATE` or `TRUNCATE` of `audit.audit_events`
-refused for every role, the table owner included; a `DELETE` refused for every role, the table owner included, outside
-a purge run holding the live reservation (setting absent, or naming a stale or foreign run) and for any row younger
-than its retention as of the deleting transaction's `now()`; **the ledger is untouched** — a `DELETE` or `UPDATE` of
-a journal entry or line is still refused by `util.reject_modification()`, whose definition is unchanged (compared
-with the P1 migration text); **canonical text (rev 80)** — the same row gives the same text and page digest under two
-different session time zones, and a report file's bytes are exactly its pages' bytes in page order;
-**eligibility (R37; rev 80)** — old and recent sessions; active (unrevoked, unexpired) sessions; revoked, absolutely
-expired and idle-expired sessions; a session that expired years ago and was revoked later (a password change stamps
-`revoked_at` on it), which is cleared two years after it **expired**, not after the revocation; ended less than two
-years ago; consumed, expired and still-valid tokens (a still-valid token backdated in the test fixture) — only the named
-fields of eligible rows change, every other column and row is unchanged; a failure injected on #40 rolls the clearing
-back; **the kinds of run (O20)** — with no request open a run is plain: it deletes exactly its own manifest's rows
-(ids and digests); with a request open and no report, a run is an export run: it confirms a report and deletes
-**nothing** — not one audit row — whatever happens; with a report waiting for delivery, a run deletes nothing and only
-clears; with the report delivered, the next run is a reported-deletion run: it deletes exactly the report's manifest
-rows, page by page, never a row outside them — an eligible row created after the report is left — and the deletion of
-the last page sets `satisfied_at` in that transaction, after which runs are plain; an export run with no eligible row
-writes no file and leaves the request open; **page verification (R38)** — a page whose ids include one already
-deleted, a row not eligible as of `p_as_of`, ids or a digest that differ from the manifest's, a page number the
-manifest does not have, a page above a report's frozen page count, or a source run that is neither this plain run nor a
-delivered report's run, makes `purge_expired_events` raise and delete nothing; `purge_candidates` after this run's
-`begin_purge_export` is refused; a failure injected on #38 rolls that page's deletion back; **late-commit race (R38)** —
-a second connection holds a transaction that inserts an already-eligible (backdated) event and commits it **after**
+`record_report_lost`, `release_purge_run`) or helper (`audit.d9_retention`, `audit.purge_lease`,
+`audit.event_canonical_text`), or delete directly; an `UPDATE` or `TRUNCATE` of `audit.audit_events` refused for every
+role, the table owner included; a `DELETE` refused for every role, the table owner included, outside a purge run
+holding the live reservation (setting absent, or naming a stale or foreign run) and for any row younger than its
+retention as of the deleting transaction's `now()`; **the ledger is untouched** — a `DELETE` or `UPDATE` of a journal
+entry or line is still refused by `util.reject_modification()`, whose definition is unchanged (compared with the P1
+migration text); **canonical text** — the same row gives the same text and page digest under two different session
+time zones, and a report file's bytes are exactly its pages' bytes in page order; **eligibility (R37)** — old and
+recent sessions; active (unrevoked, unexpired) sessions; revoked, absolutely expired and idle-expired sessions; a
+session that expired years ago and was revoked later (a password change stamps `revoked_at` on it), which is cleared
+two years after it **expired**, not after the revocation; ended less than two years ago; consumed, expired and
+still-valid tokens (a still-valid token backdated in the test fixture) — only the named fields of eligible rows change,
+every other column and row is unchanged; a failure injected on #40 rolls the clearing back; **the kinds of run (O20,
+rev 81)** — with no request open a run is plain: it deletes exactly its own manifest's rows; with a request open and no
+active report, a run is an export run: it confirms a report and deletes **nothing** — not one audit row — whatever
+happens; with the report waiting for delivery, a run deletes nothing and only clears; with the report delivered, the
+next run is a reported-deletion run: it deletes exactly the report's manifest rows, page by page, never a row outside
+them — an eligible row created after the report is left — and the deletion of the last page sets `rows_deleted_at`,
+`satisfied_at` and removes the manifest in that transaction, after which runs are plain; with an export unresolved,
+every run is clearing-only; an export run with no eligible row writes no file and leaves the request open; a second
+active report for a request is refused by the index; **clearing whatever happens (rev 81)** — a run whose page fails,
+and a clearing-only run, still clear request metadata; **after delivery (rev 81)** — a column added to
+`audit.audit_events`, and a redefined canonical function, between the delivery and the deletion: the deletion
+proceeds by ids; a lengthened retention: the pages not yet eligible return `not_yet_eligible`, are left, the run goes
+on and clears, and a later run deletes them once eligible; **page verification (R38)** — a page whose ids include one
+already deleted, a page number the manifest does not have, a page above a report's frozen page count, a page already
+marked deleted, or a source run that is neither this plain run nor an active delivered report's run, makes
+`purge_expired_events` refuse and delete nothing; `purge_candidates` with a page number already recorded returns that
+page unchanged, one out of order is refused, in an export run before `record_export_artifact` or after the
+confirmation is refused; a failure injected on #38 rolls that page's deletion back; **late-commit race (R38)** — a
+second connection holds a transaction that inserts an already-eligible (backdated) event and commits it **after**
 `purge_candidates` has read the page and **while** `purge_expired_events` runs, between its verification and its
 delete (the pause is concrete: in the throwaway test database the table owner installs a test-only `BEFORE DELETE`
 trigger that waits on a gate row the test connection holds locked, so the purge stops exactly after its verification,
@@ -1572,55 +1629,65 @@ locking (R40, R43)** — a second run started while the first is between pages f
 and one started while a page transaction of the first holds the row fails at once with `lock_not_available`; either
 way it reads, exports and changes nothing; a run killed after its first page leaves a reservation that blocks new runs
 until the lease expires (the test redefines `audit.purge_lease()` to a short interval), after which a new run takes
-over, the takeover is recorded in `audit.purge_runs` even when the new run then fails, and the new run skips the pages
-already deleted; the old run, resumed, is refused at its next call without deleting anything; a page called with a
-stale or foreign `run_id`, or another `p_as_of`, is refused; release frees the reservation and records completion; an
-export whose pages together take longer than one lease (short test lease) completes, because each `purge_candidates`
-page renews the reservation; **takeover in an export run (rev 80)** — an export run paused after reservation and
-before `begin_purge_export`, beyond a short lease: a new run takes over, and the old run's `begin_purge_export` is
-refused with no file created; paused after `begin_purge_export`: every new run is refused with `export_unresolved`
-until the export is confirmed or discarded; **the lock (revs 78–79)** — with real processes: a command holding the lock
-(paused) makes a second command refuse with no reservation and no file touched; killing the holder (no clean exit)
-frees the lock at once and the second command proceeds; the endpoint name taken by an unrelated listener makes every
-command refuse; a connection to the endpoint is closed and changes nothing; on an unsupported platform, with a missing
-or empty machine id, or with a host id differing from an export's (another network namespace), recovery refuses;
-**the export file (revs 71–80)** — an unwritable directory, a disk-full simulation, a read-back mismatch, a refused
-heartbeat, a process killed mid-write, and one killed after the link but before confirmation: no audit row is deleted,
-and once the failing command has ended (or, for a killed process, once the next command has taken the lock), neither
-`<name>.partial` nor `<name>` exists and the export is recorded discarded (#45); while an export is unresolved,
-`reserve_purge_run` refuses with `export_unresolved` and `audit:purge-reports` lists it; a file planted under either of
-the run's names before the create makes the create refuse and **remains byte-for-byte untouched**, even if the process
-stops before recording the discard, and the export goes to the operator; a file put at `<name>` before the link makes
-the link refuse and is preserved; a stop between the link and the unlink leaves both names, removed by name by the next
-command; every other file in the directory is left untouched; a process killed between the create and
-`record_export_artifact` leaves an export resolved only by attestation, made holding the lock; `--host-lost` discards
-without the lock only when the run's reservation is not live, and records the incident note; `record_export_artifact`
-is refused a second time, for another run, without the live reservation, and for a confirmed or discarded export;
-`discard_purge_export` is refused for a confirmed export and for another live run's export; `confirm_purge_report`
-with a count other than the manifest's, a location other than the recorded directory and `<name>`, for another run, or
-for an export that recorded no file or was discarded, is refused; the file is created owner-only; on a platform that
-refuses a directory `fsync` the run says so and still confirms only after reading `<name>` back; a failure injected
-on #45 leaves the export unresolved; **requests and reports (R47, R54)** — two concurrent `request_purge_report` calls
-create exactly one request (the other is refused or gets `lock_not_available`); a request while one is open returns
-`report_request_open` with its id; `request_purge_report` during a live run is refused; a second confirmation for the
-same run is refused; a second report for a request while one waits for delivery is refused (the partial index, and the
-run kind: such a run exports nothing); inserting a second row into either one-row table fails; **delivery (O11, O20)**
-— `record_report_delivery` with a file whose hash differs, or without a receipt reference, is refused; #41 and #42
-commit with their changes; until the delivery, no row of the report is deleted, whatever runs; **the operator's copy
-(O11)** — after the delivery, on the writing machine, the file is checked, deleted and #44 recorded; on another
-machine, or with the file not there at the start and no `--attest-absent`, the destruction is refused and the report
-listed as delivered with its copy not destroyed; `record_report_copy_destroyed` before the delivery, or twice, is
-refused; a command stopped between the delivery and the destruction is finished by `audit:purge-report-destroyed`;
-a failure injected on #44 leaves the copy recorded as not destroyed; **a report lost before delivery (O20)** — a
-missing or altered file is reported by `audit:purge-reports`; `record_report_lost` deletes the run's files on the
-writing machine first, writes #43, removes the manifest, leaves the request open, and the next run is an export run
-that makes a new report from the same rows — no row was deleted in between; `record_report_lost` for a delivered report
-is refused; **terminal states (R54)** — a delivered report cannot be marked lost, a lost report cannot be delivered,
-neither can be recorded twice, and a direct update setting both columns fails the `CHECK`; a request revoking an
-expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50 times: never
-`40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation completes; the
-lock-order and writer guards classify all fourteen purge functions (operator-only, outside every request path), and
-the guard's mutation test for category 11 fails on an audit-row `DELETE` anywhere else. **P5 still cannot close
+over, the takeover is recorded in `audit.purge_runs` even when the new run then fails, a plain run that took over
+starts its own manifest and the dead run's manifest is removed, and a reported-deletion run that took over skips the
+pages already deleted; the old run, resumed, is refused at its next call without deleting anything; a page called
+with a stale or foreign `run_id`, or another `p_as_of`, is refused; a page transaction held open longer than the lease
+still renews it with `clock_timestamp()`; release frees the reservation and records completion; an export whose pages
+together take longer than one lease (short test lease) completes, because each page renews the reservation;
+**takeover in an export run** — an export run paused after reservation and before `begin_purge_export`, beyond a short
+lease: a new run takes over, and the old run's `begin_purge_export` is refused with no file or marker created; paused
+after `begin_purge_export`: every new run is clearing-only until the export is confirmed or discarded; **the lock
+(revs 78–79, 81)** — with real processes: a command holding the lock (paused) makes a second command refuse with no
+reservation and no file touched; killing the holder (no clean exit) frees the lock at once and the second command
+proceeds; the endpoint name taken by an unrelated listener makes every command refuse; a connection to the endpoint is
+closed and changes nothing; on an unsupported platform, in a detected container, with a missing or empty machine id,
+or with a host id differing from an export's, recovery refuses; the Windows name is built from the SID; **the export
+file (revs 71–81)** — a directory inside a git work tree is refused; an unwritable directory, a disk-full simulation,
+a read-back mismatch, a refused heartbeat, a process killed mid-write, and one killed after the link but before
+confirmation: no audit row is deleted, and once the failing command has ended (or, for a killed process, once the next
+command has taken the lock), neither `<name>.partial`, `<name>` nor the marker exists and the export is recorded
+discarded (#45); an unknown confirmation outcome that did commit leaves the confirmed report and its file untouched;
+while an export is unresolved, every run is clearing-only and `audit:purge-reports` lists it; a file planted under
+either of the run's names before the create makes the create refuse and **remains byte-for-byte untouched**, even if
+the process stops before recording the discard, and the export goes to the operator; a file put at `<name>` before the
+link makes the link refuse and is preserved; a stop between the link and the unlink leaves both names, removed by name
+by the next command; every other file in the directory is left untouched; a process killed between the create and
+`record_export_artifact` leaves an export resolved only by attestation, made holding the lock; `--lost` discards
+without the lock only when the run's reservation is not live, and records the incident note;
+`record_export_artifact` is refused a second time, for another run, without the live reservation, and for a confirmed
+or discarded export; `discard_purge_export` is refused for a confirmed export and for another live run's export;
+**confirmation against the file (rev 81)** — a file with one page written twice and another skipped, a file whose
+page count differs, and a count other than the manifest's are refused by `confirm_purge_report`, as are a location
+other than the recorded directory and `<name>`, another run, and an export that recorded no file or was discarded;
+the file is created owner-only; on a platform that refuses a directory `fsync` the run says so and still confirms only
+after reading `<name>` back; a failure injected on #45 leaves the export unresolved; **the marker (rev 81)** — with the
+recorded directory's volume unmounted, and with the drive remapped to another letter, recovery, a loss, the
+destruction and `--check-files` refuse or say **directory unavailable** — never "missing" — and nothing is recorded;
+the marker is removed last in every cleanup; **requests and reports (R47, R54)** — two concurrent
+`request_purge_report` calls create exactly one request (the other is refused or gets `lock_not_available`); a request
+while one is open returns `report_request_open` with its id; `request_purge_report` during a live run is refused; a
+second confirmation for the same run is refused; inserting a second row into either one-row table fails; **delivery
+(O11, O20)** — `record_report_delivery` with a file whose hash differs, or without a receipt reference, is refused;
+#41 and #42 commit with their changes; until the delivery, no row of the report is deleted, whatever runs; **the
+operator's copy (O11)** — after the delivery, on the writing machine with the marker present, the file is checked,
+deleted with the marker and #44 recorded; on another machine, without the marker, or with the file not there at the
+start and no `--attest-absent`, the destruction is refused and the report listed as delivered with its copy not
+destroyed; `--lost` records the destruction without the lock and records the incident note;
+`record_report_copy_destroyed` before the delivery, or twice, is refused; an unknown delivery outcome is re-read
+before any file is touched; a command stopped between the delivery and the destruction is finished by
+`audit:purge-report-destroyed`; a failure injected on #44 leaves the copy recorded as not destroyed; **a report lost
+before delivery (O20)** — `record_report_lost` on the writing machine with the marker deletes the run's files and
+marker first, writes #43, removes the manifest, leaves the request open, and the next run is an export run that makes
+a new report from the same rows — no row was deleted in between; off the writing machine or without the marker it is
+refused unless `--lost`; for a delivered report it is refused; **terminal states (R54)** — a delivered report cannot
+be marked lost, a lost report cannot be delivered, neither can be recorded twice, and a direct update setting both
+columns fails the `CHECK`; `audit:purge-reports` reads the state while another command holds the lock; a request
+revoking an expired, unrevoked (eligible) session runs against `clear_expired_request_metadata` in both orders, 50
+times: never `40P01`, the purge never waits (it skips the held row, which a later run clears), and the revocation
+completes; the lock-order and writer guards classify all fourteen purge functions and the three helpers
+(operator-only, outside every request path); the guard's mutation tests for category 11 (an audit-row `DELETE`
+anywhere else) and for the purge tables (a write without the reservation row first) fail it. **P5 still cannot close
 without the owner's approved written policy** (§13 item 9), now written from these decisions.
 
 ## 9. Conventions, commands and gates
@@ -1642,7 +1709,7 @@ functions a request path calls. **No app grant** for: operator and maintenance f
 `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost`,
 `audit.release_purge_run`,
 `audit.d9_retention`,
-`audit.purge_lease`, `util.set_authorization_containment`); the
+`audit.purge_lease`, `audit.event_canonical_text`, `util.set_authorization_containment`); the
 `…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
 every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
 function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
@@ -2781,8 +2848,8 @@ independent of the permission catalog); it is listed with them so it is complete
   tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
   follows it too (`admin:containment`, built in P5.5).
 - **Order inside P5.8 (implementability).** (a) **(Part 2 — waits for its approval, §12)** The **retention purge** first — it does not depend on O4: the
-  migration (the dedicated audit guard function and its triggers, the reservation and report tables, the ten
-  functions), the operator command and
+  migration (the dedicated audit guard function and its triggers, the reservation, run, export, report and request tables, the fourteen
+  functions and three helpers), the operator command and
   every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
   (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
   (e) the **D9 written policy**, drafted from the decisions (including O10–O12) and from the purge and logs as built, and
@@ -3035,13 +3102,16 @@ Part 2 boundary in place (§14, §16).
    still present when their page is read), proven by the concurrency tests including the concurrent purge (R25, R35).
 8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
 9. An owner-approved written D9 policy (§8.6) exists, matching the decisions recorded there (O10–O12 included); the
-   retention purge (Part 2) is built and tested, including recorded delivery — or recorded, unrecoverable loss — of every confirmed report (R45, R52); application logs
+   retention purge (Part 2) is built and tested, including, for every requested report, its recorded delivery against the owner's written receipt, the deletion of its
+   rows only after it, and the operator's copy destroyed (O11, O20; a report lost before delivery is made again); application logs
    carry no IP address or user agent (leak sweep); the P15 obligations are recorded in the P5 record.
 10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).
 11. Every `permission` endpoint declares its branch scope; branch-restricted and archived-branch staff are covered by
     the matrix; P5 claims no end-to-end branch isolation for resources that do not exist yet (D7, §7.6).
 
 ## 14. Open items for the reviewer and owner
+
+**Critic review of Part 2, round 2 (2026-10-18, on revision 80; a new fresh-context agent; no sign-off).** It checked the plan's facts against the repository and found them true except the guard's. Findings: P0 none; **P1** (1) a delivered report whose page can no longer be verified — a column added, the canonical function or `to_jsonb` changed, or the retention lengthened — blocks deletion and clearing for good; (2) recovery and the lost-report path took "file not found" for "file removed" (an unmounted volume, a remapped drive, another machine), leaving a report untracked; **P2** (3) the guard fails closed on writes to the purge's own tables, which had no category; (4) CF4 clearing stopped whenever a deletion or an export was stuck; (5) the run kinds overlapped once a report was delivered, allowing a second copy; (6) the database never checked the confirmed file against the frozen manifest; (7) an export had to hold the whole report in memory; (8) while a request is open all deletion stops, with no deadline, no withdrawal and an inferred scope — owner questions; (9) the host identity is unstable in containers, and the destruction had no lost-host path; and P3 points (idempotent pages and unknown outcomes, lease times from `now()`, manifest lifecycle gaps, the canonical helper missing from the inventories, stale counts and texts, FAT/exFAT, the Windows pipe name, the repository check, the listing needing the lock, notes and personal data). **Disposition (revision 81):** (1) deletion verifies a reported page by its ids, existence and the guard's age rule only, the content having been checked once at confirmation, and a page not yet eligible is left with `not_yet_eligible`; (2) a run marker, created right after the export is recorded, proves the directory — every cleanup, loss and destruction refuses without it, and a loss off the writing machine needs `--lost`; (3) the purge tables are category 0 after the reservation row, with a guard rule and a mutation test; (4) clearing is attempted in every run whatever happened, and an unresolved export makes every run clearing-only; (5) the kinds are decided in a fixed order, with at most one active report per request; (6) the confirmation compares the count, page count and manifest digest computed from the file with the database's manifest; (7) the export streams page by page; (8) asked of the owner as O21, the design keeping the reading that deletes least until he answers; (9) commands refuse in a detected container, and the destruction has an attested `--lost` path; the P3 points applied. Round 3 follows.
 
 **Critic review of Part 2, round 1 (2026-10-18, on revision 79; a fresh-context agent run at the project lead's request — "Repeat the cycle of a critic reviewer till you are satisfied with part 2"; no sign-off).** Findings: P0 none; **P1** (1) request satisfaction could not be evaluated (run completion stored nowhere); (2) the manifest was never frozen, so a page read after confirmation could delete a row outside the report; (3) an unresolved export whose host is lost blocked every purge forever; (4) the copy could be recorded destroyed from another machine, or with the drive unmounted; (5) deleting before the owner's receipt, and closing his request on a lost copy, was never asked of the owner; (6) session clearing used `revoked_at`, which revocation stamps on long-expired sessions, keeping details years too long; **P2** (7) `audit.audit_events` had no lock category, so the guard could not check the purge's `DELETE`; (8) the #38 summary's per-pair counts are not expressible in the catalog's allowlists; (9) the stated takeover-with-report test contradicted `export_unresolved`; (10) the canonical text depended on the session `TimeZone` and the file bytes were unspecified; (11) the rebuild's scratch database was an untracked full copy of personal data; (12) the rebuild depended on backups that do not exist before P15; (13) the lock assumed "never in a container" without enforcing it; and P3 points (function count, the command list, column lists, the §9.1 event list, a run with nothing eligible, the confirmation's location, takeover recording, the guard's age reference, the recovery's lock key, an unknown commit outcome, full-disk encryption, withdrawal of a request, a squatted lock name). **Disposition:** (5) asked of the owner as O20 and answered — deletion only after his receipt; Part 2 restructured on it (revision 80), which removes (11) and (12) with the rebuild-from-backup altogether and makes (1) and (2) one rule — a reported-deletion run deletes exactly a delivered report's frozen manifest, and the deletion of its last page satisfies the request; (3) an attested `--host-lost` discard, with an incident record; (4) destruction only on the writing machine, the file present with its SHA-256, "already gone" only by attestation; (6) a session ends at the earliest of revocation, absolute and idle expiry; (7) `audit.audit_events` is category 11, with a mutation test; (8) the #38 and #40 fields listed; (9) the takeover cases restated as they can occur; (10) one canonical-text function pinned to UTC and the exact file bytes; (13) the host id includes the Linux network namespace and an empty machine id refuses; the P3 points applied. Round 2 follows.
 
@@ -3082,6 +3152,7 @@ Refusal-messages form (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, asked at th
 Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2); answered and signed 2026-10-17, `7497869`): Q1–Q4 → O4.
 Team-in-the-business-record form (`docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`, asked 2026-10-17 with the ADR-16 addendum, `c78dec8`; answered 2026-10-17, `4fe4f75`, relayed — the name and date lines blank): T1 → O19.
 Report-copy timing form (`docs/business/P5_OWNER_REPORT_COPY_TIMING.md`, asked 2026-10-18 on the critic review of Part 2, `c536da6`; answered 2026-10-18, `65dd6d9`, signed `6b5e318`): C1 → O20 (C2 applies only to the option not chosen).
+Copy-request scope form (`docs/business/P5_OWNER_COPY_REQUEST_SCOPE.md`, asked 2026-10-18 on the critic's round 2, `bb809b8`): S1–S3 → O21.
 
 **Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
 `docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
@@ -3189,6 +3260,7 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O18 | The refusal message for a permission that can be given (R1–R4; the reviewer's P5.6 item 1) | **DECIDED (2026-10-14; decision log):** the suggested wording — whom to ask for a grantable permission; P4's messages kept for the reserved ones |
 | O19 | Whether a business's activity record names the platform team member who acted on it (the merchant audit read, #33; CF5 already withholds the team's IP address and user agent) | **DECIDED (2026-10-17, signed; decision log):** "AlphaKolect team", without naming the person (`4fe4f75`; signed `894d309`). Asked 2026-10-17 (`c78dec8`) with the proposal: "AlphaKolect team", without naming the person — `actor` `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record always names the person. The contract's shape is the same either way (ADR-16 addendum, `cbe8467`); the read is not built with either answer assumed |
 | O20 | Whether entries covered by the owner's requested copy may be deleted before he confirms receipt (Part 2; the critic review of 2026-10-18) | **DECIDED (2026-10-18, signed; decision log):** only after his written receipt (`65dd6d9`; signed `6b5e318`) — Part 2 restructured accordingly (rev 80) |
+| O21 | What a copy request covers and what happens meanwhile (Part 2; the critic's round 2): S1 — whether other old entries are deleted on time while a copy is on its way; S2 — one copy per request or one at every clean-up; S3 — cancellation and reminders | **owner decision required** (asked 2026-10-18, `bb809b8`); proposals: other entries deleted on time; one copy per request; cancellation in writing and a reminder after 7 days. Until decided, the design takes the reading that deletes least (nothing deleted while a request is open except a received report's rows; one copy; no cancellation), and the request path is not built |
 | O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
 
 ## 15. Legacy context (background only — not a requirement)
@@ -3219,6 +3291,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 81 | 2026-10-18 | **Part 2: the critic's round 2 addressed** (§14). Reported pages deleted by ids, existence and the age rule, never re-hashed (a later column, function or retention change can no longer block deletion; a page not yet eligible is left); a run marker proves the directory for every cleanup, loss and destruction; the purge tables category 0 after the reservation; clearing attempted in every run, and clearing-only runs while an export is unresolved; run kinds in a fixed order with one active report per request; the confirmation checks the file against the manifest (count, page count, manifest digest); the export streams; `purge_candidates` idempotent per page; lease times from `clock_timestamp()`; containers refused, the Windows pipe named by SID, a git work tree refused, FAT/exFAT excluded; the listing reads without the lock; the manifest's lifecycle completed; stale counts and texts corrected (§7.2, §8.1, §9.1, §10, §13). **O21** asked of the owner (the copy request's scope, deletion meanwhile, cancellation) — until answered, the reading that deletes least. Design text only; Part 2 awaits the critic's next round, O21, then the independent reviewer. |
 | 80 | 2026-10-18 | **Part 2 restructured for O20, and the critic's round 1 addressed** (§14). The owner decided (O20, signed) that entries covered by his requested copy are deleted only after his written receipt: a run is now a plain run, an export run (deletes nothing) or a reported-deletion run (deletes exactly a delivered report's frozen manifest; its last page satisfies the request), and a run waiting for delivery only clears. The rebuild-from-backup, its scratch database and its rebuilt file are withdrawn: a copy lost before delivery is recorded lost and made again from the rows. Also: `audit.purge_runs` (completion, takeovers); the manifest frozen at confirmation and `purge_candidates` refused after an export began; `purge_expired_events` takes a source run and page number; a lost host resolved by an attested `--host-lost`; the copy destroyed only on the writing machine with the file present; sessions end at the earliest of revocation, absolute and idle expiry; `audit.audit_events` lock category 11; the #38/#40 fields; the canonical text pinned to UTC with exact file bytes; the host id includes the Linux network namespace; the P3 points. Design text only; Part 2 awaits the critic's next round, then the independent reviewer. |
 | 79 | 2026-10-18 | **Part 2: the kernel-held lock made concrete.** Node has no file-locking call and the common lock libraries judge staleness by age, so revision 78's lock file could not be built as written. The lock is now a listening endpoint the OS frees when its process ends: a named pipe on Windows, an abstract-namespace socket on Linux, keyed by the operator's account; other platforms and containers are refused; no lock file exists. Tests with real processes (a paused holder, a killed holder, a squatted name). The purge procedure's list indentation fixed. Design text only; Part 2 still awaits the independent reviewer. |
 | 78 | 2026-10-18 | **Part 2 stale-writer fence uses a kernel-held OS lock.** Replaces revision 77's host/PID/process-start-token check, whose token might repeat or be unavailable. Exporters hold an exclusive process lock before registration through confirmation/discard; recovery must acquire the same lock before touching files. A stale process cannot resume filesystem work after recovery; unavailable lock support, host or lock file fails closed. Tests pause the exporter before/after lock acquisition and around registration/file creation. Design text only; Part 2 still awaits the independent reviewer. |

@@ -21,6 +21,7 @@ class ScriptedDb implements Queryable {
   kind: 'plain' | 'export' = 'export';
   /** Steps that examine their ceiling of rows and take none (a held block) before the first page. */
   emptySteps = 0;
+  emptyExport = false;
   private nextPage = 1;
 
   async query<T extends pg.QueryResultRow>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -41,6 +42,11 @@ class ScriptedDb implements Queryable {
         this.emptySteps--;
         return [
           { page_no: pageNo, row_count: 0, page_digest: null, exhausted: false, event_ids: [], texts: [] },
+        ] as unknown as T[];
+      }
+      if (this.emptyExport) {
+        return [
+          { page_no: pageNo, row_count: 0, page_digest: null, exhausted: true, event_ids: [], texts: [] },
         ] as unknown as T[];
       }
       if (pageNo === 1) this.nextPage = 2;
@@ -170,6 +176,25 @@ describe('operator purge run engine', () => {
     expect(await readdir(directory)).toEqual([]);
     expect(db.outcome).toBe('discarded');
     expect(db.calls.at(-1)?.sql).toContain('audit.release_purge_run');
+  });
+
+  it('discards an empty export with its reason and removes its files', async () => {
+    const db = new ScriptedDb();
+    db.emptyExport = true;
+    const directory = await tempDirectory();
+
+    await expect(
+      runPurge({ db, asOf: AS_OF, directory, writerHostId: 'test-host', writerLockKey: 'test-lock' }),
+    ).rejects.toThrow('export_empty');
+
+    expect(db.outcome).toBe('discarded');
+    expect(
+      db.calls.some(
+        ({ sql, params }) => sql.includes('audit.discard_purge_export') && params[1] === 'export_empty',
+      ),
+    ).toBe(true);
+    expect(db.calls.some(({ sql }) => sql.includes('audit.confirm_purge_report'))).toBe(false);
+    expect(await readdir(directory)).toEqual([]);
   });
 
   it('leaves a pre-existing partial file untouched and leaves the export unresolved', async () => {

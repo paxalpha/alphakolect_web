@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 76 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 78 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–76) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–78) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -1268,8 +1268,13 @@ The exception is:
    deleted per pair, in the same transaction as the deletion; the field clearing writes its own atomic event,
    `platform.request_metadata_cleared` (#40, pattern A, actor `NULL`), with `p_as_of` and the numbers of session and
    token rows cleared — one writer per pair, as the coverage guard requires;
-7. **the operator command and its failure semantics (R36).** One run, in this order:
-   0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and whether a report is
+7. **the operator command and its failure semantics (R36).** Every purge, stale-export recovery, report rebuild,
+   report-delivery/destruction, and report-file inspection command first acquires the same kernel-held per-user OS lock,
+   before any database reservation or filesystem access, and holds it through the command's final database transition.
+   If the lock is unavailable, the command refuses without reserving a run or touching a file. The persistent lock file
+   is never unlinked or replaced; the lock is released only when the command has no further filesystem or database
+   transition to perform. One purge run then proceeds in this order:
+    0. **reserve the run** (R43): `reserve_purge_run(p_as_of)` returns a new `run_id` and whether a report is
       **pending** (R44, below), or fails at once if another run holds a live reservation — before anything is read,
       written or deleted;
    1. with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests); each
@@ -1278,8 +1283,14 @@ The exception is:
       run uses** (rev 75, replacing the file identity of revisions 73–74, after the review of 2026-10-18 showed that a
       file number, even with its creation time, can be reused within one timestamp tick). The operator names a
       **directory** — never in the repository or on the server; a local folder only their account can read, **not
-      synced or backed up** (R52 step 1) — and `begin_purge_export(run_id, directory)` inserts this run's row of
-      `audit.purge_exports` (one per run). The report's name is fixed by the run: `<name>` =
+      synced or backed up** (R52 step 1). The command already holds the kernel lock acquired before reservation. It
+      passes the stable host id and lock key to
+      `begin_purge_export(run_id, directory, writer_host_id, writer_lock_key)`, which inserts this run's row of
+      `audit.purge_exports` (one per run) only if this run still holds the live reservation. The persistent lock file
+      is owner-only, is never unlinked or replaced, and a missing lock file while unresolved exports exist fails
+      closed. No detached child or worker may write the report files. If the platform cannot provide a reliable kernel
+      process lock, commands that touch report files are disabled there. The report's name is fixed by the run:
+      `<name>` =
       `alphakolect-purge-report-<run_id>.jsonl`, where `run_id` is the new UUID `reserve_purge_run` generated for this
       run and recorded in the database. **That name is the proof of ownership:** it is unique to the run, stored in the
       database and outside the report's contents, and no other process or person uses it — no timestamp or file number
@@ -1313,7 +1324,16 @@ The exception is:
       the file, the export stays **unresolved** (neither confirmed nor discarded). `audit:purge-reports` lists every
       unresolved export (run, directory, started), and `reserve_purge_run` **refuses every new run** with
       `export_unresolved`, naming them, while one exists whose run no longer holds a live reservation. The command
-      resolves such an export before it reserves. **If the export recorded its file** (`record_export_artifact`), the
+      resolves such an export before it reserves. Before examining or removing files, recovery acquires the same
+      kernel-held lock on the recorded host and holds it through cleanup and the discard transition. If the lock is
+      unavailable, the old process may still be alive, so the export stays unresolved and blocks every new run; the
+      operator may stop that process, but recovery proceeds only after it can acquire the lock. If the host is
+      unreachable or the OS cannot provide the lock, the export stays unresolved. The old exporter acquires the lock
+      before `begin_purge_export` and cannot perform filesystem work after releasing it; a stale process that was
+      paused before acquiring the lock must revalidate its live reservation after acquiring it and is refused before
+      any file operation if its run has expired. This covers pauses before export registration, between registration
+      and file creation, and between file creation and `record_export_artifact`. **If the export recorded its file**
+      (`record_export_artifact`), the
       files bearing the run's name are its own: it deletes `<name>.partial` and `<name>` in the recorded directory if
       present, `fsync`s the directory and checks that both are gone — **repeating the check until both stay absent**,
       so an old run that was stalled rather than dead, and renames its file in between, is caught (its own next call is
@@ -1321,7 +1341,8 @@ The exception is:
       is never touched. **If the export recorded no file** — the process stopped between the create and the record, or
       the create was refused because a file already bore the run's name — there is no proof, and it goes to the
       operator; so does an export whose directory cannot be reached from where the command runs (another machine, a
-      removed disk). The command stops; the operator inspects the directory, removes only this run's files, and records
+      removed disk). The command stops; only after acquiring the recorded OS lock does the operator
+      inspect the directory, remove only this run's files, and record
       the outcome with `audit:purge-export-discarded --run <id> --note <how it was resolved>` — an attestation, as a
       delivery is. A file that was there before the run is left untouched, and an uncertain export remains unresolved
       and blocks new runs. `discard_purge_export` is refused for a confirmed export and for another run's export while
@@ -1456,7 +1477,8 @@ The exception is:
      report that is already delivered or already lost; never deleted.
      **The operator's copy (rev 71):** `copy_destroyed_at` and `destroy_note`, set once, only after the delivery —
      `CHECK (copy_destroyed_at IS NULL OR delivered_at IS NOT NULL)`.
-   - `audit.purge_exports` (`run_id` unique, `directory`, `started_at`, `artifact_recorded_at` — set once, rev 75 —,
+   - `audit.purge_exports` (`run_id` unique, `directory`, `writer_host_id`, `writer_lock_key` — required and recorded
+     before any filesystem operation (rev 78) —, `started_at`, `artifact_recorded_at` — set once, rev 75 —,
      `outcome` `NULL` | `confirmed` | `discarded`, `ended_at`, `note`; rev 71): one row per run that began an export; its outcome moves once, from unresolved to
      confirmed (with the run's report, in `confirm_purge_report`'s transaction) or to discarded, never back; never
      deleted.
@@ -1559,8 +1581,20 @@ run's name (rev 75)** — after a process killed mid-write, and again after the 
 run deletes the run-named files, records the discard (#45) and proceeds, with no attestation; every other file in the
 directory — another run's report, the operator's own files, names that differ only in the run id — is left untouched
 byte for byte; a stalled old run that renames its file while the next run cleans up is caught by the repeated check,
-and its own next call is refused; a process killed between the create and `record_export_artifact` leaves an export
-resolved only by attestation; `record_export_artifact` is refused a second time, for another run, without the live
+and its own next call is refused; **stale writer fencing (rev 78)** — a child command pauses before lock acquisition;
+another same-host command acquires the lock, reserves and completes; the paused command then acquires the lock and
+only then reserves a fresh run id, with no stale run or export file. A child exporter also pauses after acquiring the
+lock but before reservation, after reservation but before export registration, after registration but before exclusive
+create, and after create but before `record_export_artifact`; another same-host command cannot acquire the lock and
+therefore cannot reserve or touch files; if another host takes over after lease expiry before export registration,
+the old `begin_purge_export` is refused because its reservation is stale, before any file operation; after export
+registration, recovery on another host cannot acquire the recorded-host lock and refuses to inspect/delete files,
+discard the export, or start another purge while the old writer holds it; after the process exits, the OS releases the
+lock and recovery acquires it, cleans only run-named files and records the discard; a stale process resumed after
+losing its reservation revalidates and is refused before filesystem work; a missing or replaced lock file, unreachable
+host or unsupported lock primitive leaves the export unresolved; the lock file is never unlinked or replaced;
+`record_export_artifact` is
+refused a second time, for another run, without the live
 reservation, and for a confirmed or discarded export; **the rebuild's file (rev 75)** — a rebuild killed mid-write
 leaves `<name>.partial`, flagged by `audit:purge-reports` and removed by the next rebuild before it writes; a
 rebuild whose hash differs deletes its partial and leaves nothing at `<name>`; **the portable rename (rev 76)** — the
@@ -3035,6 +3069,21 @@ Part 2 boundary in place (§14, §16).
 
 ## 14. Open items for the reviewer and owner
 
+**Technical review follow-up — Part 2 revision 77 (2026-10-18; no sign-off).** A PID plus process-start token can
+repeat or be unavailable on some platforms, so revision 77 risked relying on another reusable identity. Revision 78
+replaces it with a kernel-held OS lock that remains held while any exporter can touch files; stale recovery must
+acquire that same lock before inspection, cleanup, or discard. Missing lock support, an unreachable host, or a missing
+lock file with unresolved exports fails closed. Tests cover pauses before and after lock acquisition and throughout
+export registration and file creation. Part 2 remains unapproved.
+
+**Review — Part 2 re-check on revision 76 (2026-10-18; no sign-off).** **[P1] Manual export recovery did not fence a
+paused writer.** With no recorded artifact, an operator could inspect an empty directory and discard the export while
+the old process was paused before creating its file; that process could later resume and leave an untracked report.
+Revision 77 requires a stable host id, PID and OS process-start token to be recorded before any filesystem operation,
+and requires recovery to verify that exact process has exited before inspecting files or discarding. If the process is
+live or cannot be verified, the export remains unresolved and blocks new runs. Tests cover pauses before create and
+between create and artifact recording. This is a design amendment only; Part 2 remains unapproved.
+
 **Reviewer — P5.8 addendum re-review (2026-10-17, on rev 68): Changes requested.** The merchant-read row maps the
 platform-team display to `actor.audience: 'platform'`, which can overwrite a recorded `null` audience. Keep the recorded
 audience unchanged and represent "AlphaKolect team" with a separate `actorLabel`; require a regression test for a
@@ -3191,6 +3240,8 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 78 | 2026-10-18 | **Part 2 stale-writer fence uses a kernel-held OS lock.** Replaces revision 77's host/PID/process-start-token check, whose token might repeat or be unavailable. Exporters hold an exclusive process lock before registration through confirmation/discard; recovery must acquire the same lock before touching files. A stale process cannot resume filesystem work after recovery; unavailable lock support, host or lock file fails closed. Tests pause the exporter before/after lock acquisition and around registration/file creation. Design text only; Part 2 still awaits the independent reviewer. |
+| 77 | 2026-10-18 | **Part 2 stale-writer recovery fence.** `begin_purge_export` records a stable host id, PID and OS process-start token before filesystem work. Recovery must verify that exact process instance has exited before inspecting files or discarding; a live, unreachable or unverifiable writer keeps the export unresolved and blocks new runs. Tests pause the writer before create and between create and artifact recording, then verify recovery refuses until termination. Design text only; Part 2 still awaits the independent reviewer's approval. |
 | 76 | 2026-10-18 | **Part 2: the export made portable** (found while resolving what could block Part 2). Node's `rename` overwrites on POSIX, so the no-overwrite rename is a hard `link` then an `unlink` (a stop between leaves both names on one file, removed by name); where a directory cannot be flushed (Windows), the run says so and relies on the file's flush, the read-back after the rename and the recorded SHA-256, with a later loss found and rebuilt (R53). Tests added. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 75 | 2026-10-18 | **Part 2: ownership by the run's unique file name** (a review of revision 74, §14; the project lead asked that everything likely to block Part 2 be resolved). The report is named `alphakolect-purge-report-<run_id>.jsonl` in the directory the operator names, `run_id` being the run's new UUID recorded in the database: that name, outside the report's bytes, is the proof of ownership, replacing the device/file-number/birth-time identity of revisions 73–74, which a coarse timestamp could repeat. `record_export_artifact(run_id)` records that the file exists; restart cleanup deletes the run-named files of an export that recorded its file, repeating the check until both stay absent; an export that recorded none, a refused create or an unreachable directory goes to the operator's attestation. Also: the rebuilt file of R53 is written and cleaned up like an export; the delivery and loss steps remove the run's files, a rebuild's partial included; the report folder must be local, owner-only and not synced or backed up; `confirm_purge_report` requires the run's export to have recorded its file and not been discarded. `purge_exports`: `directory`, `artifact_recorded_at`. Tests restated. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 74 | 2026-10-18 | **Part 2: a file number alone is not proof** (a review of revision 73, §14). The recorded identity requires the birth time with the device and file number — a file number can be reused once its file is deleted; a file system that reports no birth time records no identity, and its exports are resolved by hand; restart cleanup leaves untouched a file with the same device and file number but another birth time, or an unreadable one; test added for the reused number. Design text only; Part 2 and the addendum still await the independent reviewer. |

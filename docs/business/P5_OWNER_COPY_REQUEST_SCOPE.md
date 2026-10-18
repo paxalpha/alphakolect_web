@@ -8,7 +8,7 @@ must not guess them.
 
 As before, **"Not sure" is a fine answer.**
 
-**Answered by:** **Date:**
+**Answered by: Mayowa Edward Fadahunsi** **Date: 18th of October, 2026**
 
 ---
 
@@ -23,7 +23,7 @@ every day.
   long as the copy takes to reach you.
 - ☐ Not sure
 
-> Answer:
+> Answer: They are deleted on thier normal without a copy
 
 ## S2. One copy, or a copy every time?
 
@@ -32,7 +32,7 @@ every day.
 - ☐ **A copy every time, until you say stop.** Every clean-up makes you a new copy of what it would delete.
 - ☐ Not sure
 
-> Answer:
+> Answer: One copy for each request
 
 ## S3. Can you cancel a request, and what if your "received" takes a while?
 
@@ -42,7 +42,7 @@ every day.
 - ☐ Other:
 - ☐ Not sure
 
-> Answer:
+> Answer: You can cancel a request in writing and if a copy has waited 7 days for my recieved, i am reminded
 
 ---
 

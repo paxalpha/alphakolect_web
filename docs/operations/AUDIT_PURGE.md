@@ -12,6 +12,8 @@
 
 ## Run The Purge
 
+**When:** once a month, on the first working day (the owner's decision, 2026-10-18), until scheduled runs exist (P12). Review the listing (`audit:purge-reports`) at the same time, and at least weekly while a copy is requested.
+
 A plain run deletes only eligible events strictly older than the two-calendar-year cutoff and clears eligible IP/user-agent metadata. Each page and its audit event commit in one transaction. An open report request switches the next run to export mode; it deletes no audit rows and requires `--dir`.
 
 ```powershell

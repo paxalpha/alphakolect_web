@@ -380,7 +380,8 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
 describe('the purge’s lock rules (§8.6 item 12): category 11 and the purge tables', () => {
   const PURGE_TABLES =
     /\b(?:insert\s+into|update|delete\s+from)\s+audit\.purge_(?:runs|run_pages|run_events|report_requests|exports|reports|report_handovers)\b/i;
-  const RESERVATION_FIRST = /from\s+audit\.purge_reservation\s+r\s+where\s+r\.id\s+for\s+no\s+key\s+update\s+nowait/i;
+  const RESERVATION_FIRST =
+    /from\s+audit\.purge_reservation\s+r\s+where\s+r\.id\s+for\s+no\s+key\s+update\s+nowait/i;
   const bodyOf = (f: FnRow) => {
     const a = f.def.indexOf('$function$');
     const b = f.def.lastIndexOf('$function$');
@@ -423,7 +424,10 @@ describe('the purge’s lock rules (§8.6 item 12): category 11 and the purge ta
   });
 
   it('mutations: a second function deleting activity rows, and a purge-table write without the reservation, fail', () => {
-    const deleter = probe('deleter', `BEGIN DELETE FROM audit.audit_events a WHERE a.id = gen_random_uuid(); END`);
+    const deleter = probe(
+      'deleter',
+      `BEGIN DELETE FROM audit.audit_events a WHERE a.id = gen_random_uuid(); END`,
+    );
     expect(deletesActivity([...catalog.functions, deleter])).toEqual([
       'audit.purge_expired_events',
       'probe.deleter',
@@ -439,7 +443,10 @@ describe('the purge’s lock rules (§8.6 item 12): category 11 and the purge ta
       `BEGIN PERFORM 1 FROM audit.purge_reservation r WHERE r.id FOR NO KEY UPDATE NOWAIT;
          UPDATE audit.purge_runs pr SET completed = true; END`,
     );
-    expect(writesBeforeReservation([unreserved, late, conforming])).toEqual(['probe.late', 'probe.unreserved']);
+    expect(writesBeforeReservation([unreserved, late, conforming])).toEqual([
+      'probe.late',
+      'probe.unreserved',
+    ]);
   });
 });
 

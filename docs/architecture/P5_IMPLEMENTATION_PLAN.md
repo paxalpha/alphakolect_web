@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 74 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 75 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–74) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–75) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -1274,53 +1274,53 @@ The exception is:
       written or deleted;
    1. with that `run_id` and `p_as_of`, read **every** page of `purge_candidates` (ids, texts, page digests); each
       page renews the reservation, so an export of any size stays within the lease;
-   2. **if a report is pending:** the export is **recorded before its file exists** (rev 71, the Part 2 review of
-      2026-10-18): `begin_purge_export(run_id, path)` inserts this run's row of `audit.purge_exports` (one per run) with
-      the path the operator names (never in the repository or on the server). The command then creates
-      `<path>.partial` **exclusively** (refused if `<path>` or `<path>.partial` exists) and readable by its owner only
-      (mode `0600`), and at once records **the file's identity** — `record_export_artifact(run_id, identity)` sets it,
-      once, on this run's export (rev 73): the device, file number and **birth (creation) time** of the open handle
-      (`fstat`), at the finest resolution the platform reports; a rename within the directory keeps all three. **All
-      three are required (rev 74):** a file number can be reused once its file is deleted, so a device and file number
-      alone prove nothing; the birth time of a reused number is that of the new file. Where the file system reports no
-      birth time or no stable file number, no identity is recorded, and that export is resolved by hand. Only then does it write all pages to it, flushes it to disk (`fsync` of the file and its directory), reads it back
-      and checks that every page's rows reproduce that page's database digest, and records the file's own SHA-256; only
-      then does it rename it to `<path>` (no overwrite) and `fsync` the directory. Throughout this step the command calls
-      `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44), so a healthy slow write keeps its
-      reservation. When — and only when — the read-back check passes and the rename is durable, it calls
-      `confirm_purge_report(run_id, row count, file SHA-256, file location)`, which records this run's verified report
-      in the database (its location is the path string, never the contents) and marks the export **confirmed** in the
-      same transaction, and **prints the report id, path, SHA-256 and count at once — before any deletion** (R45). Any
-      failure here — unwritable path, full disk, interrupted process, a stalled `fsync`, mismatch, a refused heartbeat —
-      **ends the run before any deletion**, and the command **removes only artifacts it can prove this run created**:
-      it deletes `<path>.partial` or `<path>` only if this invocation successfully created that file (tracking the
-      exclusive-create handle and the successful no-overwrite rename), `fsync`s the directory, checks that its own
-      artifacts no longer exist, and only then calls
-      `discard_purge_export(run_id, note)`, which marks the export **discarded** (#45). Nothing is deleted from the
-      database and the run can simply be repeated. If either exclusive create or the no-overwrite rename is refused
-      because the destination already exists, that pre-existing file is never removed; the export is discarded only
-      after confirming that this run created no artifact. If ownership of a path cannot be established, the export
-      stays unresolved for operator reconciliation rather than deleting that path.
+   2. **if a report is pending:** the export is **recorded before its file exists** (rev 71) **under a name only this
+      run uses** (rev 75, replacing the file identity of revisions 73–74, after the review of 2026-10-18 showed that a
+      file number, even with its creation time, can be reused within one timestamp tick). The operator names a
+      **directory** — never in the repository or on the server; a local folder only their account can read, **not
+      synced or backed up** (R52 step 1) — and `begin_purge_export(run_id, directory)` inserts this run's row of
+      `audit.purge_exports` (one per run). The report's name is fixed by the run: `<name>` =
+      `alphakolect-purge-report-<run_id>.jsonl`, where `run_id` is the new UUID `reserve_purge_run` generated for this
+      run and recorded in the database. **That name is the proof of ownership:** it is unique to the run, stored in the
+      database and outside the report's contents, and no other process or person uses it — no timestamp or file number
+      is relied on, and the report's bytes are unchanged. The command creates `<name>.partial` in that directory
+      **exclusively** (refused if `<name>` or `<name>.partial` exists, which only a file deliberately planted under the
+      run's name could cause) and readable by its owner only (mode `0600`; where the platform has no such modes, the
+      folder's permissions do it), and at once calls `record_export_artifact(run_id)`, which records, once, that this
+      run's file exists. Only then does it write all pages to it, flushes it to disk (`fsync` of the file and its
+      directory), reads it back and checks that every page's rows reproduce that page's database digest, and records
+      the file's own SHA-256; only then does it rename it to `<name>` (no overwrite) and `fsync` the directory.
+      Throughout this step the command calls `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44), so a
+      healthy slow write keeps its reservation. When — and only when — the read-back check passes and the rename is
+      durable, it calls `confirm_purge_report(run_id, row count, file SHA-256, file location)`, which records this run's
+      verified report in the database (its location is the path string, never the contents) and marks the export
+      **confirmed** in the same transaction, and **prints the report id, path, SHA-256 and count at once — before any
+      deletion** (R45). Any failure here — unwritable directory, full disk, interrupted process, a stalled `fsync`,
+      mismatch, a refused heartbeat — **ends the run before any deletion**, and the command **removes only files it
+      created** (rev 72): `<name>.partial` if its exclusive create succeeded, `<name>` if its own rename succeeded,
+      `fsync`s the directory, checks that they no longer exist, and only then calls `discard_purge_export(run_id,
+      note)`, which marks the export **discarded** (#45). Nothing is deleted from the database and the run can simply be
+      repeated. If the exclusive create or the no-overwrite rename is refused because a file is already there, that file
+      is never removed, and the export goes to the operator (below).
 
       **An export the command could not clean up is never forgotten.** If the process dies, or cannot remove or reach
       the file, the export stays **unresolved** (neither confirmed nor discarded). `audit:purge-reports` lists every
-      unresolved export (run, path, started), and `reserve_purge_run` **refuses every new run** with
+      unresolved export (run, directory, started), and `reserve_purge_run` **refuses every new run** with
       `export_unresolved`, naming them, while one exists whose run no longer holds a live reservation. The command
-      resolves such an export before it reserves. It deletes only an artifact whose ownership by this run it can
-      establish, checks that artifact is gone, and records the discard. It never deletes a file merely because it
-      occupies a recorded path. **The proof is the recorded identity (rev 73):** for each of `<path>.partial` and
-      `<path>`, it reads the entry without following a link; a regular file whose device, file number **and** birth
-      time all equal the recorded identity was made by that export and is deleted; any other entry — including one with
-      the same device and file number but another birth time, or one whose birth time cannot be read — is left
-      untouched. An export with no recorded identity — the process stopped between creating the file and recording it,
-      or the file system reports no birth time or stable file number — has no proof, and goes to the operator as below. If the path is unreachable, ownership is unclear, or the command cannot prove the
-      export created the file (including a pre-existing path that caused a refusal), it stops; the operator inspects
-      the path, removes only any artifact from this run, and records the outcome with
-      `audit:purge-export-discarded --run <id> --note <how it was resolved>` — an attestation, as a delivery is. A
-      pre-existing file is left untouched, and an uncertain export remains unresolved and blocks new runs.
-      `discard_purge_export` is refused for a confirmed export and for another run's export while that run's
-      reservation is live, so a healthy export is never discarded under it. A confirmed report is never "unresolved":
-      the database, not the command's output, says which state an export is in;
+      resolves such an export before it reserves. **If the export recorded its file** (`record_export_artifact`), the
+      files bearing the run's name are its own: it deletes `<name>.partial` and `<name>` in the recorded directory if
+      present, `fsync`s the directory and checks that both are gone — **repeating the check until both stay absent**,
+      so an old run that was stalled rather than dead, and renames its file in between, is caught (its own next call is
+      refused: its reservation is no longer live) — and records the discard. A file of any other name in the directory
+      is never touched. **If the export recorded no file** — the process stopped between the create and the record, or
+      the create was refused because a file already bore the run's name — there is no proof, and it goes to the
+      operator; so does an export whose directory cannot be reached from where the command runs (another machine, a
+      removed disk). The command stops; the operator inspects the directory, removes only this run's files, and records
+      the outcome with `audit:purge-export-discarded --run <id> --note <how it was resolved>` — an attestation, as a
+      delivery is. A file that was there before the run is left untouched, and an uncertain export remains unresolved
+      and blocks new runs. `discard_purge_export` is refused for a confirmed export and for another run's export while
+      that run's reservation is live, so a healthy export is never discarded under it. A confirmed report is never
+      "unresolved": the database, not the command's output, says which state an export is in;
    3. only then, page by page, call `purge_expired_events(run_id, p_as_of, page ids, page digest)`, each in its own
       transaction with its own #38 event. If a call raises or its commit fails, that page deletes nothing and the run
       stops; pages already committed were deleted exactly as exported. **Invariant: every row ever deleted is a row of
@@ -1359,8 +1359,10 @@ The exception is:
    `request_id`, `run_id`, `p_as_of`, `confirmed_at`, `row_count`, `file_sha256`, `file_location`, `delivered_at`,
    `delivery_note`, `lost_at`, `loss_note`). `request_purge_report(p_note)` (operator-only, refused while a run holds a live reservation)
    inserts an **open** request; "a report is pending", in this section, means a request is open. `confirm_purge_report(p_run_id, p_row_count, p_file_sha256, p_file_location)` inserts
-   this run's report for the open request, after checking the run's live reservation and that the count equals the
-   rows `purge_candidates` returned to this run. **The manifest (R53):** every page `purge_candidates` hands out is
+   this run's report for the open request, after checking the run's live reservation, that the count equals the
+   rows `purge_candidates` returned to this run, and that this run's export recorded its file and is still unresolved
+   — never discarded (rev 75). `begin_purge_export` and `record_export_artifact` are likewise refused unless this run
+   holds the live reservation and a request is open. **The manifest (R53):** every page `purge_candidates` hands out is
    recorded in `audit.purge_run_pages` (`run_id`, `page_no`, the ordered event ids, the page digest) in the same
    transaction that returns it, so the database knows exactly what it handed out — the ids are UUIDs, no personal
    data, kept with the report. `confirm_purge_report` checks the count against the manifest, and `purge_expired_events`
@@ -1385,7 +1387,8 @@ The exception is:
 
    **Then the operator's copy is destroyed (O11, rev 71).** The owner's answer is "straight away, once you confirm you
    have it". So `audit:purge-report-delivered` does not stop at the record: right after `record_report_delivery`
-   commits, it deletes the file at the recorded path, `fsync`s the directory, checks that it no longer exists, and
+   commits, it deletes the report's file at its recorded location — and any `<name>.partial` of a rebuild — names only
+   its run uses (rev 75), `fsync`s the directory, checks that they no longer exist, and
    calls `record_report_copy_destroyed(p_report_id, p_note)` (operator-only), which sets `copy_destroyed_at` and
    writes `platform.purge_report_copy_destroyed` (#44); the note attests that the operator kept no other copy. It is
    refused before the delivery and when already recorded. If the command stops between the two,
@@ -1396,7 +1399,9 @@ The exception is:
    never its contents; once its run has deleted rows, the file is their only copy. So:
    1. the operator writes the report to a **durable location they control** — never a temporary directory; the runbook
       names acceptable places — and keeps it there, unchanged, until its delivery is recorded, and then destroys it
-      (above);
+      (above). That folder is **local, readable only by the operator's account, and not synced or backed up** (rev 75):
+      a cloud-synced or backed-up copy would outlive the destruction O11 requires, and would sit outside every record
+      here; the delivery and destruction notes attest it, and so does a loss note;
    2. `audit:purge-reports` re-reads every undelivered report at its recorded path and states for each: present and
       matching, **missing**, or **altered** (hash differs);
    3. **a missing or altered report is recovered exactly where possible (R53):** restore a database backup taken before
@@ -1405,7 +1410,13 @@ The exception is:
       eligible row that committed late, or miss one; audit rows are immutable, so the same ids give the same canonical
       text. Every page digest and the file's SHA-256 are checked against the recorded ones; if they match, the report is
       recovered bit for bit and is delivered as usual. The scratch database holds two-year-old personal data: it is dropped
-      as soon as the rebuild ends, whatever its outcome, and the delivery or loss note records it. **The backup is
+      as soon as the rebuild ends, whatever its outcome, and the delivery or loss note records it. **The rebuilt file is
+      handled like an export (rev 75):** `audit:purge-report-rebuild --report <id>` writes under the report's own name
+      in its recorded directory — the run's unique name: an altered file there is that run's and is deleted first,
+      checked gone; then `<name>.partial` is created exclusively, written, flushed, its page digests and SHA-256 checked
+      against the recorded ones, and only then renamed to `<name>`. A rebuild that fails deletes its `<name>.partial`
+      and checks it is gone; one that crashes leaves it, and `audit:purge-reports` flags any `<name>.partial` beside
+      an undelivered report, which the next rebuild, the destruction or the loss step removes first. **The backup is
       checked before the rebuild:** every id of the
       manifest must be present in the restored database (one query: manifest ids without a matching row); if any is
       missing, that backup cannot rebuild the report — another, still pre-deletion backup is tried, and if none holds
@@ -1415,8 +1426,8 @@ The exception is:
       loss with `record_report_lost(p_report_id, p_note)` — operator-only, an attestation whose note records that the
       owner was told, refused for a report already delivered — which writes `platform.purge_report_lost` (#43) and
       closes that report's delivery obligation; the incident is recorded in `docs/security/`. An **altered** file is
-      still personal data: the command deletes whatever is at the recorded path, and checks it is gone, before it
-      records the loss (rev 71).
+      still personal data: the command deletes the run's files at the recorded location (`<name>` and any
+      `<name>.partial` — names only that run uses), and checks they are gone, before it records the loss (revs 71, 75).
 
    A request is satisfied when a run has completed with a confirmed report and **every** confirmed report of it is
    either delivered **with the operator's copy destroyed** (rev 71) or recorded as lost. `audit:purge-reports` lists,
@@ -1439,7 +1450,7 @@ The exception is:
      report that is already delivered or already lost; never deleted.
      **The operator's copy (rev 71):** `copy_destroyed_at` and `destroy_note`, set once, only after the delivery —
      `CHECK (copy_destroyed_at IS NULL OR delivered_at IS NOT NULL)`.
-   - `audit.purge_exports` (`run_id` unique, `path`, `started_at`, `artifact_identity` — set once, rev 73 —,
+   - `audit.purge_exports` (`run_id` unique, `directory`, `started_at`, `artifact_recorded_at` — set once, rev 75 —,
      `outcome` `NULL` | `confirmed` | `discarded`, `ended_at`, `note`; rev 71): one row per run that began an export; its outcome moves once, from unresolved to
      confirmed (with the run's report, in `confirm_purge_report`'s transaction) or to discarded, never back; never
      deleted.
@@ -1531,22 +1542,23 @@ failure of its insert rolls the deletion back; **export failure semantics (R36)*
 simulation, a process killed between the export and the deletion, and a read-back mismatch each leave every row in
 place; **no untracked export (rev 71)** — for each of those failures, a refused heartbeat, a process killed mid-write,
 and one killed after the rename but before confirmation: once the failing command has ended (or, for a killed process,
-once the next run has started), neither `<path>.partial` nor `<path>` exists and the export is recorded discarded
+once the next run has started), neither `<name>.partial` nor `<name>` exists and the export is recorded discarded
 (#45); while an export is unresolved, `reserve_purge_run` refuses with `export_unresolved` naming it and
 `audit:purge-reports` lists it; an unreachable path is never recorded discarded without the operator's attestation;
-`discard_purge_export` is refused for a confirmed export and for another live run's export; an existing file at
-either name is refused before anything is written **and remains byte-for-byte untouched**, including if the process
-stops before recording the discard; a collision at the final path during the no-overwrite rename also preserves that
-pre-existing file; same-process and restart cleanup never remove a path this run did not create; an unresolved collision
-blocks new runs until the operator confirms no run-owned artifact remains; **restart cleanup by identity (rev 73)** —
-after a process killed mid-write, and again after the rename but before confirmation, the next run deletes the file
-whose identity matches, records the discard (#45) and proceeds, with no attestation; a file put at the path after the
-crash (another identity) is left untouched and the export stays unresolved; **a reused file number (rev 74)** — a
-replacement file reporting the same device and file number but another birth time (the identity reader is the
-module's test seam) is left untouched byte for byte, and the export stays unresolved; a file system reporting no birth
-time records no identity, and its export is resolved only by attestation; a process killed between the create and
-`record_export_artifact` leaves an export with no identity, resolved only by attestation; `record_export_artifact`
-is refused a second time, for another run, without the live reservation, and for a confirmed or discarded export; the file is created owner-only; a failure
+`discard_purge_export` is refused for a confirmed export and for another live run's export; a file planted under
+either of the run's names before the create makes the create refuse, **remains byte-for-byte untouched** — including
+if the process stops before recording the discard — and the export goes to the operator; a file put at `<name>`
+during the no-overwrite rename is likewise refused and preserved by the running process; **restart cleanup by the
+run's name (rev 75)** — after a process killed mid-write, and again after the rename but before confirmation, the next
+run deletes the run-named files, records the discard (#45) and proceeds, with no attestation; every other file in the
+directory — another run's report, the operator's own files, names that differ only in the run id — is left untouched
+byte for byte; a stalled old run that renames its file while the next run cleans up is caught by the repeated check,
+and its own next call is refused; a process killed between the create and `record_export_artifact` leaves an export
+resolved only by attestation; `record_export_artifact` is refused a second time, for another run, without the live
+reservation, and for a confirmed or discarded export; **the rebuild's file (rev 75)** — a rebuild killed mid-write
+leaves `<name>.partial`, flagged by `audit:purge-reports` and removed by the next rebuild before it writes; a
+rebuild whose hash differs deletes its partial and leaves nothing at `<name>`; the destruction and loss steps remove a
+leftover `<name>.partial`; the file is created owner-only; a failure
 injected on #45 leaves the export unresolved;
 **page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
 `p_as_of`, or a digest that does not match makes `purge_expired_events` raise and delete nothing, while an eligible
@@ -1572,7 +1584,7 @@ takes over: B's `purge_expired_events` before its own `confirm_purge_report` rai
 confirms and deletes only rows in its own report; A, resumed, is refused at its next call (heartbeat, confirmation or
 page) and deletes nothing; the request stays open after B completes, until B's report (and any other confirmed report of it) is delivered; with heartbeats, the same paused
 write keeps A's reservation and B is refused; `confirm_purge_report` with a count other than this run's candidates,
-or for another run, is refused; `request_purge_report` during a live run is refused; a run that releases without
+or for another run, or for an export that recorded no file or was discarded (rev 75), is refused; `request_purge_report` during a live run is refused; a run that releases without
 completing leaves the request pending; **delivery (R45)** — the command stopped right after confirming its report, and
 again after deleting its first page: `audit:purge-reports` lists the report with its path, hash and count; a later
 run completes with its own report, yet the request stays open until **both** reports are recorded as delivered, and
@@ -3109,6 +3121,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | Review — **the addendum and Part 2** (on rev 70; a review that, by its own statement, records no sign-off) | "**[P1] Failed exports can leave untracked personal-data files.** The purge workflow writes the report before confirmation, then says failures stop before deletion; it doesn't specify cleanup or tracking for a partial or complete file left by a failed confirmation or process crash (`P5_IMPLEMENTATION_PLAN.md:1282`). `purge-reports` only lists confirmed reports, so such a file could be left outside the recovery workflow. Define crash-safe handling and test that failed runs cannot leave untracked exports." "**[P1] The operator's copy is not required to be deleted after receipt.** O11 says the operator deletes their copy as soon as your father confirms receipt in writing (`P5_IMPLEMENTATION_PLAN.md:2964`). The workflow records delivery and says to keep the file until then, but never makes deletion a postcondition or tests it (`P5_IMPLEMENTATION_PLAN.md:1338`). Specify and test that lifecycle before approving Part 2." "The activity-record design now cleanly separates `actorLabel` from the recorded audience, including the null-audience case. I recommend the independent reviewer confirm that addendum. **Part 2 needs changes before approval.** I have not recorded either sign-off." | Relayed by Olamide Fadahunsi (project lead), 2026-10-18 | **Not a sign-off.** The addendum: recommended for confirmation — still awaiting the independent reviewer. Part 2: both findings addressed in its design (rev 71) — exports recorded before their file exists, written under a temporary name and removed on any failure, an unresolved one blocking new runs (#45); the operator's copy destroyed after the owner's written receipt, as a recorded step (#44), before a request is satisfied. Part 2 still awaits the independent reviewer's approval | Part 2; P5.8 |
 | Project lead — **restart cleanup of an export** (2026-10-18) | After revision 72 (a review session's edit, committed as written, `38753d6`: cleanup removes only files the run can prove it created), Claude noted that a restart could never prove it, so every crash during an export would need the operator's attestation, and asked whether to record the file's identity at creation so a restart can prove ownership. Answer: **"Add rev 73 (Recommended)"** | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — revision 73: `record_export_artifact` records the file's device, file number and creation time right after the exclusive create; restart cleanup deletes only a file whose identity matches, and an export without a recorded identity stays manual. Part 2 still awaits the independent reviewer's approval | Part 2 |
 | Review — **revision 73** (a review session; it records no sign-off) | "**Part 2 finding: file identity may be reused.** Revision 73's recovery deletes a path when its device, file number, and optional creation time match the stored identity (`P5_IMPLEMENTATION_PLAN.md:1310`). On filesystems without a reliable creation time, device plus inode/file number may be reused after the original file is deleted. A different file could then appear to match and be removed. The restart tests cover a different identity, but not a reused file number (`P5_IMPLEMENTATION_PLAN.md:1542`). Before Part 2 approval, treat file numbers without a non-reusable generation/birth identifier as insufficient proof, or add a run-specific nonce stored in both the database and the created file. Add a test for a replacement file with the same device and file number." "The activity-record design at `c4e9266` looks consistent; I recommend confirmation. I haven't recorded either sign-off." | Relayed by Olamide Fadahunsi (project lead), 2026-10-18 | **Not a sign-off.** Addressed in revision 74 by the first remedy: the birth time is required with the device and file number; without it no identity is recorded and the export is resolved by hand (a nonce in the file would change the report the owner receives); the reused-number test added. The addendum: recommended for confirmation again. Both still await the independent reviewer | Part 2; P5.8 |
+| Review — **revision 74** (a review session; it records no sign-off) | "**[P1] Creation time may not uniquely identify a file.** Revision 74 requires matching device, file number, and birth time (`P5_IMPLEMENTATION_PLAN.md:1283`). But 'finest resolution reported' does not guarantee unique timestamps. On a filesystem with coarse birth-time resolution, a new file could reuse the same number within the same timestamp tick and match all three values. The new test changes the birth time, so it doesn't cover that case (`P5_IMPLEMENTATION_PLAN.md:1543`). Before Part 2 approval, require a generation-unique identity or a per-export nonce stored outside the report payload; otherwise resolve cleanup manually. Add a test where the replacement has the same full identity tuple." "The activity-record design still looks consistent, and I recommend the reviewer confirm it. I have not recorded either sign-off." It also noted `origin/feat/p5-authorization-audit` at `3b52114` (revision 73), revision 74 local only | Relayed by Olamide Fadahunsi (project lead), 2026-10-18, asking to "resolve evrything you may think will block part 2 from approval" | **Not a sign-off.** Revision 75: the per-export nonce, outside the report — the file is named by the run's unique id, recorded in the database; ownership is that name, and no timestamp or file number is relied on (revisions 73–74's identity removed; with it the identity-tuple test is moot, replaced by tests on the run's name). Four further gaps closed in the same pass: the rebuild's file is tracked like an export; a stalled old run racing the cleanup is caught by a repeated check; the report folder must be local, owner-only and not synced or backed up; a report can be confirmed only for an export that recorded its file and was not discarded. Part 2 and the addendum still await the independent reviewer | Part 2; P5.8 |
 | Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
 
 **Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
@@ -3169,6 +3182,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 75 | 2026-10-18 | **Part 2: ownership by the run's unique file name** (a review of revision 74, §14; the project lead asked that everything likely to block Part 2 be resolved). The report is named `alphakolect-purge-report-<run_id>.jsonl` in the directory the operator names, `run_id` being the run's new UUID recorded in the database: that name, outside the report's bytes, is the proof of ownership, replacing the device/file-number/birth-time identity of revisions 73–74, which a coarse timestamp could repeat. `record_export_artifact(run_id)` records that the file exists; restart cleanup deletes the run-named files of an export that recorded its file, repeating the check until both stay absent; an export that recorded none, a refused create or an unreachable directory goes to the operator's attestation. Also: the rebuilt file of R53 is written and cleaned up like an export; the delivery and loss steps remove the run's files, a rebuild's partial included; the report folder must be local, owner-only and not synced or backed up; `confirm_purge_report` requires the run's export to have recorded its file and not been discarded. `purge_exports`: `directory`, `artifact_recorded_at`. Tests restated. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 74 | 2026-10-18 | **Part 2: a file number alone is not proof** (a review of revision 73, §14). The recorded identity requires the birth time with the device and file number — a file number can be reused once its file is deleted; a file system that reports no birth time records no identity, and its exports are resolved by hand; restart cleanup leaves untouched a file with the same device and file number but another birth time, or an unreadable one; test added for the reused number. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 73 | 2026-10-18 | **Part 2: restart cleanup proves ownership by file identity** (the project lead's choice, §14). Right after the exclusive create, `record_export_artifact(run_id, identity)` records the file's device, file number and (where reported) creation time on its export, once; after a crash the next run deletes a file at either name only if its identity matches, records the discard and proceeds; any other file is left untouched, and an export with no recorded identity (a crash between create and record, or a platform without stable file numbers) stays for the operator's attestation. `purge_exports.artifact_identity`; tests; footprints, grants and counts updated (fourteen purge functions). Design text only; Part 2 still awaits the independent reviewer's approval. |
 | 72 | 2026-10-18 | **Part 2 export collision safety.** Same-process and crash-recovery cleanup remove only paths this run successfully created; exclusive-create or no-overwrite-rename collisions preserve existing files, with regression coverage including a process stop before discard. If file ownership cannot be established, the export remains unresolved for operator reconciliation. The independent reviewer's approval remains pending. |

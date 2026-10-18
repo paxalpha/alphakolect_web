@@ -1,10 +1,10 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 75 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 76 — P5.8 in progress.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14). Part 2
-(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–75) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
+(retention design) remains unapproved — its design revised for review on 2026-10-18 (revs 71–76) — so the retention purge is blocked; P5.9 and P5.10 remain downstream gates.
 
 | | |
 |---|---|
@@ -1289,7 +1289,13 @@ The exception is:
       folder's permissions do it), and at once calls `record_export_artifact(run_id)`, which records, once, that this
       run's file exists. Only then does it write all pages to it, flushes it to disk (`fsync` of the file and its
       directory), reads it back and checks that every page's rows reproduce that page's database digest, and records
-      the file's own SHA-256; only then does it rename it to `<name>` (no overwrite) and `fsync` the directory.
+      the file's own SHA-256; only then does it rename it to `<name>` (no overwrite) and `fsync` the directory. **How, portably
+      (rev 76):** Node's `rename` replaces an existing file on POSIX, so the no-overwrite rename is a hard `link` of
+      `<name>.partial` to `<name>` — refused if `<name>` exists — then an `unlink` of `<name>.partial`; a stop between
+      the two leaves both names on one file, which every cleanup above removes by name. Where the platform cannot flush a
+      directory (Windows refuses `fsync` on one), the command says so in its output and in the confirmation's location
+      note, and relies on the file's own flush, the read-back of `<name>` after the rename, and the recorded SHA-256 —
+      a file lost to a crash after confirmation is then found missing by `audit:purge-reports` and rebuilt (R53).
       Throughout this step the command calls `renew_purge_run(run_id)` at least once a minute (a heartbeat, R44), so a
       healthy slow write keeps its reservation. When — and only when — the read-back check passes and the rename is
       durable, it calls `confirm_purge_report(run_id, row count, file SHA-256, file location)`, which records this run's
@@ -1557,7 +1563,10 @@ and its own next call is refused; a process killed between the create and `recor
 resolved only by attestation; `record_export_artifact` is refused a second time, for another run, without the live
 reservation, and for a confirmed or discarded export; **the rebuild's file (rev 75)** — a rebuild killed mid-write
 leaves `<name>.partial`, flagged by `audit:purge-reports` and removed by the next rebuild before it writes; a
-rebuild whose hash differs deletes its partial and leaves nothing at `<name>`; the destruction and loss steps remove a
+rebuild whose hash differs deletes its partial and leaves nothing at `<name>`; **the portable rename (rev 76)** — the
+link-then-unlink rename refuses an existing `<name>` and leaves it untouched; a stop between the link and the unlink
+leaves both names, and restart cleanup removes both; on a platform that refuses a directory `fsync` the run says so
+and still confirms only after reading `<name>` back; the destruction and loss steps remove a
 leftover `<name>.partial`; the file is created owner-only; a failure
 injected on #45 leaves the export unresolved;
 **page verification (R38)** — a page whose ids include one already deleted, a row not eligible as of
@@ -3182,6 +3191,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 76 | 2026-10-18 | **Part 2: the export made portable** (found while resolving what could block Part 2). Node's `rename` overwrites on POSIX, so the no-overwrite rename is a hard `link` then an `unlink` (a stop between leaves both names on one file, removed by name); where a directory cannot be flushed (Windows), the run says so and relies on the file's flush, the read-back after the rename and the recorded SHA-256, with a later loss found and rebuilt (R53). Tests added. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 75 | 2026-10-18 | **Part 2: ownership by the run's unique file name** (a review of revision 74, §14; the project lead asked that everything likely to block Part 2 be resolved). The report is named `alphakolect-purge-report-<run_id>.jsonl` in the directory the operator names, `run_id` being the run's new UUID recorded in the database: that name, outside the report's bytes, is the proof of ownership, replacing the device/file-number/birth-time identity of revisions 73–74, which a coarse timestamp could repeat. `record_export_artifact(run_id)` records that the file exists; restart cleanup deletes the run-named files of an export that recorded its file, repeating the check until both stay absent; an export that recorded none, a refused create or an unreachable directory goes to the operator's attestation. Also: the rebuilt file of R53 is written and cleaned up like an export; the delivery and loss steps remove the run's files, a rebuild's partial included; the report folder must be local, owner-only and not synced or backed up; `confirm_purge_report` requires the run's export to have recorded its file and not been discarded. `purge_exports`: `directory`, `artifact_recorded_at`. Tests restated. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 74 | 2026-10-18 | **Part 2: a file number alone is not proof** (a review of revision 73, §14). The recorded identity requires the birth time with the device and file number — a file number can be reused once its file is deleted; a file system that reports no birth time records no identity, and its exports are resolved by hand; restart cleanup leaves untouched a file with the same device and file number but another birth time, or an unreadable one; test added for the reused number. Design text only; Part 2 and the addendum still await the independent reviewer. |
 | 73 | 2026-10-18 | **Part 2: restart cleanup proves ownership by file identity** (the project lead's choice, §14). Right after the exclusive create, `record_export_artifact(run_id, identity)` records the file's device, file number and (where reported) creation time on its export, once; after a crash the next run deletes a file at either name only if its identity matches, records the discard and proceeds; any other file is left untouched, and an export with no recorded identity (a crash between create and record, or a platform without stable file numbers) stays for the operator's attestation. `purge_exports.artifact_identity`; tests; footprints, grants and counts updated (fourteen purge functions). Design text only; Part 2 still awaits the independent reviewer's approval. |

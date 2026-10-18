@@ -37,6 +37,6 @@ The operator destroys and verifies the temporary copy as soon as the written rec
 
 ## Owner Approval
 
-Owner approval of this draft: ____________________  Date: ____________________
+Owner approval of this draft: Mayowa Edward Fadahunsi  Date: 18th of October, 2026
 
 Approval applies to the wording above only. Any material change to collection, access, retention, backup handling, or report delivery requires renewed review.

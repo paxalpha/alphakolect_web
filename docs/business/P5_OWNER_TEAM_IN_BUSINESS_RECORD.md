@@ -15,7 +15,7 @@ device. What is not yet decided is **whether they name the team member**.
 
 As before, **"Not sure" is a fine answer.**
 
-**Answered by:** **Date:**
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 17 October 2026
 
 ---
 

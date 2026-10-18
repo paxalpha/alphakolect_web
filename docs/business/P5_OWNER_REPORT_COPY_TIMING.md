@@ -26,7 +26,7 @@ As before, **"Not sure" is a fine answer.**
   only set up later, before launch. After that, those entries are gone for good.
 - ☐ Not sure
 
-> Answer:
+> Answer: only after I confirm you have the copy
 
 ## C2. Only if you chose "Straight away": if the copy is lost and cannot be rebuilt?
 
@@ -35,7 +35,7 @@ As before, **"Not sure" is a fine answer.**
 - ☐ **Your request stays open.** Every later clean-up makes you a new copy of what it deletes, until one reaches you.
 - ☐ Not sure
 
-> Answer:
+> Answer: your request stays open
 
 ---
 

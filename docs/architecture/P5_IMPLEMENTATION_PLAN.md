@@ -1,14 +1,14 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 92 — built except the audit reads; awaiting reviews.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 93 — built except the audit reads; awaiting reviews.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum remains unconfirmed: amended as revision 69 asked (`actorLabel`, separate from the recorded audience), and
 recommended for confirmation by the review of 2026-10-18 — the independent reviewer's confirmation is awaited. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
 APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
 review (§14). P5.8 step (a), the retention purge, is **built** (revision 92), its §8.6 test list met in part (the rest listed
 in P5.8 below); P5.9's matrix is built; the P5.10 documents are written. **Waiting for:** the independent reviewer's
-confirmation of the audit-read addendum, then the reads #33 and #34; the P5.8–P5.10 gate reviews; the owner's answers in
-`docs/business/P5_OWNER_POLICY_AND_CLOSURE.md` and the owner's final approval.
+confirmation of the audit-read addendum, then the reads #33 and #34; the P5.8–P5.10 gate reviews; the owner's final approval. The owner approved and signed the D9 policy and chose a
+monthly clean-up (2026-10-18; O22, O23).
 
 | | |
 |---|---|
@@ -2996,8 +2996,9 @@ unaccounted-stick check — each fails the matching case. **§8.6's Tests paragr
 approval requires it, and P5.8's gate review is the independent reviewer's. Not yet tested: the request race at the
 lease's edge with a test-only gate (round 4); a late commit during a page's deletion (R38); `lock_not_available` while a
 page transaction holds the row, and renewal after a long page; the clearing raced 50 times against a revocation, two
-clearings at once, and clearing while an export is unresolved; the operator lock with real processes (a paused holder, a
-kill, a squatted name, a connection, an unsupported platform, a container, no child process while held); the
+clearings at once, and clearing while an export is unresolved; the operator lock with real processes beyond a holder
+killed and a connection dropped (`3355a83`): a squatted name, an unsupported platform, a container, no child process
+while held; the
 connection's heartbeat and idle timeout; the export's file failures (an unwritable folder, a full disk, a kill mid-write
 or between the link and the confirmation, a stop between the link and the unlink, an empty export discarded `empty`) —
 partly covered by `purge.test.ts` (only its own partial file removed, a planted one untouched); `--check-files`' staged
@@ -3057,9 +3058,9 @@ passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; eve
   the owner (`995fbc6`); the full gate twice and gitleaks over the full history (P5.8 above). The review documents stay
   in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **§13, item by item:** 1 met;
   2 met for every endpoint built (the reads' rows follow them); 3, 4, 6, 8, 10, 11 met; 5 met except the audit reads;
-  7 open for the reads (isolated and audited reads, the concurrent purge against them); 9 open — the owner's approval of
-  the policy, and §8.6's tests in full. **Open:** the reviewer's confirmation of the addendum, the reads, the P5.8–P5.10
-  gate reviews, the owner's answers and final approval.
+  7 open for the reads (isolated and audited reads, the concurrent purge against them); 9 open — §8.6's tests in full (the
+  owner approved and signed the policy, O22). **Open:** the reviewer's confirmation of the addendum, the reads, the P5.8–P5.10
+  gate reviews, the owner's final approval.
 
 ## 11. Rollout and rollback (no fail-open)
 
@@ -3277,6 +3278,8 @@ decision-maker, the date, the source, the selected option, the affected contract
 | O19 | T1: "As "AlphaKolect team", without naming the person" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`, relayed by Olamide Fadahunsi on 2026-10-17 (`4fe4f75`) and signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 17 October 2026"; `894d309`), unchanged | **Decided** — a business's record shows the platform team's actions as `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record names the person. Applied in the ADR-16 addendum (`915ad30`) | §8.5; #33 |
 | O20 | C1: "only after I confirm you have the copy". C2 (asked only for the other option): "your request stays open" — committed with the signature in `6b5e318`, whose message wrongly called the form unchanged; recorded here in rev 82 | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REPORT_COPY_TIMING.md`, relayed by Olamide Fadahunsi on 2026-10-18 (`65dd6d9`) and signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 18 October 2026"; `6b5e318`) | **Decided** — when the owner has asked for a copy, the entries it covers are deleted only after his written receipt is recorded; a copy lost before then is made again from the entries. Applied in §8.6 (rev 80) | §8.6 (Part 2) |
 | O21 | S1: "They are deleted on thier normal without a copy". S2: "One copy for each request". S3: "You can cancel a request in writing and if a copy has waited 7 days for my recieved, i am reminded" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_COPY_REQUEST_SCOPE.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 18th of October, 2026"; `35af686`), relayed by Olamide Fadahunsi | **Decided** — every suggested option: only the entries in a copy wait for his receipt, all others are deleted on their normal day; one copy per request; cancellation in writing; a reminder when a copy has waited 7 days for his receipt. Applied in §8.6 (rev 84) | §8.6 (Part 2) |
+| O22 | Q1: "I approve the policy as written." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_POLICY_AND_CLOSURE.md` (`a592b8f`; its "Answered by" and "Date" lines blank, relayed by Olamide Fadahunsi) and signed on the policy itself ("Owner approval of this draft: Mayowa Edward Fadahunsi  Date: 18th of October, 2026"; `37d6acd`) | **Decided** — the D9 written policy, `docs/business/ACTIVITY_RECORD_PRIVACY_POLICY_DRAFT.md`, approved as written (the text of `995fbc6`); a material change needs renewed review | §8.6, §13 item 9 |
+| O23 | Q2: "Once a month, on the first working day" | Mayowa Edward Fadahunsi (owner), the same form (`a592b8f`), relayed by Olamide Fadahunsi | **Decided** — the operator runs `audit:purge` by hand once a month, on the first working day, until P12 schedules it (RESTRUCTURING_MAP P15/P12 obligation 6) | §8.6, `docs/operations/AUDIT_PURGE.md` |
 | O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself decided 2026-10-17 on the spike's evidence (the O4 entry) | §8.5; P5.8 |
 | O3 | A2a–c, F2: "Only the owner, always. The owner cannot give this to any staff member." A2b: refused attempts shown to the owner only. A2c: the owner can see one person's actions | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §6, §8.5; P5.8 |
 | O7, D5 → D5′ | A1 and F1a: inviting staff or agents and cancelling invitations, changing a staff member's role or branch, and switching a staff member or agent off or on are owner-only ("All 3"); F1b: "The owner may choose one branch or all branches." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D5's staff-delegation clause; O7 no longer arises | §3, §4, §5, §6, §7.3, §7.6; P5.5, P5.6, P5.9 |
@@ -3331,7 +3334,7 @@ signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for
 and answered and signed by the owner on 2026-10-14 (decision log above). O18, the refusal wording the reviewer asked
 the owner to decide at the P5.6 gate, was asked in `docs/business/P5_OWNER_REFUSAL_MESSAGES.md` and answered and signed by the owner on
 2026-10-14. O4 was asked on the spike's evidence in `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` and answered
-and signed by the owner on 2026-10-17. **Coming later, by design:** the owner's approval of the D9 written policy (P5.8 step e, before P5.10); the owner's
+and signed by the owner on 2026-10-17. **Coming later, by design:** the owner's approval of the D9 written policy (P5.8 step e, before P5.10) — **given 2026-10-18 (O22)**; the owner's
 final approval at P5.10. **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
 owner's G1. O4 was decided at P5.8 step (c)(2) on measured evidence, by design (2026-10-17). P5.0 then moves this log into ADR-16 (Part 1
 entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
@@ -3355,6 +3358,8 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O19 | Whether a business's activity record names the platform team member who acted on it (the merchant audit read, #33; CF5 already withholds the team's IP address and user agent) | **DECIDED (2026-10-17, signed; decision log):** "AlphaKolect team", without naming the person (`4fe4f75`; signed `894d309`). Asked 2026-10-17 (`c78dec8`) with the proposal: "AlphaKolect team", without naming the person — `actor` `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record always names the person. The contract's shape is the same either way (ADR-16 addendum, `cbe8467`); the read is not built with either answer assumed |
 | O20 | Whether entries covered by the owner's requested copy may be deleted before he confirms receipt (Part 2; the critic review of 2026-10-18) | **DECIDED (2026-10-18, signed; decision log):** only after his written receipt (`65dd6d9`; signed `6b5e318`) — Part 2 restructured accordingly (rev 80) |
 | O21 | What a copy request covers and what happens meanwhile (Part 2; the critic's round 2): S1–S3 | **DECIDED (2026-10-18, signed; decision log):** other entries deleted on their normal day; one copy per request; cancellation in writing and a reminder after 7 days (`35af686`) — applied in the consolidated Part 2 (rev 84) |
+| O22 | The owner's approval of the D9 written policy (§13 item 9) | **DECIDED (2026-10-18, signed on the policy; decision log):** approved as written (`37d6acd`) |
+| O23 | How often the clean-up runs until P12 schedules it | **DECIDED (2026-10-18; decision log):** once a month, on the first working day (`a592b8f`) |
 | O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
 
 ## 15. Legacy context (background only — not a requirement)
@@ -3385,6 +3390,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 93 | 2026-10-18 | **The owner's policy decisions recorded** — the D9 written policy approved as written and signed by the owner (O22, `37d6acd`); the clean-up run by hand once a month, on the first working day, until P12 (O23, `a592b8f`); §13 item 9 now waits only for §8.6's tests in full. The operator lock tested with a real process holding it, a connection dropped and the holder killed (`3355a83`). Nothing approved by this revision beyond the owner's own decisions. |
 | 92 | 2026-10-18 | **P5.8 step (a), P5.9 and the P5.10 documents built** — the retention purge (database, API mirror, engine, lock, command, runbook) with 38 database and 6 API tests, two command defects found by a smoke run and fixed, §8.6's tests met in part and the remainder listed (P5.8); the authorization matrix, 391 cases, and the isolation matrix's regex replaced by the declaration (P5.9); ADR-16 as built, the P5 record, the threat model, both runbooks and the policy draft (P5.10); the full gate twice (run 2's three timeouts a machine stall, rerun green), gitleaks over the full history clean; the closing form's repeated question (O17) removed. Not built: the audit reads, awaiting the reviewer's confirmation. Nothing approved by this revision. |
 | 91 | 2026-10-18 | **Part 2 approved** — by Claude, under the project lead's delegation of 2026-10-18, not by an independent review (§14): the retention design at revision 90 (`687dee6`), after ten critic rounds whose last five found the deletion-safety core and liveness sound, with every finding resolved and the residual risks stated (the attested eject where no `diskseq`, the operator's attestations, the trusted migrator, the alert on a request awaiting its copy). P5.8 step (a) may be built; P5.8's gate review stays with the independent reviewer. |
 | 90 | 2026-10-18 | **Part 2: the critic's round 10 addressed** (§14). Round 10 found the core unchanged and the handover closed but for one ordering gap: on a failure the database now decides first (`record_handover_failed` locks the attempt and is refused unless it is unended and written; the stick is touched only after it succeeds). Also only a hash mismatch or an unreadable file is a failure, a loss is refused while any stick is unaccounted for, the eject is confirmed with a fixed phrase and the attempt's id, unlabelled sticks are refused, and §8.2's atomic range reads #37–#50. Design text only. |

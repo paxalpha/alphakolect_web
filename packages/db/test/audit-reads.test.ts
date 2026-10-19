@@ -6,15 +6,16 @@ import { connectAs, expectSqlState, SQLSTATE } from './support/db.js';
 // The activity-record reads (P5.8; ADR-16 §3.5 "Addendum — the activity-record reads", confirmed 2026-10-19; P5 plan
 // §8.5): audit.read_merchant_events (#33) and audit.read_platform_events (#34), called as the API calls them
 // (alphakolect_app), effects read as the table owner. Every test reads its own window far in the future, so the rows
-// it seeds are the only ones there.
+// it seeds are the only ones there — except the concurrent purge's, which needs rows past their two years.
 
 let app: pg.Client;
 let owner: pg.Client;
+let other: pg.Client; // a second connection: concurrent, uncommitted changes
 beforeAll(async () => {
-  [app, owner] = await Promise.all([connectAs('app'), connectAs('migrator')]);
+  [app, owner, other] = await Promise.all([connectAs('app'), connectAs('migrator'), connectAs('migrator')]);
 });
 afterAll(async () => {
-  await Promise.all([app.end(), owner.end()]);
+  await Promise.all([app.end(), owner.end(), other.end()]);
 });
 
 const hash = () => createHash('sha256').update(randomBytes(32)).digest('hex');
@@ -541,5 +542,139 @@ describe('every read through the functions', () => {
       ),
       SQLSTATE.checkViolation,
     );
+  });
+});
+
+// The read-consistency guarantees (§7.2, R25; the concurrent purge, R35): authority is frozen by the reader's lock, the
+// record is not. A page is one statement: it never waits for a writer of the record or for the purge, and each row
+// committed before the first page and still present when its page is read appears exactly once.
+describe('read consistency, with a second connection (exit criterion 7)', () => {
+  const ids = (rows: Row[]) => rows.filter((r) => r.outcome === 'ok').map((r) => r.id!);
+  const pages = async (sessionId: string, w: { from: string; to: string }, first: Row) => {
+    const seen: string[] = [];
+    let after: Row | null = first;
+    for (;;) {
+      const rows = await readMerchant(sessionId, w, 2, after);
+      seen.push(...ids(rows.slice(0, 2)));
+      if (rows.length <= 2) return seen;
+      after = rows[1]!;
+    }
+  };
+
+  it('(a) an uncommitted event: the read does not wait and does not show it', async () => {
+    const b = await business();
+    const w = windowAt();
+    const committed = await event({ occurredAt: at(w.base, 1), merchantId: b.merchantId });
+    await other.query('BEGIN');
+    try {
+      const pending = (
+        await other.query(
+          `INSERT INTO audit.audit_events (occurred_at, merchant_id, action, outcome, summary)
+           VALUES ($1, $2, 'auth.logout', 'success', '{}') RETURNING id`,
+          [at(w.base, 2), b.merchantId],
+        )
+      ).rows[0].id as string;
+      await app.query(`SET statement_timeout = '3s'`); // a wait would trip it
+      const rows = await readMerchant(b.ownerSession, w);
+      expect(ids(rows)).toEqual([committed]);
+      expect(ids(rows)).not.toContain(pending);
+    } finally {
+      await app.query(`SET statement_timeout = 0`);
+      await other.query('ROLLBACK');
+    }
+  });
+
+  it('(b) committed between two pages: an older event on a later page, a newer one on none, nothing twice', async () => {
+    const b = await business();
+    const w = windowAt();
+    const seeded = [];
+    for (const h of [8, 6, 4, 2])
+      seeded.push(await event({ occurredAt: at(w.base, h), merchantId: b.merchantId }));
+    const first = await readMerchant(b.ownerSession, w, 2);
+    expect(ids(first.slice(0, 2))).toEqual([seeded[0], seeded[1]]);
+    const older = await event({ occurredAt: at(w.base, 5), merchantId: b.merchantId });
+    const newer = await event({ occurredAt: at(w.base, 9), merchantId: b.merchantId });
+    const rest = await pages(b.ownerSession, w, first[1]!);
+    expect(rest).toEqual([older, seeded[2], seeded[3]]);
+    expect(rest).not.toContain(newer);
+  });
+
+  describe('(c) the purge, concurrently (R35)', () => {
+    /** A window three years back: its events are past their two years, so the purge may delete them. */
+    const pastWindow = () => {
+      const from = new Date(Date.UTC(2023, 0, 1) + Math.floor(Math.random() * 300) * 86_400_000);
+      return {
+        from: from.toISOString(),
+        to: new Date(from.getTime() + 10 * 86_400_000).toISOString(),
+        base: from,
+      };
+    };
+    type Run = { run_id: string; as_of: string };
+    const reserve = (c: pg.Client) =>
+      c.query<Run>(`SELECT * FROM audit.reserve_purge_run(now())`).then((r) => r.rows[0]!);
+
+    it('an uncommitted purge page: the read does not wait, and still shows the rows', async () => {
+      const b = await business();
+      const w = pastWindow();
+      const old = [
+        await event({ occurredAt: at(w.base, 1), merchantId: b.merchantId }),
+        await event({ occurredAt: at(w.base, 2), merchantId: b.merchantId }),
+      ];
+      await other.query('BEGIN');
+      try {
+        const run = await reserve(other);
+        for (let n = 1; ;) {
+          const p = (
+            await other.query(`SELECT * FROM audit.purge_candidates($1, $2, $3, 1000)`, [
+              run.run_id,
+              run.as_of,
+              n,
+            ])
+          ).rows[0];
+          if (p.row_count > 0) {
+            await other.query(`SELECT audit.purge_expired_events($1, $2, $3)`, [run.run_id, run.as_of, n]);
+            n++;
+          }
+          if (p.exhausted) break;
+        }
+        expect(
+          (await other.query(`SELECT count(*)::int AS n FROM audit.audit_events WHERE id = ANY($1)`, [old]))
+            .rows[0].n,
+        ).toBe(0);
+        await app.query(`SET statement_timeout = '3s'`);
+        expect(ids(await readMerchant(b.ownerSession, w)).sort()).toEqual([...old].sort());
+      } finally {
+        await app.query(`SET statement_timeout = 0`);
+        await other.query('ROLLBACK');
+      }
+    });
+
+    it('a purge page committed between two pages: what it deleted is gone, every remaining row appears once', async () => {
+      const b = await business();
+      const w = pastWindow();
+      const seeded: string[] = []; // newest first
+      for (const h of [6, 5, 4, 3, 2, 1])
+        seeded.push(await event({ occurredAt: at(w.base, h), merchantId: b.merchantId }));
+      const first = await readMerchant(b.ownerSession, w, 2);
+      expect(ids(first.slice(0, 2))).toEqual(seeded.slice(0, 2));
+      // A plain run whose first pages delete the two oldest of these rows (and any other row past its two years that
+      // sorts before them); the rest of the run is released unfinished.
+      const run = await reserve(owner);
+      const deleted: string[] = [];
+      for (let n = 1; !deleted.includes(seeded[4]!) || !deleted.includes(seeded[5]!);) {
+        const p = (
+          await owner.query(`SELECT * FROM audit.purge_candidates($1, $2, $3, 1)`, [run.run_id, run.as_of, n])
+        ).rows[0];
+        expect(p.exhausted && p.row_count === 0, 'the purge reached its end before these rows').toBe(false);
+        if (p.row_count > 0) {
+          await owner.query(`SELECT audit.purge_expired_events($1, $2, $3)`, [run.run_id, run.as_of, n]);
+          deleted.push(...(p.event_ids as string[]));
+          n++;
+        }
+      }
+      await owner.query(`SELECT audit.release_purge_run($1, false)`, [run.run_id]);
+      expect(deleted).not.toContain(seeded[2]);
+      expect(await pages(b.ownerSession, w, first[1]!)).toEqual([seeded[2], seeded[3]]);
+    });
   });
 });

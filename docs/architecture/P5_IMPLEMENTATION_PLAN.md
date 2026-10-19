@@ -1,14 +1,15 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 94 — the audit reads being built; awaiting reviews.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
-addendum is **confirmed by the independent reviewer** (2026-10-19, design only, §14): the reads #33 and #34 may be built,
-the busy-platform-staff query shape measured before their indexes are final. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
+**Status: revision 96 — combined P5.8–P5.10 technical review and revised §8.6 allocation approved; P5.8 test gate and closure remain open.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
+and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
 APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
-review (§14). P5.8 step (a), the retention purge, is **built** (revision 92), its §8.6 test list met in part (the rest listed
-in P5.8 below); P5.9's matrix is built; the P5.10 documents are written. **Waiting for:** the reads #33 and #34 (being
-built) and §8.6's tests in full — P5 may not close without either (the reviewer, 2026-10-19); the P5.8–P5.10 gate reviews; the owner's final approval. The owner approved and signed the D9 policy and chose a
-monthly clean-up (2026-10-18; O22, O23).
+review (§14). P5.8's retention purge and audit reads are built; the approved §8.6 allocation still has an untested
+lost-response fault-injection item and a required pre-handover rehearsal; P5.9's matrix is built; the P5.10 documents are
+written. **Waiting for:** the lost-response tests, passing Ubuntu CI, the full gate twice, full-history gitleaks, and
+the owner's final approval. Separately, the recorded rehearsal is required before the first real copy. The owner
+approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
 
 | | |
 |---|---|
@@ -2992,25 +2993,45 @@ retention, overrides that only lengthen; the app and reporting role kept out; ev
 the clearing's batches, idle and revoked-after-expiry sessions, valid links and live sessions never; the export's,
 handover's, delivery's, destruction's and loss's database rules. Mutation checks: the guard without its held-row check
 and without its copy-awaited check, the verification without its disk-sequence check, the destruction without its
-unaccounted-stick check — each fails the matching case. **§8.6's Tests paragraph is not yet met in full** — the Part 2
-approval requires it, and P5.8's gate review is the independent reviewer's. Not yet tested: the request race at the
-lease's edge with a test-only gate (round 4); a late commit during a page's deletion (R38); `lock_not_available` while a
-page transaction holds the row, and renewal after a long page; the clearing raced 50 times against a revocation, two
-clearings at once, and clearing while an export is unresolved; the operator lock with real processes beyond a holder
-killed and a connection dropped (`3355a83`): a squatted name, an unsupported platform, a container, no child process
-while held; the
-connection's heartbeat and idle timeout; the export's file failures (an unwritable folder, a full disk, a kill mid-write
-or between the link and the confirmation, a stop between the link and the unlink) — partly covered by `purge.test.ts` (only its own partial file
-removed, a planted one untouched, and an empty export discarded with no file left, `0cf9a4a`); `--check-files`' staged
-cases, the FAT and exFAT probe and the POSIX mode; recovery with the volume unmounted; the command's handover steps
-(a FAT medium, verification in a new process, staged `sysfs` values, a serial mismatch, a truncated copy, lost responses
-injected, the volume label); the seven-day reminders; the listing while the lock is held; and the concurrent purge
-against the paginated reads (R25, R35), which waits for the reads. **Evidence:** the full gate twice at `3dbb482` — run 1
+unaccounted-stick check — each fails the matching case. **Reviewer-approved §8.6 test allocation (revision 96):**
+coverage includes the request race at the lease's edge (round 4), a late commit during page deletion (R38), reservation
+contention and renewal after a long page, clearing races, process locks, connection heartbeat and idle timeout, export
+write failures and kills at each publication boundary, recovery modes, listings/reminders, and R25/R35 consistency
+against both audit reads. The one-minute idle timeout is now exercised against PostgreSQL and the connection receives
+SQLSTATE `25P03` after the idle transaction expires.
+
+The POSIX directory-mode check is assigned to the existing Ubuntu CI job in `.github/workflows/ci.yml`, whose `pnpm
+test` and `pnpm test:concurrency` commands include these suites; its successful CI run remains a closure prerequisite.
+Injected `ENOSPC` and a renamed folder are accepted as stand-ins for the write-failure and unavailable-path code paths;
+they do not claim to reproduce a physically full disk or an unmounted volume. FAT/exFAT behavior, real full-disk and
+volume-removal checks, and the physical removable-stick handover (new-process verification, label/serial/disk-sequence
+checks and truncation) are assigned to the documented test-database rehearsal in
+`docs/operations/AUDIT_PURGE.md`. The operator must record that rehearsal before the first real copy is handed to the
+owner; a failed step stops that handover. **The rehearsal has not yet been performed.** This disposition replaces
+requiring those hardware conditions in the automated §8.6 suite. **Still required before P5.8's test gate is complete:**
+fault-injected lost responses at database/filesystem operation boundaries, especially a committed mutation whose reply
+is lost. No current test injects that unknown outcome; killing the command after it receives the confirmation response
+is not equivalent. This remains an automated fault-injection obligation and is not moved to the physical rehearsal by
+this review. **Evidence:** the full gate twice at `3dbb482` — run 1
 all passing (format, lint, typecheck, build, OpenAPI check; contracts 64, database 673, API 1143, the races 16 at 50
 staged runs each); run 2 the same except three API tests in three files timing out at 30 s together with Vitest's own
 `Timeout calling "onTaskUpdate"` (the machine stalled, under 1 GB free), the API suite then rerun: 1143 of 1143.
 After `1f7200f` and `6e7919f` (tests only): the database suite 698 of 698 in 41 files, format, lint and typecheck
-passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean.
+passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean. **Focused
+validation on 2026-10-19 after the read and purge follow-ups:** API purge slice (five files, 33 tests, run in focused
+groups), database audit-read/purge slice (three files, 32 tests), including the idle-timeout test, API typecheck,
+ESLint and Prettier pass; no full repository gate, Ubuntu CI result, or new gitleaks scan is claimed here.
+
+**Steps (c)(3)–(4) built after the addendum confirmation (revision 95).** The R19 guard now recognizes and checks the
+merchant-scoped read's own audit-event insert (`3cd0362`). The O4 measurement named by the reviewer was run against
+two million events; its composite `(merchant_id, actor_identity_id, occurred_at, id)` index was adopted, and every
+query shape of both reads was measured as the functions plan it per call (`33ada71`). Migration
+`20261019000100_audit_reads` adds both designated functions, the indexes, the recorded-audience `CHECK`, and removes
+the app's `SELECT` on `audit.audit_events` and the reporting role's `ip`/`user_agent` access (`2e981e0`). Contracts
+and OpenAPI (`89d5598`), API handlers and writer/route guards (`e0b22c3`), and authorization/isolation-matrix support
+(`1f0bb49`) are built. The threat model, ADR-16 as-built note and P5 record were updated (`70401fb`, `edf2b14`,
+`4b6d2c0`). The read tests cover visibility, permission, failure injection, paging and shared timestamps; R25/R35
+consistency scenarios run against both reads (`357df26`).
 
 ### P5.9 — Authorization matrix and regression gate
 
@@ -3052,15 +3073,16 @@ passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; eve
   gitleaks over full history; the three review documents are already committed on this branch as planning records —
   whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
 - **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.
-- **Done so far (revision 92, 2026-10-18):** ADR-16 as built (`9d412d0`); the P5 record in `RESTRUCTURING_MAP.md`
+- **Done so far (revision 96, 2026-10-19):** ADR-16 as built (`9d412d0`, updated for #33/#34 in `edf2b14`); the P5 record in `RESTRUCTURING_MAP.md`
   (`fecca3f`, `d08dcdc`); the threat model `docs/security/P5_THREAT_MODEL.md` (`d5fbfb0`); the runbooks
   `docs/operations/AUDIT_PURGE.md` (`c7cc91a`) and `AUTHORIZATION_CONTAINMENT.md` (`3fc54d9`); the D9 policy drafted for
   the owner (`995fbc6`); the full gate twice and gitleaks over the full history (P5.8 above). The review documents stay
   in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **§13, item by item:** 1 met;
-  2 met for every endpoint built (the reads' rows follow them); 3, 4, 6, 8, 10, 11 met; 5 met except the audit reads;
-  7 open for the reads (isolated and audited reads, the concurrent purge against them); 9 open — §8.6's tests in full (the
-  owner approved and signed the policy, O22). **Open:** the reviewer's confirmation of the addendum, the reads, the P5.8–P5.10
-  gate reviews, the owner's final approval.
+  2 met for every endpoint built; 3, 4, 5, 6, 7, 8, 10, 11 met (both reads are isolated and audited, and R25/R35 are
+  exercised against both reads); 9 open — the lost-response fault injection, Ubuntu CI, final gate twice and full-history
+  gitleaks remain; the owner approved and signed the policy (O22). **Open for closure:** these validations and the
+  owner's unconditional final approval. **Operational prerequisite:** record the approved hardware rehearsal before
+  the first real handover. The combined P5.8–P5.10 technical review is approved below, not a closure sign-off.
 
 ## 11. Rollout and rollback (no fail-open)
 
@@ -3185,6 +3207,28 @@ Part 2 boundary in place (§14, §16).
     the matrix; P5 claims no end-to-end branch isolation for resources that do not exist yet (D7, §7.6).
 
 ## 14. Open items for the reviewer and owner
+
+**Independent reviewer — combined P5.8–P5.10 technical review and revised §8.6 test allocation (2026-10-19, revision 96). Verdict:**
+"I approve the revised §8.6 allocation. The POSIX report-directory mode check is assigned to the existing Ubuntu CI
+job (`pnpm test` and `pnpm test:concurrency`); that CI run must pass. An injected `ENOSPC` write failure and a renamed
+report directory are accepted as automated stand-ins for the full-disk error path and unavailable-directory path;
+neither is evidence of a physically full disk or an unmounted volume. The real FAT/exFAT, removable-stick handover,
+volume-removal and disk-sequence checks are assigned to the documented rehearsal on a throwaway test database. The
+rehearsal must be recorded before the first real copy is handed to the owner, and a failed step stops that handover.
+
+The combined technical review found no additional P5.8–P5.10 design or implementation finding in the material reviewed.
+However, fault-injected lost responses at database/filesystem boundaries remain an untested §8.6 obligation, especially
+a committed mutation whose reply is lost. A process kill after the command receives a confirmation response is not an
+equivalent test. Until that test is added and passes, P5.8's test gate is not approved as complete. This review approves
+the revised allocation but does not close P5. P5 closure still requires the lost-response tests, passing Ubuntu CI, the
+final gate twice, full-history gitleaks, and the owner's final approval. The recorded rehearsal is a prerequisite to
+the first real copy, not a P5-closure prerequisite under this allocation."
+
+**Disposition.** This is the combined technical review of P5.8–P5.10 and approval of the revised §8.6 allocation, not
+completion of P5.8's test gate. The focused API and database slices passed; the lost-response injection tests, full
+repository gate, fresh gitleaks scan and Ubuntu CI have not yet been run against the final tree. The rehearsal is also
+pending. The owner's answer on `P5_OWNER_FINAL_APPROVAL.md` is conditional on this review and the remaining closure
+checks; it is not unconditional closure approval.
 
 **Critic review of Part 2, round 10 (2026-10-18, on revision 89; a new fresh-context agent; a narrow confirmation round; no sign-off).** Verdict: "the deletion-safety core is unchanged, and the rev-89 changes are mostly sound and consistent … The handover state machine is closed except for one ordering gap." Findings: P0 none; P1 none; **P2** (1) the failure path deleted the stick's file before the database moved the attempt out of the unended state, so a commit of the successful record landing late could still leave a recorded attempt on a wiped stick; and P3 points (transient refusals treated as failures, `record_report_lost` with an unaccounted stick, the reason given for keeping `ended_at`, an unlabelled stick's confirmation, §8.2's atomic range). **Disposition (revision 90):** (1) the database decides first — `record_handover_failed` locks the attempt and is refused unless it is unended and written, and the stick is touched only after that call succeeds (or a re-read shows it abandoned by it); the P3 points applied — only a hash mismatch or an unreadable or truncated file is a failure, a loss refused while any attempt lacks a fate, the eject confirmed with a fixed phrase and the attempt's id, unlabelled sticks refused, §8.2's range #37–#50.
 
@@ -3391,6 +3435,8 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 96 | 2026-10-19 | **Combined P5.8–P5.10 technical review; revised §8.6 allocation approved, P5.8 test gate still open.** POSIX directory mode is assigned to existing Ubuntu CI; injected `ENOSPC` and a renamed directory are accepted only as code-path stand-ins; physical full-disk, unmount and removable-media checks are assigned to the test-database rehearsal before first handover. The one-minute idle timeout is verified against PostgreSQL (`25P03`). A separate lost-response-after-commit fault-injection test remains untested and is not waived. P5 closure requires that test, passing Ubuntu CI, the final gate twice, full-history gitleaks, and unconditional owner approval; the rehearsal is required before first handover, not as a closure gate. |
+| 95 | 2026-10-19 | **The confirmed activity-record reads built; more of §8.6's tests written.** #33/#34 and the measured index change are recorded above; the app/reporting direct read grants are removed; matrices and as-built documents include the reads. §13 criteria 5 and 7 are met for the reads. Added process-level command cases, host/connection tests, export heartbeat, injected `ENOSPC`, retention concurrency races and R25/R35 tests for both reads; focused API and database slices pass. The full §8.6 list remains open for real disk exhaustion and removable-media/kernel-specific handover tests. No full repository gate, new gitleaks scan, P5 gate review or owner final approval is claimed by this revision. |
 | 94 | 2026-10-19 | **The audit-read addendum confirmed by the independent reviewer — design only** (§14, verbatim): #33 and #34 may be built, the busy-platform-staff query shape measured before the indexes are final; no gate review, no closure, no exception for the reads or §8.6's tests. The owner's signature on the closing form (`c245394`); the empty-export test (`0cf9a4a`) removed from P5.8's list of tests not yet written. |
 | 93 | 2026-10-18 | **The owner's policy decisions recorded** — the D9 written policy approved as written and signed by the owner (O22, `37d6acd`); the clean-up run by hand once a month, on the first working day, until P12 (O23, `a592b8f`); §13 item 9 now waits only for §8.6's tests in full. The operator lock tested with a real process holding it, a connection dropped and the holder killed (`3355a83`). Nothing approved by this revision beyond the owner's own decisions. |
 | 92 | 2026-10-18 | **P5.8 step (a), P5.9 and the P5.10 documents built** — the retention purge (database, API mirror, engine, lock, command, runbook) with 38 database and 6 API tests, two command defects found by a smoke run and fixed, §8.6's tests met in part and the remainder listed (P5.8); the authorization matrix, 391 cases, and the isolation matrix's regex replaced by the declaration (P5.9); ADR-16 as built, the P5 record, the threat model, both runbooks and the policy draft (P5.10); the full gate twice (run 2's three timeouts a machine stall, rerun green), gitleaks over the full history clean; the closing form's repeated question (O17) removed. Not built: the audit reads, awaiting the reviewer's confirmation. Nothing approved by this revision. |

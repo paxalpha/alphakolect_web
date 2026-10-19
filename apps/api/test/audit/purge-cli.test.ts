@@ -595,10 +595,17 @@ describe('answers lost after a step took effect', () => {
     query: async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) =>
       (await owner.query<T>(sql, params)).rows,
   };
-  const exportInto = (db: Queryable, dir: string, extra: Partial<Parameters<typeof runPurge>[0]> = {}) =>
+  const databaseNow = async () =>
+    (await owner.query(`SELECT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS now`))
+      .rows[0].now as string;
+  const exportInto = async (
+    db: Queryable,
+    dir: string,
+    extra: Partial<Parameters<typeof runPurge>[0]> = {},
+  ) =>
     runPurge({
       db,
-      asOf: new Date().toISOString(),
+      asOf: await databaseNow(),
       directory: dir,
       writerHostId: host.hostId,
       writerLockKey: host.lockKey,
@@ -624,7 +631,7 @@ describe('answers lost after a step took effect', () => {
     it('a page deleted, its answer lost: the run reads the page’s own mark, counts it once, and goes on', async () => {
       const ids = await oldEvents(3);
       const db = losing('audit.purge_expired_events');
-      const result = await runPurge({ db, asOf: new Date().toISOString() });
+      const result = await runPurge({ db, asOf: await databaseNow() });
       expect(db.lost).toBe(1);
       expect(result).toMatchObject({ kind: 'plain' });
       expect(await present(ids)).toBe(0);
@@ -637,7 +644,7 @@ describe('answers lost after a step took effect', () => {
     it('the release, its answer lost: the reservation is free all the same; the command reports a failure', async () => {
       await oldEvents(1);
       await expect(
-        runPurge({ db: losing('audit.release_purge_run'), asOf: new Date().toISOString() }),
+        runPurge({ db: losing('audit.release_purge_run'), asOf: await databaseNow() }),
       ).rejects.toMatchObject({
         code: 'ECONNRESET',
       });

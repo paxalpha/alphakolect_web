@@ -44,6 +44,9 @@ export type PurgeResult =
  */
 export type PauseStage = 'mid_write' | 'after_link' | 'before_confirm' | 'after_confirm';
 export type Pause = (stage: PauseStage) => Promise<void>;
+export type ChunkWriter = (write: () => Promise<void>) => Promise<void>;
+/** Publishes the verified file under its final name (a hard link); tests use it to lose its answer. */
+export type Publisher = (from: string, to: string) => Promise<void>;
 const noPause: Pause = async () => undefined;
 
 export class PurgeError extends Error {
@@ -181,6 +184,8 @@ async function writeReport(
   lockKey: string,
   heartbeatMs: number,
   pause: Pause,
+  writeChunk: ChunkWriter,
+  publish: Publisher,
 ): Promise<Omit<Extract<PurgeResult, { kind: 'export' }>, 'metadataCleared'>> {
   const name = reportName(run.run_id);
   const finalPath = join(directory, name);
@@ -251,8 +256,10 @@ async function writeReport(
           throw new PurgeError('purge_manifest_invalid');
         const digest = sha256(texts.map((text) => `${text}\n`).join(''));
         if (digest !== page.page_digest) throw new PurgeError(`purge_page_digest_mismatch_${pageNo}`);
-        for (const text of texts) await handle.writeFile(`${text}\n`, 'utf8');
-        if (pageNo === 1) await pause('mid_write');
+        for (const [index, text] of texts.entries()) {
+          await writeChunk(() => handle!.writeFile(`${text}\n`, 'utf8'));
+          if (pageNo === 1 && index === 0) await pause('mid_write');
+        }
         pageCounts.push(page.row_count);
         pageDigests.push(page.page_digest);
         rowCount += page.row_count;
@@ -273,7 +280,7 @@ async function writeReport(
     const pageManifestDigest = sha256(`${pageDigests.join('\n')}\n`);
 
     try {
-      await link(partialPath, finalPath);
+      await publish(partialPath, finalPath);
     } catch (error) {
       if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EEXIST') {
         pathCollision = true;
@@ -367,6 +374,10 @@ export async function runPurge(args: {
   heartbeatMs?: number;
   /** A test-only gate: called at each PauseStage of an export. */
   pause?: Pause;
+  /** Wraps an export chunk write; tests use it to inject disk write errors. */
+  writeChunk?: ChunkWriter;
+  /** Wraps the publication link; tests use it to report an error after the link took effect. */
+  publish?: Publisher;
 }): Promise<PurgeResult> {
   args = { ...args, db: serialized(args.db) };
   const [run] = await args.db.query<PurgeRun>(`SELECT * FROM audit.reserve_purge_run($1::timestamptz)`, [
@@ -414,6 +425,8 @@ export async function runPurge(args: {
         args.writerLockKey!,
         args.heartbeatMs ?? HEARTBEAT_MS,
         args.pause ?? noPause,
+        args.writeChunk ?? ((write) => write()),
+        args.publish ?? link,
       );
       pages = exportResult.pages;
     }

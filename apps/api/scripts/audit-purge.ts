@@ -1,7 +1,6 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { createReadStream } from 'node:fs';
 import { access, link, open, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import path, { dirname, isAbsolute, join, parse as parsePath, relative, sep } from 'node:path';
@@ -11,7 +10,9 @@ import pg from 'pg';
 import { z } from 'zod';
 import type { Queryable } from '../src/platform/db.js';
 import { inspectReportFile, runPurge, type Pause } from '../src/modules/audit/purge.js';
+import { purgeClientConfig } from '../src/modules/audit/purge-connection.js';
 import { hostIdentity, type Host } from '../src/modules/audit/purge-host.js';
+import { verifyHandover, writeHandover } from '../src/modules/audit/purge-handover.js';
 import { acquirePurgeLock } from '../src/modules/audit/purge-lock.js';
 
 type VolumeInfo = {
@@ -21,15 +22,6 @@ type VolumeInfo = {
   serial: string;
   diskseq: string | null;
   removable: boolean;
-};
-type StoredMedium = Pick<VolumeInfo, 'path' | 'volumeKey' | 'label' | 'serial'>;
-type HandoverAttempt = {
-  id: string;
-  report_id: string;
-  medium: string;
-  write_diskseq: string | null;
-  outcome: string | null;
-  written_at: Date | null;
 };
 type ReportState = {
   id: string;
@@ -143,14 +135,16 @@ async function validateReportDirectory(input: string, host: Host): Promise<strin
   const probe = join(directory, `.alphakolect-hardlink-${randomUUID()}`);
   const probeLink = `${probe}.link`;
   try {
+    let probeHandle: Awaited<ReturnType<typeof open>> | undefined;
     try {
-      const handle = await open(probe, 'wx', 0o600);
-      await handle.writeFile('probe');
-      await handle.sync();
-      await handle.close();
+      probeHandle = await open(probe, 'wx', 0o600);
+      await probeHandle.writeFile('probe');
+      await probeHandle.sync();
     } catch {
       // Nothing can be written there: the export would fail at its first file.
       throw new Error('report_directory_not_writable');
+    } finally {
+      await probeHandle?.close().catch(() => undefined);
     }
     try {
       await link(probe, probeLink);
@@ -212,19 +206,6 @@ async function inspectVolume(input: string, requireRemovable: boolean): Promise<
 
 function realpathSync(pathname: string): string {
   return exec('realpath', [pathname]);
-}
-
-async function sha256File(pathname: string): Promise<string> {
-  const hash = createHash('sha256');
-  for await (const chunk of createReadStream(pathname)) hash.update(chunk as Buffer);
-  return hash.digest('hex');
-}
-
-function parseStoredMedium(value: string): StoredMedium {
-  const medium = JSON.parse(value) as Partial<StoredMedium>;
-  if (!medium.path || !medium.volumeKey || !medium.label || !medium.serial)
-    throw new Error('stored_medium_metadata_invalid');
-  return medium as StoredMedium;
 }
 
 async function requireSeparateVolume(sourceDirectory: string, targetDirectory: string): Promise<void> {
@@ -345,13 +326,7 @@ async function openMigrator(): Promise<{ db: Queryable; close(): Promise<void> }
     .object({ DATABASE_MIGRATOR_URL: z.url({ protocol: /^postgres(ql)?$/ }) })
     .safeParse(process.env);
   if (!env.success) throw new Error('invalid_configuration_DATABASE_MIGRATOR_URL');
-  const client = new pg.Client({
-    connectionString: env.data.DATABASE_MIGRATOR_URL,
-    application_name: 'alphakolect-audit-purge',
-    statement_timeout: 300_000,
-    idle_in_transaction_session_timeout: 60_000,
-    keepAlive: true,
-  });
+  const client = new pg.Client(purgeClientConfig(env.data.DATABASE_MIGRATOR_URL));
   await client.connect();
   return {
     db: {
@@ -370,7 +345,7 @@ async function openMigrator(): Promise<{ db: Queryable; close(): Promise<void> }
 function testPause(): { pause?: Pause } {
   const at = process.env.AUDIT_PURGE_TEST_PAUSE_AT;
   const file = process.env.AUDIT_PURGE_TEST_PAUSE_FILE;
-  if (!at || !file) return {};
+  if (process.env.NODE_ENV !== 'test' || !at || !file) return {};
   return {
     pause: async (stage) => {
       if (stage !== at) return;
@@ -668,103 +643,31 @@ async function run(): Promise<void> {
       if (!report) throw new Error('report_not_found');
       await requireLocalMarker(report, host!);
       await requireSeparateVolume(report.directory, medium.path);
-      const targetPath = join(medium.path, reportName(report.run_id));
-
       if (!parsed.values.verify) {
-        const [attemptRow] = await connection.db.query<{ id: string }>(
-          `SELECT audit.begin_report_handover($1, $2) AS id`,
-          [
-            reportId,
-            JSON.stringify({
-              path: medium.path,
-              volumeKey: medium.volumeKey,
-              label: medium.label,
-              serial: medium.serial,
-            }),
-          ],
-        );
-        const attemptId = attemptRow!.id;
-        const target = await open(targetPath, 'wx', 0o600);
-        try {
-          for await (const chunk of createReadStream(report.file_location))
-            await target.writeFile(chunk as Buffer);
-          await target.sync();
-          await target.close();
-          await connection.db.query(`SELECT audit.record_handover_written($1, $2)`, [
-            attemptId,
-            medium.diskseq,
-          ]);
-        } catch (error) {
-          await target.close().catch(() => undefined);
+        const { attemptId } = await writeHandover(connection.db, report, medium, (attempt) =>
           process.stderr.write(
-            `Handover attempt ${attemptId} is unresolved. Do not use this medium; inspect and securely wipe or destroy it, then run audit:purge-report-handover-abandoned --attempt ${attemptId} --note "what became of the stick".\n`,
-          );
-          throw error;
-        }
+            `Handover attempt ${attempt} is unresolved. Do not use this medium; inspect and securely wipe or destroy it, then run audit:purge-report-handover-abandoned --attempt ${attempt} --note "what became of the stick".\n`,
+          ),
+        );
         process.stdout.write(
           `Report written to ${medium.label} (${medium.serial}), SHA-256 ${report.file_sha256}, attempt ${attemptId}. Safely eject and physically reinsert the stick, then run audit:purge-report-handover --report ${reportId} --attempt ${attemptId} --verify --to "${medium.path}".\n`,
         );
         return;
       }
 
-      let attemptId = parsed.values.attempt;
-      let attempt: HandoverAttempt | undefined;
-      if (attemptId) {
-        const [row] = await connection.db.query<HandoverAttempt>(
-          `SELECT id, report_id, medium, write_diskseq, outcome, written_at FROM audit.purge_report_handovers WHERE id = $1 AND report_id = $2`,
-          [attemptId, reportId],
-        );
-        attempt = row;
-      } else {
-        const [row] = await connection.db.query<HandoverAttempt>(
-          `SELECT id, report_id, medium, write_diskseq, outcome, written_at FROM audit.purge_report_handovers
-            WHERE report_id = $1 AND outcome IS NULL AND written_at IS NOT NULL ORDER BY started_at DESC LIMIT 1`,
-          [reportId],
-        );
-        attempt = row;
-        attemptId = row?.id;
-      }
-      if (!attemptId || !attempt || attempt.outcome !== null || !attempt.written_at) {
-        throw new Error('handover_attempt_not_verifiable');
-      }
-      const recordedMedium = parseStoredMedium(attempt.medium);
-      if (
-        recordedMedium.serial !== medium.serial ||
-        recordedMedium.label !== medium.label ||
-        recordedMedium.volumeKey !== medium.volumeKey ||
-        path.resolve(recordedMedium.path).toLowerCase() !== path.resolve(medium.path).toLowerCase()
-      ) {
-        throw new Error('medium_identity_mismatch');
-      }
-      if (attempt.write_diskseq !== null && (!medium.diskseq || medium.diskseq === attempt.write_diskseq)) {
-        throw new Error('medium_not_ejected_and_reinserted');
-      }
-      if (!(await askEject(attemptId, medium.label))) throw new Error('eject_not_confirmed');
-
-      let actualHash: string;
-      try {
-        actualHash = await sha256File(targetPath);
-      } catch {
-        actualHash = '';
-      }
-      if (actualHash !== report.file_sha256) {
-        await connection.db.query(`SELECT audit.record_handover_failed($1, $2)`, [
-          attemptId,
-          'medium_file_unreadable_or_hash_mismatch',
-        ]);
-        await rm(targetPath, { force: true });
-        process.stderr.write(
-          `The handover failed. Securely wipe or destroy the stick, then record its fate with audit:purge-report-handover-abandoned --attempt ${attemptId} --note "what became of the stick".\n`,
-        );
-        throw new Error('medium_hash_mismatch');
-      }
-      await connection.db.query(`SELECT audit.record_report_handover($1, $2, true, $3)`, [
-        attemptId,
-        actualHash,
-        medium.diskseq,
-      ]);
+      const verified = await verifyHandover(
+        connection.db,
+        report,
+        medium,
+        parsed.values.attempt,
+        askEject,
+        (attempt) =>
+          process.stderr.write(
+            `The handover failed. Securely wipe or destroy the stick, then record its fate with audit:purge-report-handover-abandoned --attempt ${attempt} --note "what became of the stick".\n`,
+          ),
+      );
       process.stdout.write(
-        `Handover verified: attempt ${attemptId}, ${medium.label}, SHA-256 ${actualHash}. Obtain the owner's written receipt quoting this attempt, label, and hash prefix.\n`,
+        `Handover verified: attempt ${verified.attemptId}, ${medium.label}, SHA-256 ${verified.sha256}. Obtain the owner's written receipt quoting this attempt, label, and hash prefix.\n`,
       );
       return;
     }

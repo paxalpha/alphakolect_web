@@ -22,11 +22,9 @@ const Window = {
     .datetime({ offset: true })
     .meta({ description: 'Start of the window, included (ISO 8601, with an offset)' }),
   /** The window's end, excluded; at most 31 days after `from`. */
-  to: z.iso
-    .datetime({ offset: true })
-    .meta({
-      description: 'End of the window, excluded; at most 31 days after `from` (ISO 8601, with an offset)',
-    }),
+  to: z.iso.datetime({ offset: true }).meta({
+    description: 'End of the window, excluded; at most 31 days after `from` (ISO 8601, with an offset)',
+  }),
 };
 
 export const MerchantAuditEventsQuery = PageQuery.extend({

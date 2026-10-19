@@ -698,10 +698,12 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
 
     it('( #34 ) an uncommitted purge page does not block the platform read or hide its rows', async () => {
       const admin = await platformMember('super_admin');
+      // Filtered by a business of its own: other test files leave old events in the past (2-3 years back).
+      const b = await business();
       const w = pastWindow();
       const old = [
-        await event({ occurredAt: at(w.base, 1), merchantId: null }),
-        await event({ occurredAt: at(w.base, 2), merchantId: null }),
+        await event({ occurredAt: at(w.base, 1), merchantId: b.merchantId }),
+        await event({ occurredAt: at(w.base, 2), merchantId: b.merchantId }),
       ];
       await other.query('BEGIN');
       try {
@@ -721,7 +723,9 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
           if (p.exhausted) break;
         }
         await app.query(`SET statement_timeout = '3s'`);
-        expect(ids(await readPlatform(admin.session, w)).sort()).toEqual([...old].sort());
+        expect(ids(await readPlatform(admin.session, w, { merchantId: b.merchantId })).sort()).toEqual(
+          [...old].sort(),
+        );
       } finally {
         await app.query(`SET statement_timeout = 0`);
         await other.query('ROLLBACK');

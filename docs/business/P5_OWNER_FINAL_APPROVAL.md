@@ -7,7 +7,7 @@ are approving and what is left for later, so that you can decide.
 
 As before, **"Not sure" is a fine answer.**
 
-**Answered by:** **Date:**
+**Answered by: Mayowa Edward Fadahunsi** **Date: 19th of October 2026**
 
 ---
 
@@ -28,13 +28,13 @@ As before, **"Not sure" is a fine answer.**
 - **An emergency switch.** If a permission is ever given too widely, staff permissions can be paused at once while
   every business owner and the super admin keep full access, as you decided.
 
-## What is left for later, by decision
+## What remains before closure and what is left for later
 
 - **The first copy hand-over is rehearsed before it is used.** The parts that need a real USB stick and real disks
   could not be tested automatically. Before the first real copy reaches you, the operator rehearses them once on test
   data, following a written checklist, and records the result.
-- **The independent reviewer's final checks** of the last three parts of the stage were waived by the project lead
-  on 19 October 2026 so that the work can move on; every earlier part was reviewed and approved.
+- **Independent review is still required.** The reviewer must complete and record the P5.8, P5.9 and P5.10 gate
+  reviews before you are asked to approve closing this stage.
 - **Scheduled clean-up and alerts** come in later stages; until then the clean-up is run by hand, once a month.
 
 ## Q1. Do you approve closing this stage?
@@ -44,7 +44,7 @@ As before, **"Not sure" is a fine answer.**
 - ☐ Not yet: I want the independent reviewer's final checks first
 - ☐ Not sure
 
-> Answer:
+> Answer: I approve closing this stage, with the condition that the independent reviewer's final checks are completed and recorded before final closure.
 
 ---
 

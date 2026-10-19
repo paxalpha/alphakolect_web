@@ -1174,8 +1174,11 @@ const EQUALITY = new RegExp(`^(${IDENT})\\s*=\\s*(${IDENT})$`);
  *     item of this query or of an enclosing one;
  *   - a variable a statement selected INTO from such a call's merchant_id;
  *   - the business column of another table of this query or an enclosing one that is itself so bound.
- * A LEFT JOIN's ON clause binds only the item it joins. A right or full outer join, a comma join, or any other mention
- * of a tenant table is a finding: the check fails closed on whatever it cannot read.
+ * A LEFT JOIN's ON clause binds only the item it joins. One write is read too (P5.8, the merchant read's own event):
+ * `INSERT INTO <tenant table> (…, merchant_id, …) VALUES (…)` whose business column is given a session-derived variable
+ * — a sensitive read records itself in its own business's record, never another's. A right or full outer join, a comma
+ * join, any other insert or write, or any other mention of a tenant table is a finding: the check fails closed on
+ * whatever it cannot read.
  */
 export function merchantScopeFindings(f: FnRow, tenant: ReadonlyMap<string, string>): string[] {
   const key = `${f.schema}.${f.name}`;
@@ -1270,7 +1273,44 @@ export function merchantScopeFindings(f: FnRow, tenant: ReadonlyMap<string, stri
         );
       refs.push({ table, alias, pos: m.index! });
     }
-    // Any other mention of a tenant table (a comma join, a write, …) is one the check cannot read.
+    // An insert of one row into a tenant table with an explicit column list: its business column must be given a
+    // session-derived variable (checked once the bound values are known, below).
+    const inserts: { table: string; value: string | undefined; pos: number }[] = [];
+    for (const m of own.matchAll(/\binsert\s+into\s+([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s*\(/g)) {
+      const table = `${m[1]}.${m[2]}`;
+      if (!tenant.has(table)) continue;
+      // The mention is read here, whatever its form (the check below skips a name followed by a parenthesis).
+      itemAt.add(m.index! + m[0].indexOf(m[1]!));
+      const unreadable = () =>
+        findings.push(`${key}: ${at(b.start + m.index!)}: an insert into ${table} the check cannot read`);
+      const colsAt = m.index! + m[0].length;
+      const colsEnd = own.indexOf(')', colsAt);
+      const values = colsEnd < 0 ? null : own.slice(colsEnd + 1).match(/^\s*values\s*\(/);
+      if (!values) {
+        unreadable(); // INSERT … SELECT and the like
+        continue;
+      }
+      const valsAt = colsEnd + 1 + values[0].length;
+      let depth = 1;
+      let valsEnd = valsAt;
+      for (; valsEnd < own.length && depth > 0; valsEnd++) {
+        if (own[valsEnd] === '(') depth++;
+        else if (own[valsEnd] === ')') depth--;
+      }
+      const cols = own
+        .slice(colsAt, colsEnd)
+        .split(',')
+        .map((c) => c.trim());
+      const vals = topLevelSplit(own.slice(valsAt, valsEnd - 1), /^,/).map((v) => v.trim());
+      // One row only, a value for every column: a second row (`), (`) is not read.
+      if (/^\s*,/.test(own.slice(valsEnd)) || cols.length !== vals.length) {
+        unreadable();
+        continue;
+      }
+      inserts.push({ table, value: vals[cols.indexOf(tenant.get(table)!)], pos: m.index! });
+    }
+
+    // Any other mention of a tenant table (a comma join, another write, …) is one the check cannot read.
     for (const table of tenant.keys()) {
       const re = new RegExp(`\\b${table.replace('.', '\\.')}\\b(?!\\s*\\()`, 'g');
       for (const m of own.matchAll(re))
@@ -1327,6 +1367,11 @@ export function merchantScopeFindings(f: FnRow, tenant: ReadonlyMap<string, stri
       }
     }
     boundOf.set(b, bound);
+    for (const i of inserts)
+      if (i.value === undefined || !sessionVars.has(i.value))
+        findings.push(
+          `${key}: ${at(b.start + i.pos)}: an insert into ${i.table} not into the session's business`,
+        );
     for (const r of refs)
       if (!bound.has(`${r.alias}.${tenant.get(r.table)}`))
         findings.push(

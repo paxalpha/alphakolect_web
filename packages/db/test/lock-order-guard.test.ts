@@ -320,6 +320,38 @@ describe('the merchant-scope guard (R19): merchant-scoped definer reads filter b
       ).toHaveLength(1);
     });
 
+    it('(7) a read event inserted into another business, or by a statement the check cannot read, fails', () => {
+      const SESSION = `SELECT v.merchant_id, v.membership_id INTO v_merchant, v_actor FROM identity.validate_session(p_session_id) v;`;
+      const insert = (merchant: string, rest = '') =>
+        findings(
+          `DECLARE v_merchant uuid; BEGIN ${SESSION}
+             INSERT INTO audit.audit_events (merchant_id, action, outcome, summary)
+             VALUES (${merchant}, 'merchant.audit_read', 'success', jsonb_build_object('limit', p_limit))${rest};
+           END`,
+          'plpgsql',
+        );
+      expect(insert('v_merchant')).toEqual([]); // the control: its own business
+      expect(insert('p_merchant_id')).toHaveLength(1); // a parameter
+      expect(insert('NULL')).toHaveLength(1); // no business
+      expect(insert('v_merchant', `, (p_merchant_id, 'x', 'y', '{}')`)).not.toEqual([]); // a second row
+      expect(
+        findings(
+          `DECLARE v_merchant uuid; BEGIN ${SESSION}
+             INSERT INTO audit.audit_events (action, outcome, summary) VALUES ('merchant.audit_read', 'success', '{}');
+           END`,
+          'plpgsql',
+        ),
+      ).toHaveLength(1); // no business column at all
+      expect(
+        findings(
+          `DECLARE v_merchant uuid; BEGIN ${SESSION}
+             INSERT INTO audit.audit_events (merchant_id, action, outcome) SELECT p_merchant_id, 'x', 'y';
+           END`,
+          'plpgsql',
+        ),
+      ).toHaveLength(1); // INSERT … SELECT
+    });
+
     it('(6) a left join filters only the table it joins: the table on its left stays unfiltered', () => {
       expect(
         findings(

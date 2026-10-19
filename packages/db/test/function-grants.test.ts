@@ -134,6 +134,10 @@ const EXPECTED: Record<string, Grantee[]> = {
   'identity.list_platform_staff(uuid, uuid, integer, timestamp with time zone, uuid)': APP,
   // P5.7: the platform team's sensitive reads (platform.merchants.read, decided and recorded in each function)
   'tenancy.platform_list_merchants(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
+  'audit.read_merchant_events(uuid, timestamp with time zone, timestamp with time zone, integer, timestamp with time zone, uuid, uuid, text, text, text)':
+    APP,
+  'audit.read_platform_events(uuid, timestamp with time zone, timestamp with time zone, integer, timestamp with time zone, uuid, uuid, uuid, text, text, text, text)':
+    APP,
   'tenancy.platform_list_merchant_members(uuid, uuid, integer, timestamp with time zone, uuid, text, text, text)':
     APP,
   'tenancy.admit_invitation_locked(uuid, uuid, text, text, text, text)': OWNER_ONLY, // P5.5 step 2: waits for nothing (L6)

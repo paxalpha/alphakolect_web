@@ -196,7 +196,11 @@ model AuditEvent {
   merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   actor    Identity? @relation("AuditActor", fields: [actorIdentityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
-  @@index([merchantId, occurredAt])
+  /// The activity-record reads' indexes (P5.8, 20261019000100_audit_reads; measured in
+  /// docs/architecture/evidence/p5-audit-read-indexes).
+  @@index([merchantId, occurredAt, id], map: "audit_events_merchant_id_occurred_at_id_idx")
+  @@index([actorIdentityId, occurredAt, id], map: "audit_events_actor_identity_id_occurred_at_id_idx")
+  @@index([merchantId, actorIdentityId, occurredAt, id], map: "audit_events_merchant_id_actor_identity_id_occurred_at_id_idx")
   @@index([action, occurredAt])
   /// P5.8 (Part 2): the purge pages by it, and the audit reads use it too.
   @@index([occurredAt, id], map: "audit_events_occurred_at_id_idx")

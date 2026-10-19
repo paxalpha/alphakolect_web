@@ -130,6 +130,18 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['A1:S'],
     writes: ['audit.audit_events'],
   },
+  // the activity-record reads (P5.8, §7.2 rows #33 and #34): the reader's membership (S) — the owner's merchant
+  // membership, or the reader's platform membership — then the read event, then the rows (one SELECT, no row locks)
+  'audit.read_merchant_events': {
+    class: 'operation',
+    planned: ['A3:S'],
+    writes: ['audit.audit_events'],
+  },
+  'audit.read_platform_events': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -451,6 +463,7 @@ export const BASELINE: readonly string[] = [
  * check by not being listed, nor by naming its session parameter otherwise (the P5.8 hold-point review).
  */
 export const MERCHANT_SCOPED_READS: readonly string[] = [
+  'audit.read_merchant_events',
   'identity.session_authority',
   'tenancy.list_branches',
   'tenancy.list_invitations',
@@ -468,6 +481,8 @@ export const MERCHANT_SCOPE_EXEMPT: Readonly<Record<string, string>> = {
     'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
   'tenancy.platform_list_merchant_members':
     'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
+  'audit.read_platform_events':
+    'a platform read, cross-tenant by design: platform.audit.read under the reader’s lock, and recorded (P5.8)',
 };
 
 /**
@@ -494,6 +509,8 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
 export const SENSITIVE_READS: Readonly<Record<string, string>> = {
   'platform.merchant_list_read/success': 'tenancy.platform_list_merchants',
   'platform.merchant_members_read/success': 'tenancy.platform_list_merchant_members',
+  'merchant.audit_read/success': 'audit.read_merchant_events',
+  'platform.audit_read/success': 'audit.read_platform_events',
 };
 
 /**
@@ -530,7 +547,9 @@ export const RESOLVER: ReadonlySet<string> = new Set(['identity.permissions_of']
 
 /**
  * The SQL authority guard's explicit list (P5 plan §10 P5.5): every comparison of a kind or role with a literal that
- * is a **data rule** — it names the kind or role of a target or of stored rows, never the caller's authority. Each
+ * is a **data rule** — it names the kind or role of a target or of stored rows, never the caller's authority — or the
+ * one **visibility rule** the owner tied to a role itself (D9, F3: the address and device in the platform's record are
+ * the super admin's alone, whatever a staff member's grants; the read itself is still granted by the resolver). Each
  * entry occurs exactly as often as listed; any other literal fails the guard, and so does an entry that stops
  * occurring (the list stays exact).
  */
@@ -546,6 +565,9 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   "identity.set_platform_staff_status: v_target.role = 'super_admin'",
   "identity.set_platform_grants: v_target.role = 'super_admin'",
   "identity.list_platform_staff: pm.role <> 'super_admin'",
+  // the platform's record (#34, P5.8): the address and device shown to the super admin only (D9, F3) — after
+  // tenancy.assert_authority has granted platform.audit.read
+  "audit.read_platform_events: pm.role = 'super_admin'",
   // the bootstrap creates the super admin (operator only; §7.4)
   "identity.bootstrap_super_admin: pm.role = 'super_admin'",
   // the businesses an identity owns, activated by its email verification (BR-2.2; added at P5.5 step 2)

@@ -15,7 +15,6 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
   ['ledger.journal_entries', 'merchant_id'],
   ['ledger.journal_lines', 'merchant_id'],
   ['ledger.balance_projection', 'merchant_id'],
-  ['audit.audit_events', 'merchant_id'],
   ['tenancy.merchant_memberships', 'merchant_id'],
 ];
 
@@ -24,8 +23,10 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
 // P5.1: role permissions are read and written only through database functions (ADR-16). P5.5 (the enforcement
 // boundary, owner decision B1): the business, its branches, roles and invitations too — their tenant isolation is the
 // read functions' (the business from the session; enforcement.test.ts), and the P1 criterion holds a fortiori: the app
-// cannot read them at all.
+// cannot read them at all. P5.8: the activity record too — the app only inserts into it, and reads it through the
+// designated read functions alone (audit.read_merchant_events, the business from the session; audit-reads.test.ts).
 const NO_APP_ACCESS_TENANT_TABLES = [
+  'audit.audit_events',
   'tenancy.role_permissions',
   'tenancy.merchants',
   'tenancy.branches',
@@ -64,7 +65,6 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
         [`SELECT 1 FROM ledger.journal_entries WHERE id = $1`, B.entryId],
         [`SELECT 1 FROM ledger.journal_lines WHERE entry_id = $1`, B.entryId],
         [`SELECT 1 FROM ledger.balance_projection WHERE account_id = $1`, B.cashAccountId],
-        [`SELECT 1 FROM audit.audit_events WHERE id = $1`, B.auditEventId],
       ] as const;
       for (const [sql, id] of checks) {
         const { rowCount } = await db.query(sql, [id]);

@@ -1,14 +1,16 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 96 — combined P5.8–P5.10 technical review and revised §8.6 allocation approved; P5.8 test gate and closure remain open.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 97 — the lost-answer tests built, the final gate and gitleaks green; awaiting the independent reviewer’s re-check and the Ubuntu CI run.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
 and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
 APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
 review (§14). P5.8's retention purge and audit reads are built; the approved §8.6 allocation still has an untested
 lost-response fault-injection item and a required pre-handover rehearsal; P5.9's matrix is built; the P5.10 documents are
-written. **Waiting for:** the lost-response tests, passing Ubuntu CI, the full gate twice, full-history gitleaks, and
-the owner's final approval. Separately, the recorded rehearsal is required before the first real copy. The owner
+written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
+gitleaks found no leaks over the full history (both at `45c044f`), and the owner approved closing on a condition (O24).
+**Waiting for:** the independent reviewer's re-check of the lost-response tests and record of P5.8's test gate and of
+closure; a passing Ubuntu CI run (on the owner's push). Nothing is approved or closed by revision 97. Separately, the recorded rehearsal is required before the first real copy. The owner
 approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
 
 | | |
@@ -3012,7 +3014,21 @@ requiring those hardware conditions in the automated §8.6 suite. **Still requir
 fault-injected lost responses at database/filesystem operation boundaries, especially a committed mutation whose reply
 is lost. No current test injects that unknown outcome; killing the command after it receives the confirmation response
 is not equivalent. This remains an automated fault-injection obligation and is not moved to the physical rehearsal by
-this review. **Evidence:** the full gate twice at `3dbb482` — run 1
+this review. **Built in revision 97 (`0013185`, `e648b0b`), for the reviewer's re-check:** a connection that commits one
+chosen statement and then throws as a lost answer, against the real database; and a publication link made, then
+reported failed. The purge run: a page deleted (the run reads the page's own mark, counts it once and goes on); the
+release (the reservation free all the same). The export: begin and the file record (nothing deleted, discarded, files
+removed); the confirmation (the report stands with its file and marker); a discard after an injected ENOSPC (recorded
+discarded, the marker left for the listing); the link (left unresolved with both names, then cleared by
+`export-discarded`). The handover, its two steps now a module (`purge-handover.ts`) taking the volume and the eject
+confirmation as inputs, a folder standing in for the stick: the write recorded (attempt written, copy whole, operator
+told); the handover recorded (stick untouched); a failed verification recorded (attempt abandoned, stick left); the
+attempt recorded by another command after this one read it (the failure record refused, stick untouched).
+Mutation-checked: without the page's re-read, and with the stick's copy removed before the failure is recorded, the
+matching test fails. **Final evidence:** the full gate twice at `45c044f` — format, lint, typecheck, build, OpenAPI check;
+contracts 65, database 722, API 1219; the races 16 at 50 staged runs each — all passing both times (an earlier pair at
+`7b6db3d` failed format, typecheck and one intermittent #34 test; fixed in `97c9c63`, `eb841b9`, `45c044f`); gitleaks over
+the full history at `45c044f`, no leaks. **Evidence:** the full gate twice at `3dbb482` — run 1
 all passing (format, lint, typecheck, build, OpenAPI check; contracts 64, database 673, API 1143, the races 16 at 50
 staged runs each); run 2 the same except three API tests in three files timing out at 30 s together with Vitest's own
 `Timeout calling "onTaskUpdate"` (the machine stalled, under 1 GB free), the API suite then rerun: 1143 of 1143.
@@ -3324,6 +3340,7 @@ decision-maker, the date, the source, the selected option, the affected contract
 | O21 | S1: "They are deleted on thier normal without a copy". S2: "One copy for each request". S3: "You can cancel a request in writing and if a copy has waited 7 days for my recieved, i am reminded" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_COPY_REQUEST_SCOPE.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 18th of October, 2026"; `35af686`), relayed by Olamide Fadahunsi | **Decided** — every suggested option: only the entries in a copy wait for his receipt, all others are deleted on their normal day; one copy per request; cancellation in writing; a reminder when a copy has waited 7 days for his receipt. Applied in §8.6 (rev 84) | §8.6 (Part 2) |
 | O22 | Q1: "I approve the policy as written." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_POLICY_AND_CLOSURE.md` (`a592b8f`; its "Answered by" and "Date" lines blank, relayed by Olamide Fadahunsi) and signed on the policy itself ("Owner approval of this draft: Mayowa Edward Fadahunsi  Date: 18th of October, 2026"; `37d6acd`) | **Decided** — the D9 written policy, `docs/business/ACTIVITY_RECORD_PRIVACY_POLICY_DRAFT.md`, approved as written (the text of `995fbc6`); a material change needs renewed review | §8.6, §13 item 9 |
 | O23 | Q2: "Once a month, on the first working day" | Mayowa Edward Fadahunsi (owner), the same form (`a592b8f`), relayed by Olamide Fadahunsi | **Decided** — the operator runs `audit:purge` by hand once a month, on the first working day, until P12 schedules it (RESTRUCTURING_MAP P15/P12 obligation 6) | §8.6, `docs/operations/AUDIT_PURGE.md` |
+| O24 | Q1: "I approve closing this stage, with the condition that the independent reviewer's final checks are completed and recorded before final closure." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_FINAL_APPROVAL.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 19th of October 2026"; `6770796`) | **Decided — conditional:** the owner's final approval holds once the independent reviewer's final checks are completed and recorded | P5.10, §13 |
 | O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself decided 2026-10-17 on the spike's evidence (the O4 entry) | §8.5; P5.8 |
 | O3 | A2a–c, F2: "Only the owner, always. The owner cannot give this to any staff member." A2b: refused attempts shown to the owner only. A2c: the owner can see one person's actions | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §6, §8.5; P5.8 |
 | O7, D5 → D5′ | A1 and F1a: inviting staff or agents and cancelling invitations, changing a staff member's role or branch, and switching a staff member or agent off or on are owner-only ("All 3"); F1b: "The owner may choose one branch or all branches." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D5's staff-delegation clause; O7 no longer arises | §3, §4, §5, §6, §7.3, §7.6; P5.5, P5.6, P5.9 |
@@ -3405,6 +3422,7 @@ entries; Part 2 entries with the Part 2 addendum), adding the applying commit of
 | O21 | What a copy request covers and what happens meanwhile (Part 2; the critic's round 2): S1–S3 | **DECIDED (2026-10-18, signed; decision log):** other entries deleted on their normal day; one copy per request; cancellation in writing and a reminder after 7 days (`35af686`) — applied in the consolidated Part 2 (rev 84) |
 | O22 | The owner's approval of the D9 written policy (§13 item 9) | **DECIDED (2026-10-18, signed on the policy; decision log):** approved as written (`37d6acd`) |
 | O23 | How often the clean-up runs until P12 schedules it | **DECIDED (2026-10-18; decision log):** once a month, on the first working day (`a592b8f`) |
+| O24 | The owner's final approval of P5 (P5.10) | **DECIDED (2026-10-19, signed; decision log), conditional:** approved once the independent reviewer's final checks are recorded (`6770796`) |
 | O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
 
 ## 15. Legacy context (background only — not a requirement)
@@ -3435,6 +3453,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 97 | 2026-10-19 | **The lost-response tests built; the final gate and gitleaks green; the owner's conditional approval recorded (O24).** For the independent reviewer's re-check: the fault injection the review of revision 96 required (`e648b0b`, handover steps extracted for it in `0013185`); the full gate twice and gitleaks at `45c044f`. Still waiting: the reviewer's record of P5.8's test gate and of closure, and a passing Ubuntu CI run. Nothing approved or closed. |
 | 96 | 2026-10-19 | **Combined P5.8–P5.10 technical review; revised §8.6 allocation approved, P5.8 test gate still open.** POSIX directory mode is assigned to existing Ubuntu CI; injected `ENOSPC` and a renamed directory are accepted only as code-path stand-ins; physical full-disk, unmount and removable-media checks are assigned to the test-database rehearsal before first handover. The one-minute idle timeout is verified against PostgreSQL (`25P03`). A separate lost-response-after-commit fault-injection test remains untested and is not waived. P5 closure requires that test, passing Ubuntu CI, the final gate twice, full-history gitleaks, and unconditional owner approval; the rehearsal is required before first handover, not as a closure gate. |
 | 95 | 2026-10-19 | **The confirmed activity-record reads built; more of §8.6's tests written.** #33/#34 and the measured index change are recorded above; the app/reporting direct read grants are removed; matrices and as-built documents include the reads. §13 criteria 5 and 7 are met for the reads. Added process-level command cases, host/connection tests, export heartbeat, injected `ENOSPC`, retention concurrency races and R25/R35 tests for both reads; focused API and database slices pass. The full §8.6 list remains open for real disk exhaustion and removable-media/kernel-specific handover tests. No full repository gate, new gitleaks scan, P5 gate review or owner final approval is claimed by this revision. |
 | 94 | 2026-10-19 | **The audit-read addendum confirmed by the independent reviewer — design only** (§14, verbatim): #33 and #34 may be built, the busy-platform-staff query shape measured before the indexes are final; no gate review, no closure, no exception for the reads or §8.6's tests. The owner's signature on the closing form (`c245394`); the empty-export test (`0cf9a4a`) removed from P5.8's list of tests not yet written. |

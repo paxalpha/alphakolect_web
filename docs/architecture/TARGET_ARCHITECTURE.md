@@ -579,10 +579,11 @@ Part 1 and Part 2 are built as written above, in 21 forward-only migrations; the
 exit criterion is proven, and what remains open is the P5 record in `RESTRUCTURING_MAP.md`, and the as-built threat
 model is `docs/security/P5_THREAT_MODEL.md`. Where the system differs from the text above, or goes beyond it:
 
-- **The activity-record reads (#33, #34) are not built**: their addendum awaits the independent reviewer's confirmation.
-  Until the migration that creates them, no endpoint returns activity entries, the app keeps P1's `SELECT` on
-  `audit.audit_events` (no app code uses it), and the reporting role keeps its `ip` and `user_agent` columns (§19 says
-  "from P5"; it holds from that migration).
+- **The activity-record reads (#33, #34)** are built as the addendum states (`20261019000100_audit_reads`, 2026-10-19),
+  with three additions: the indexes include `(merchant_id, actor_identity_id, occurred_at, id)`, measured for the shape
+  the reviewer named (`docs/architecture/evidence/p5-audit-read-indexes`); both functions are planned per call, so each
+  absent filter folds away; and a `CHECK` refuses a recorded audience outside merchant, agent and platform, whoever
+  writes it. The app's `SELECT` on `audit.audit_events` and the reporting role's `ip` and `user_agent` are gone (§19).
 - **The activity table's guard** is one trigger function, `audit.audit_events_guard()`, replacing the two triggers P1
   gave the table; the ledger keeps `util.reject_modification()`.
 - **The operator command** reads its default as-of time from the database's clock (the operator's machine may run

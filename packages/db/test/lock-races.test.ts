@@ -1119,3 +1119,85 @@ describe('two creations of one platform staff email at once (§7.4, O8(a))', () 
     }
   }, 600_000);
 });
+
+describe('the clearing of session details against a revocation of the same session, in both orders (§8.6, CF4)', () => {
+  // The clearing (operator only, on the migrator's connection) takes its rows FOR NO KEY UPDATE SKIP LOCKED: it never
+  // waits. A revocation holding the row makes it skip the row (cleared by the next call); a clearing holding the row
+  // makes the revocation wait, then complete.
+  let m1: pg.Client;
+  let identity = '';
+  let membership = '';
+  beforeAll(async () => {
+    m1 = await connectAs('migrator');
+    identity = (
+      await owner.query(`INSERT INTO identity.identities (email) VALUES ($1) RETURNING id`, [email('cf4')])
+    ).rows[0].id as string;
+    membership = (
+      await owner.query(
+        `INSERT INTO identity.platform_memberships (identity_id, role) VALUES ($1, 'support') RETURNING id`,
+        [identity],
+      )
+    ).rows[0].id as string;
+  });
+  afterAll(() => m1.end());
+
+  /** A session that expired three years ago, never revoked: eligible for clearing. */
+  const eligible = async () =>
+    (
+      await owner.query(
+        `INSERT INTO identity.sessions (identity_id, audience, platform_membership_id, created_at, absolute_expires_at,
+                                        created_ip, user_agent)
+         VALUES ($1, 'platform', $2, now() - interval '3 years 1 day', now() - interval '3 years', '192.0.2.44', 'race')
+         RETURNING id`,
+        [identity, membership],
+      )
+    ).rows[0].id as string;
+  const state = async (id: string) =>
+    (
+      await owner.query(
+        `SELECT created_ip, revoked_at IS NOT NULL AS revoked FROM identity.sessions WHERE id = $1`,
+        [id],
+      )
+    ).rows[0] as { created_ip: string | null; revoked: boolean };
+  const clear = () => m1.query(`SELECT * FROM audit.clear_expired_request_metadata(now(), 10000)`);
+
+  it(`never deadlocks: ${RUNS} staged runs in both orders; the clearing never waits, the revocation completes`, async () => {
+    await m1.query(`SET statement_timeout = '5s'`); // the clearing never waits: a wait would trip it
+    try {
+      for (let i = 0; i < RUNS; i++) {
+        const id = await eligible();
+        if (i % 2 === 0) {
+          // The revocation first, uncommitted: the clearing skips the row, then clears it once the revocation is in.
+          await t2.query('BEGIN');
+          expect((await t2.query(`SELECT identity.revoke_session($1, 'logout') AS r`, [id])).rows[0].r).toBe(
+            true,
+          );
+          const skipped = await settle(clear());
+          expect(skipped.code, `run ${i}`).toBeNull();
+          expect((await state(id)).created_ip, `run ${i}`).toBe('192.0.2.44');
+          await t2.query('COMMIT');
+          expect((await settle(clear())).code, `run ${i}`).toBeNull();
+          expect(await state(id), `run ${i}`).toEqual({ created_ip: null, revoked: true });
+        } else {
+          // The clearing first, uncommitted: the revocation waits for the row, then completes.
+          await m1.query('BEGIN');
+          expect((await settle(clear())).code, `run ${i}`).toBeNull();
+          await t2.query('BEGIN');
+          const revocation = inTransaction(
+            t2,
+            t2.query(`SELECT identity.revoke_session($1, 'logout') AS outcome`, [id]),
+          );
+          await waitsForALock(pid.t2);
+          await m1.query('COMMIT');
+          const r = await revocation;
+          expect(r.code, `run ${i}`).toBeNull();
+          expect(r.code).not.toBe(DEADLOCK);
+          expect(r.rows![0]!.outcome, `run ${i}`).toBe(true);
+          expect(await state(id), `run ${i}`).toEqual({ created_ip: null, revoked: true });
+        }
+      }
+    } finally {
+      await m1.query(`SET statement_timeout = 0`);
+    }
+  });
+});

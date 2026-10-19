@@ -39,12 +39,12 @@ As before, **"Not sure" is a fine answer.**
 
 ## Q1. Do you approve closing this stage?
 
-- ☐ **I approve closing this stage**
+- ☒ **I approve closing this stage**
 - ☐ I approve, with these conditions:
 - ☐ Not yet: I want the independent reviewer's final checks first
 - ☐ Not sure
 
-> Answer: I approve closing this stage, with the condition that the independent reviewer's final checks are completed and recorded before final closure.
+> Answer: I approve closing this stage. The independent reviewer’s required final checks and the remaining validation gates must still be completed and recorded before closure is effective.
 
 ---
 

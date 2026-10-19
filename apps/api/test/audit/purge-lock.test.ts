@@ -86,4 +86,49 @@ describe('operator purge process lock', () => {
       await stopChild(child);
     }
   }, 15_000);
+
+  it('a child process of the holder does not keep the lock once the holder is gone', async () => {
+    const address = lockAddress();
+    const moduleUrl = new URL('../../src/modules/audit/purge-lock.ts', import.meta.url).href;
+    // The holder starts a long-lived child of its own while it holds the lock (as a command starting a program would),
+    // and reports the child's pid.
+    const childSource = `
+      import { spawn } from 'node:child_process';
+      import { acquirePurgeLock } from ${JSON.stringify(moduleUrl)};
+      await acquirePurgeLock(process.env.PURGE_LOCK_ADDRESS);
+      // Detached, so that it outlives the holder (on Windows a child is otherwise ended with its parent's job).
+      const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: true });
+      process.stdout.write('ready ' + grandchild.pid + '\\n');
+      await new Promise(() => {});
+    `;
+    let output = '';
+    const child = spawn(
+      process.execPath,
+      ['--import', 'tsx/esm', '--input-type=module', '--eval', childSource],
+      {
+        env: { ...process.env, PURGE_LOCK_ADDRESS: address },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      },
+    );
+    child.stdout?.on('data', (chunk: Buffer) => (output += chunk.toString()));
+    let grandchild = 0;
+    try {
+      await waitForReady(child);
+      grandchild = Number(/ready (\d+)/.exec(output)![1]);
+      await expect(acquirePurgeLock(address)).rejects.toThrow('purge_lock_already_held');
+      await stopChild(child);
+      expect(() => process.kill(grandchild, 0)).not.toThrow(); // the child lives on …
+      const recovered = await acquirePurgeLock(address); // … and the lock is free
+      await recovered.close();
+    } finally {
+      await stopChild(child);
+      if (grandchild) {
+        try {
+          process.kill(grandchild);
+        } catch {
+          // already gone
+        }
+      }
+    }
+  }, 15_000);
 });

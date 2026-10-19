@@ -56,14 +56,14 @@ describe('operator purge process lock', () => {
     const moduleUrl = new URL('../../src/modules/audit/purge-lock.ts', import.meta.url).href;
     const childSource = `
       import { acquirePurgeLock } from ${JSON.stringify(moduleUrl)};
-      await acquirePurgeLock(process.env.PURGE_LOCK_ADDRESS);
+      await acquirePurgeLock(${JSON.stringify(address)});
       process.stdout.write('ready\\n');
       await new Promise(() => {});
     `;
     const child = spawn(
       process.execPath,
       ['--import', 'tsx/esm', '--input-type=module', '--eval', childSource],
-      { env: { ...process.env, PURGE_LOCK_ADDRESS: address }, stdio: ['ignore', 'pipe', 'ignore'] },
+      { stdio: ['ignore', 'pipe', 'ignore'] },
     );
 
     try {
@@ -95,7 +95,7 @@ describe('operator purge process lock', () => {
     const childSource = `
       import { spawn } from 'node:child_process';
       import { acquirePurgeLock } from ${JSON.stringify(moduleUrl)};
-      await acquirePurgeLock(process.env.PURGE_LOCK_ADDRESS);
+      await acquirePurgeLock(${JSON.stringify(address)});
       // Detached, so that it outlives the holder (on Windows a child is otherwise ended with its parent's job).
       const grandchild = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore', detached: true });
       process.stdout.write('ready ' + grandchild.pid + '\\n');
@@ -106,7 +106,6 @@ describe('operator purge process lock', () => {
       process.execPath,
       ['--import', 'tsx/esm', '--input-type=module', '--eval', childSource],
       {
-        env: { ...process.env, PURGE_LOCK_ADDRESS: address },
         stdio: ['ignore', 'pipe', 'ignore'],
       },
     );

@@ -560,6 +560,16 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
       after = rows[1]!;
     }
   };
+  const pagePlatform = async (sessionId: string, w: { from: string; to: string }, first: Row) => {
+    const seen: string[] = [];
+    let after: Row | null = first;
+    for (;;) {
+      const rows = await readPlatform(sessionId, w, {}, 2, after);
+      seen.push(...ids(rows.slice(0, 2)));
+      if (rows.length <= 2) return seen;
+      after = rows[1]!;
+    }
+  };
 
   it('(a) an uncommitted event: the read does not wait and does not show it', async () => {
     const b = await business();
@@ -584,6 +594,29 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
     }
   });
 
+  it('(a, #34) an uncommitted event: the platform read does not wait or show it', async () => {
+    const admin = await platformMember('super_admin');
+    const w = windowAt();
+    const committed = await event({ occurredAt: at(w.base, 1), merchantId: null });
+    await other.query('BEGIN');
+    try {
+      const pending = (
+        await other.query(
+          `INSERT INTO audit.audit_events (occurred_at, action, outcome, summary)
+           VALUES ($1, 'auth.logout', 'success', '{}') RETURNING id`,
+          [at(w.base, 2)],
+        )
+      ).rows[0].id as string;
+      await app.query(`SET statement_timeout = '3s'`);
+      const rows = await readPlatform(admin.session, w);
+      expect(ids(rows)).toEqual([committed]);
+      expect(ids(rows)).not.toContain(pending);
+    } finally {
+      await app.query(`SET statement_timeout = 0`);
+      await other.query('ROLLBACK');
+    }
+  });
+
   it('(b) committed between two pages: an older event on a later page, a newer one on none, nothing twice', async () => {
     const b = await business();
     const w = windowAt();
@@ -599,10 +632,24 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
     expect(rest).not.toContain(newer);
   });
 
+  it('(b, #34) the platform read has the same page consistency', async () => {
+    const admin = await platformMember('super_admin');
+    const w = windowAt();
+    const seeded: string[] = [];
+    for (const h of [8, 6, 4, 2]) seeded.push(await event({ occurredAt: at(w.base, h), merchantId: null }));
+    const first = await readPlatform(admin.session, w, {}, 2);
+    expect(ids(first.slice(0, 2))).toEqual(seeded.slice(0, 2));
+    const older = await event({ occurredAt: at(w.base, 5), merchantId: null });
+    const newer = await event({ occurredAt: at(w.base, 9), merchantId: null });
+    const rest = await pagePlatform(admin.session, w, first[1]!);
+    expect(rest).toEqual([older, seeded[2], seeded[3]]);
+    expect(rest).not.toContain(newer);
+  });
+
   describe('(c) the purge, concurrently (R35)', () => {
     /** A window three years back: its events are past their two years, so the purge may delete them. */
     const pastWindow = () => {
-      const from = new Date(Date.UTC(2023, 0, 1) + Math.floor(Math.random() * 300) * 86_400_000);
+      const from = new Date(Date.UTC(2022, 0, 1) + Math.floor(Math.random() * 300) * 86_400_000);
       return {
         from: from.toISOString(),
         to: new Date(from.getTime() + 10 * 86_400_000).toISOString(),
@@ -649,6 +696,38 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
       }
     });
 
+    it('( #34 ) an uncommitted purge page does not block the platform read or hide its rows', async () => {
+      const admin = await platformMember('super_admin');
+      const w = pastWindow();
+      const old = [
+        await event({ occurredAt: at(w.base, 1), merchantId: null }),
+        await event({ occurredAt: at(w.base, 2), merchantId: null }),
+      ];
+      await other.query('BEGIN');
+      try {
+        const run = await reserve(other);
+        for (let n = 1; ;) {
+          const p = (
+            await other.query(`SELECT * FROM audit.purge_candidates($1, $2, $3, 1000)`, [
+              run.run_id,
+              run.as_of,
+              n,
+            ])
+          ).rows[0];
+          if (p.row_count > 0) {
+            await other.query(`SELECT audit.purge_expired_events($1, $2, $3)`, [run.run_id, run.as_of, n]);
+            n++;
+          }
+          if (p.exhausted) break;
+        }
+        await app.query(`SET statement_timeout = '3s'`);
+        expect(ids(await readPlatform(admin.session, w)).sort()).toEqual([...old].sort());
+      } finally {
+        await app.query(`SET statement_timeout = 0`);
+        await other.query('ROLLBACK');
+      }
+    });
+
     it('a purge page committed between two pages: what it deleted is gone, every remaining row appears once', async () => {
       const b = await business();
       const w = pastWindow();
@@ -675,6 +754,32 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
       await owner.query(`SELECT audit.release_purge_run($1, false)`, [run.run_id]);
       expect(deleted).not.toContain(seeded[2]);
       expect(await pages(b.ownerSession, w, first[1]!)).toEqual([seeded[2], seeded[3]]);
+    });
+
+    it('( #34 ) a committed purge between platform pages leaves every surviving event once', async () => {
+      const admin = await platformMember('super_admin');
+      const w = pastWindow();
+      const seeded: string[] = [];
+      for (const h of [6, 5, 4, 3, 2, 1])
+        seeded.push(await event({ occurredAt: at(w.base, h), merchantId: null }));
+      const first = await readPlatform(admin.session, w, {}, 2);
+      expect(ids(first.slice(0, 2))).toEqual(seeded.slice(0, 2));
+      const run = await reserve(owner);
+      const deleted: string[] = [];
+      for (let n = 1; !deleted.includes(seeded[4]!) || !deleted.includes(seeded[5]!);) {
+        const p = (
+          await owner.query(`SELECT * FROM audit.purge_candidates($1, $2, $3, 1)`, [run.run_id, run.as_of, n])
+        ).rows[0];
+        expect(p.exhausted && p.row_count === 0, 'the purge reached its end before these rows').toBe(false);
+        if (p.row_count > 0) {
+          await owner.query(`SELECT audit.purge_expired_events($1, $2, $3)`, [run.run_id, run.as_of, n]);
+          deleted.push(...(p.event_ids as string[]));
+          n++;
+        }
+      }
+      await owner.query(`SELECT audit.release_purge_run($1, false)`, [run.run_id]);
+      expect(deleted).not.toContain(seeded[2]);
+      expect(await pagePlatform(admin.session, w, first[1]!)).toEqual([seeded[2], seeded[3]]);
     });
   });
 });

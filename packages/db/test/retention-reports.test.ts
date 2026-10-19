@@ -195,6 +195,29 @@ describe('the export', () => {
   });
 });
 
+describe('the export: a discard under another live run', () => {
+  it('refuses to discard an export while another run holds a live reservation', async () => {
+    await rolledBack(async () => {
+      const { run } = await readyExport();
+      await op.query(`SELECT audit.release_purge_run($1, false)`, [run.run_id]); // its own run is gone …
+      // … and another holds a live reservation (staged: no function makes one while an export is unresolved).
+      await op.query(
+        `UPDATE audit.purge_reservation SET run_id = util.uuid_v7(), p_as_of = now(), reserved_at = now(), renewed_at = clock_timestamp()`,
+      );
+      await refused(
+        `SELECT audit.discard_purge_export($1, 'under another run', 'automatic')`,
+        [run.run_id],
+        '55006',
+      );
+      await refused(
+        `SELECT audit.discard_purge_export($1, 'under another run', 'lost')`,
+        [run.run_id],
+        '55006',
+      );
+    });
+  });
+});
+
 describe('handover and delivery', () => {
   it('verification needs the write first, the eject attested, a changed disk sequence and the same bytes', async () => {
     await rolledBack(async () => {

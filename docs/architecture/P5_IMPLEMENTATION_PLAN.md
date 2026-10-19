@@ -1,21 +1,25 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 99 — owner approval recorded; CI suite reported passing; P5 is not yet closed.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 100 — CI, two full local gates and full-history gitleaks pass; independent closure review remains open.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
 and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
 APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
-review (§14). P5.8's retention purge and audit reads are built; the approved §8.6 allocation still has an untested
-lost-response fault-injection item and a required pre-handover rehearsal; P5.9's matrix is built; the P5.10 documents are
-written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
+review (§14). P5.8's retention purge and audit reads are built; the §8.6 lost-response fault-injection tests are built
+and pass (final evidence below); a recorded rehearsal is required before the first real copy. P5.9's matrix is built;
+the P5.10 documents are written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
 gitleaks found no leaks over the full history (both at `45c044f`), and the owner approved closing on a condition (O24).
 **Since revision 97:** the lost-response suite now passes after its `as_of` fixture was changed to use the database's
 UTC clock. The reviewer has re-checked that fix and approves pushing the branch to activate Ubuntu CI. **Since revision
-98:** the owner has approved closing P5, and reports that the full P5 test suite passed on CI (2026-10-19). **Still
-required before closure:** rerun the full gate twice after the final test edit; rerun full-history gitleaks; and obtain
-the reviewer's final record of the P5.8 test gate and P5.8–P5.10 closure review. These independent gates are not
-approved by the owner's sign-off. P5 remains open until they are completed and recorded. Separately, the recorded
-rehearsal is required before the first real copy. The owner
+99:** GitHub Actions run [39313373095](https://github.com/paxalpha/alphakolect_web/actions/runs/39313373095) for PR #7
+passed on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`; all three checks passed: main CI, API contract and secret scan.
+On local HEAD `05c1210552817c85b9b7dcc716d930d33949a853`, the full repository gate passed twice: format, lint, OpenAPI
+check, typecheck, contracts 65/65, database 722/722, API 1219/1219, concurrency 17/17, build, and the required-config
+boot refusal. Gitleaks 8.30.1 scanned 477 commits on that HEAD and found no leaks. The CI run predates two documentation-
+only commits; the two complete local gates and gitleaks scan cover current HEAD. **Still required before closure:** the
+reviewer's final record of the P5.8 test gate and P5.8–P5.10 closure review. These independent approvals are not supplied
+by the owner's sign-off. P5 remains open until they are completed and recorded. Separately, the recorded rehearsal is
+required before the first real copy. The owner
 approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
 
 | | |
@@ -3041,7 +3045,13 @@ After `1f7200f` and `6e7919f` (tests only): the database suite 698 of 698 in 41 
 passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean. **Focused
 validation on 2026-10-19 after the read and purge follow-ups:** API purge slice (five files, 33 tests, run in focused
 groups), database audit-read/purge slice (three files, 32 tests), including the idle-timeout test, API typecheck,
-ESLint and Prettier pass; no full repository gate, Ubuntu CI result, or new gitleaks scan is claimed here.
+**Validation after the final test edit (revision 100):** GitHub Actions PR #7 run `39313373095` passed all three checks
+on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`. The full repository gate then passed twice locally on
+`05c1210552817c85b9b7dcc716d930d33949a853`, including 2,006 package tests and all 17 concurrency tests per run;
+format, lint, OpenAPI check, typecheck, build and the missing-configuration boot refusal also passed both times.
+Gitleaks 8.30.1 scanned 477 commits on current HEAD with no leaks. Two documentation-only commits follow the CI-tested
+SHA; current HEAD received the full local gates and secret scan. The independent reviewer's final P5.8 test-gate and
+P5.8–P5.10 closure record remain outstanding.
 
 **Steps (c)(3)–(4) built after the addendum confirmation (revision 95).** The R19 guard now recognizes and checks the
 merchant-scoped read's own audit-event insert (`3cd0362`). The O4 measurement named by the reviewer was run against
@@ -3467,6 +3477,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 100 | 2026-10-19 | **CI and local closure gates verified.** GitHub Actions PR #7 run `39313373095` passed all checks on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`; two full local gates and Gitleaks 8.30.1 (477 commits, no leaks) passed on `05c1210552817c85b9b7dcc716d930d33949a853`. The CI-tested commit precedes two documentation-only commits. The independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record remain open; P5 is not closed. |
 | 99 | 2026-10-19 | **Owner final approval recorded; CI pass reported.** The owner approved closing P5 and reports the full P5 test suite passed on CI. Still open: full gate twice after the final test edit, fresh full-history gitleaks, and the independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record. Approval does not waive those gates; P5 is not closed. |
 | 98 | 2026-10-19 | **Reviewer re-check of the lost-response tests; approved to push for Ubuntu CI only.** Replaced Node-host `Date` values with the database's canonical UTC clock; the 11-case lost-response group passes, as do formatting, lint and API typecheck. Push to a PR is approved to activate Ubuntu CI. Not approved to merge or close: rerun the final gate twice after this edit, rerun full-history gitleaks, pass Ubuntu CI, and satisfy the owner's conditional O24 before closure. |
 | 97 | 2026-10-19 | **The lost-response tests built; the final gate and gitleaks green; the owner's conditional approval recorded (O24).** For the independent reviewer's re-check: the fault injection the review of revision 96 required (`e648b0b`, handover steps extracted for it in `0013185`); the full gate twice and gitleaks at `45c044f`. Still waiting: the reviewer's record of P5.8's test gate and of closure, and a passing Ubuntu CI run. Nothing approved or closed. |

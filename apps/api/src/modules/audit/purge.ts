@@ -38,6 +38,14 @@ export type PurgeResult =
       metadataCleared: number;
     };
 
+/**
+ * The points where a test may stop an export (a test-only gate, §8.6's tests: a kill mid-write, between the link and
+ * the unlink, between the link and the confirmation, and after a confirmation whose answer is lost).
+ */
+export type PauseStage = 'mid_write' | 'after_link' | 'before_confirm' | 'after_confirm';
+export type Pause = (stage: PauseStage) => Promise<void>;
+const noPause: Pause = async () => undefined;
+
 export class PurgeError extends Error {
   override name = 'PurgeError';
 }
@@ -172,6 +180,7 @@ async function writeReport(
   hostId: string,
   lockKey: string,
   heartbeatMs: number,
+  pause: Pause,
 ): Promise<Omit<Extract<PurgeResult, { kind: 'export' }>, 'metadataCleared'>> {
   const name = reportName(run.run_id);
   const finalPath = join(directory, name);
@@ -243,6 +252,7 @@ async function writeReport(
         const digest = sha256(texts.map((text) => `${text}\n`).join(''));
         if (digest !== page.page_digest) throw new PurgeError(`purge_page_digest_mismatch_${pageNo}`);
         for (const text of texts) await handle.writeFile(`${text}\n`, 'utf8');
+        if (pageNo === 1) await pause('mid_write');
         pageCounts.push(page.row_count);
         pageDigests.push(page.page_digest);
         rowCount += page.row_count;
@@ -271,6 +281,7 @@ async function writeReport(
       throw error;
     }
     finalCreated = true;
+    await pause('after_link');
     await unlink(partialPath);
     partialCreated = false;
     const directoryFsync = await syncDirectory(directory);
@@ -280,6 +291,7 @@ async function writeReport(
       if (published.sha256 !== verified.sha256) throw new PurgeError('published_report_hash_mismatch');
     }
 
+    await pause('before_confirm');
     heartbeat.check();
     heartbeat.stop();
     const fileLocation = finalPath;
@@ -288,6 +300,7 @@ async function writeReport(
       [run.run_id, run.as_of, rowCount, pageCounts.length, pageManifestDigest, verified.sha256, fileLocation],
     );
     if (!confirmedRow) throw new PurgeError('report_confirmation_missing');
+    await pause('after_confirm');
     return {
       kind: 'export',
       runId: run.run_id,
@@ -352,6 +365,8 @@ export async function runPurge(args: {
   writerLockKey?: string;
   /** The export's heartbeat interval (tests shorten it). */
   heartbeatMs?: number;
+  /** A test-only gate: called at each PauseStage of an export. */
+  pause?: Pause;
 }): Promise<PurgeResult> {
   args = { ...args, db: serialized(args.db) };
   const [run] = await args.db.query<PurgeRun>(`SELECT * FROM audit.reserve_purge_run($1::timestamptz)`, [
@@ -398,6 +413,7 @@ export async function runPurge(args: {
         args.writerHostId!,
         args.writerLockKey!,
         args.heartbeatMs ?? HEARTBEAT_MS,
+        args.pause ?? noPause,
       );
       pages = exportResult.pages;
     }

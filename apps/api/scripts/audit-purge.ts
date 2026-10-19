@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { createReadStream } from 'node:fs';
 import { access, link, open, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
@@ -10,10 +10,10 @@ import { stdin, stdout } from 'node:process';
 import pg from 'pg';
 import { z } from 'zod';
 import type { Queryable } from '../src/platform/db.js';
-import { inspectReportFile, runPurge } from '../src/modules/audit/purge.js';
+import { inspectReportFile, runPurge, type Pause } from '../src/modules/audit/purge.js';
+import { hostIdentity, type Host } from '../src/modules/audit/purge-host.js';
 import { acquirePurgeLock } from '../src/modules/audit/purge-lock.js';
 
-type Host = { hostId: string; lockKey: string; lockAddress: string };
 type VolumeInfo = {
   path: string;
   volumeKey: string;
@@ -57,33 +57,6 @@ function exec(command: string, args: string[]): string {
   }).trim();
 }
 
-function hostIdentity(): Host {
-  if (process.platform === 'win32') {
-    const sidText = exec(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
-    const sid = sidText.match(/S-1-[0-9-]+/)?.[0];
-    const registry = exec(windowsTool('reg.exe'), [
-      'query',
-      'HKLM\\SOFTWARE\\Microsoft\\Cryptography',
-      '/v',
-      'MachineGuid',
-    ]);
-    const machineId = registry.match(/MachineGuid\s+REG_SZ\s+([^\s]+)/i)?.[1];
-    if (!sid || !machineId) throw new Error('cannot_read_windows_host_identity');
-    return {
-      hostId: machineId,
-      lockKey: `windows:${sid}`,
-      lockAddress: `\\\\.\\pipe\\alphakolect-purge-${sid}`,
-    };
-  }
-  if (process.platform === 'linux' && typeof process.getuid === 'function') {
-    const machineId = readFileSync('/etc/machine-id', 'utf8').trim();
-    const uid = process.getuid();
-    if (!machineId || !uid) throw new Error('cannot_read_linux_host_identity');
-    return { hostId: machineId, lockKey: `linux:${uid}`, lockAddress: `\0alphakolect-purge-${uid}` };
-  }
-  throw new Error('unsupported_platform_for_audit_purge');
-}
-
 const isWithin = (root: string, candidate: string) => {
   const rel = relative(root, candidate);
   return rel === '' || (!rel.startsWith(`..${sep}`) && rel !== '..' && !isAbsolute(rel));
@@ -118,7 +91,11 @@ function powershell(script: string): string {
 }
 
 async function validateReportDirectory(input: string, host: Host): Promise<string> {
-  const directory = await realpath(input);
+  const directory = await realpath(input).catch((error: unknown) => {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+    // Windows answers EPERM for a folder its owner may not write to; say what the operator must fix.
+    throw new Error(code === 'ENOENT' ? 'report_directory_not_found' : 'report_directory_not_accessible');
+  });
   const info = await stat(directory);
   if (!info.isDirectory()) throw new Error('report_path_not_directory');
   if (inGitWorkTree(directory)) throw new Error('report_directory_is_git_worktree');
@@ -159,7 +136,6 @@ async function validateReportDirectory(input: string, host: Host): Promise<strin
     powershell(check);
   } else {
     if ((info.mode & 0o077) !== 0) throw new Error('report_directory_not_owner_only');
-    if (existsSync('/.dockerenv')) throw new Error('audit_purge_refuses_container');
     const fileSystem = exec('findmnt', ['-n', '-o', 'FSTYPE', '-T', directory]).toLowerCase();
     if (/nfs|cifs|smb|sshfs|fuse/.test(fileSystem)) throw new Error('report_directory_not_local');
   }
@@ -167,13 +143,20 @@ async function validateReportDirectory(input: string, host: Host): Promise<strin
   const probe = join(directory, `.alphakolect-hardlink-${randomUUID()}`);
   const probeLink = `${probe}.link`;
   try {
-    const handle = await open(probe, 'wx', 0o600);
-    await handle.writeFile('probe');
-    await handle.sync();
-    await handle.close();
-    await link(probe, probeLink);
-  } catch {
-    throw new Error('report_directory_must_support_hard_links');
+    try {
+      const handle = await open(probe, 'wx', 0o600);
+      await handle.writeFile('probe');
+      await handle.sync();
+      await handle.close();
+    } catch {
+      // Nothing can be written there: the export would fail at its first file.
+      throw new Error('report_directory_not_writable');
+    }
+    try {
+      await link(probe, probeLink);
+    } catch {
+      throw new Error('report_directory_must_support_hard_links');
+    }
   } finally {
     await Promise.all([rm(probe, { force: true }), rm(probeLink, { force: true })]);
   }
@@ -379,6 +362,24 @@ async function openMigrator(): Promise<{ db: Queryable; close(): Promise<void> }
   };
 }
 
+/**
+ * A test-only gate (§8.6's tests stop an export at a chosen point and kill the command): with
+ * AUDIT_PURGE_TEST_PAUSE_AT naming a stage and AUDIT_PURGE_TEST_PAUSE_FILE a file, the export writes the stage into
+ * the file there and waits until the file is gone. Without both variables it does nothing.
+ */
+function testPause(): { pause?: Pause } {
+  const at = process.env.AUDIT_PURGE_TEST_PAUSE_AT;
+  const file = process.env.AUDIT_PURGE_TEST_PAUSE_FILE;
+  if (!at || !file) return {};
+  return {
+    pause: async (stage) => {
+      if (stage !== at) return;
+      writeFileSync(file, stage);
+      while (existsSync(file)) await new Promise((r) => setTimeout(r, 50));
+    },
+  };
+}
+
 async function run(): Promise<void> {
   const args = process.argv.slice(2);
   if (args[0] === '--') args.shift();
@@ -435,6 +436,7 @@ async function run(): Promise<void> {
         directory,
         writerHostId: host!.hostId,
         writerLockKey: host!.lockKey,
+        ...testPause(),
       });
       process.stdout.write(`${JSON.stringify(result)}\n`);
       if (result.kind === 'export_skipped') {

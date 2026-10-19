@@ -4,6 +4,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
+import { requiredQuery } from '../support/required-query.js';
 
 // The tenant-isolation matrix (P4 exit criterion; ADR-15 T3, T9, T14, T15), driven by the contract registry: every
 // merchant- and agent-audience endpoint, as it is registered — not a hand-picked list. A new tenant endpoint is in
@@ -73,7 +74,7 @@ function send(
   ids: (p: string) => string,
   t: Tenant,
 ) {
-  const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => ids(p));
+  const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => ids(p)) + requiredQuery(id);
   let req = request(app)[e.method](path);
   if (caller.kind === 'bearer') {
     req = req.set('Authorization', `Bearer ${caller.token}`);
@@ -190,6 +191,27 @@ describe('collections show nothing of another tenant', () => {
       B.invitationId,
       'Matrix Beta',
     ];
+    if (id === 'listMerchantAuditEvents') {
+      // A's record holds A's own attempts on B's identifiers (the 404 cases above): each such event names the id A
+      // itself sent as its target, was refused as not found, and holds nothing else of B.
+      type Item = {
+        actor: { membershipId: string | null } | null;
+        outcome: string;
+        target: { id: string } | null;
+      };
+      for (const item of (res.body as { items: Item[] }).items) {
+        const found = markers.filter((m) => JSON.stringify(item).includes(m));
+        if (found.length === 0) continue;
+        expect(item, JSON.stringify(item)).toMatchObject({
+          actor: { membershipId: A.owner.membershipId },
+          outcome: 'failure',
+          target: { id: found[0] },
+          summary: { reason: 'not_found' },
+        });
+        expect(found).toHaveLength(1);
+      }
+      return;
+    }
     expect(markers.filter((m) => text.includes(m))).toEqual([]);
   });
 });

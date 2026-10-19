@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { PermissionRequirement } from '../src/platform/authorization.js';
 import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
+import { requiredQuery } from './support/required-query.js';
 
 // The authorization matrix (P5.9; P5 plan §10 P5.9, §13 exit criterion 2): every permission endpoint of the registry,
 // called by every kind of actor, the expected answer computed from the endpoint's declaration — its class, audience and
@@ -195,7 +196,8 @@ const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
 };
 
 function send(id: keyof typeof endpoints, e: EndpointContract, caller: Caller, w: World, allowed: boolean) {
-  const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => PARAMS[p]!(w, allowed));
+  const path =
+    e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => PARAMS[p]!(w, allowed)) + requiredQuery(id);
   let req = request(app)[e.method](path);
   if (caller.kind === 'bearer') req = req.set('Authorization', `Bearer ${caller.token}`);
   if (caller.kind === 'cookie')

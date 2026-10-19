@@ -32,6 +32,7 @@ import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
 import { apiProgram, authorityFlows, type Finding as FlowFinding } from './support/authority-flow.js';
 import { auditRows, markerRequestId } from './support/audit.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
+import { requiredQuery } from './support/required-query.js';
 
 // The policy middleware (P5.4; TARGET_ARCHITECTURE ADR-16 §3.5; P5 plan §4 invariants 3–8, §7.6, §8.2a rule 6, §9.4):
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
@@ -328,7 +329,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
 };
 
 function send(id: keyof typeof endpoints, e: EndpointContract, token: string, w: World, rid: string) {
-  const target = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => PARAMS[p]!(w));
+  const target = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => PARAMS[p]!(w)) + requiredQuery(id);
   const client = request(app);
   const req = client[e.method](target)
     .set('Cookie', `${AUTH_COOKIES.access}=${token}; ${AUTH_COOKIES.csrf}=policy-csrf`)

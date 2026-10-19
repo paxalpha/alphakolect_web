@@ -199,6 +199,34 @@ describe('operator purge run engine', () => {
     expect(db.calls.at(-1)?.sql).toContain('audit.release_purge_run');
   });
 
+  it('discards an export and removes its files when a chunk write reports ENOSPC', async () => {
+    const db = new ScriptedDb();
+    const directory = await tempDirectory();
+    const noSpace = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+
+    await expect(
+      runPurge({
+        db,
+        asOf: AS_OF,
+        directory,
+        writerHostId: 'test-host',
+        writerLockKey: 'test-lock',
+        writeChunk: async () => {
+          throw noSpace;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'ENOSPC' });
+
+    expect(db.outcome).toBe('discarded');
+    expect(
+      db.calls.some(
+        ({ sql, params }) => sql.includes('audit.discard_purge_export') && params[1] === noSpace.message,
+      ),
+    ).toBe(true);
+    expect(db.calls.some(({ sql }) => sql.includes('audit.confirm_purge_report'))).toBe(false);
+    expect(await readdir(directory)).toEqual([]);
+  });
+
   describe('the heartbeat between statements (§8.6 item 2)', () => {
     const exportWith = async (setup: (db: ScriptedDb) => void) => {
       const db = new ScriptedDb();
@@ -285,5 +313,22 @@ describe('operator purge run engine', () => {
     expect(await readFile(collision, 'utf8')).toBe('pre-existing bytes');
     expect(db.outcome).toBeNull();
     expect(db.calls.some(({ sql }) => sql.includes('audit.discard_purge_export'))).toBe(false);
+  });
+
+  it('a file planted under the report’s final name: the publication refuses, the planted file stays byte for byte, its own partial is removed', async () => {
+    const db = new ScriptedDb();
+    const directory = await tempDirectory();
+    const planted = join(directory, `alphakolect-purge-report-${RUN_ID}.jsonl`);
+    await writeFile(planted, 'planted bytes', { flag: 'wx' });
+
+    await expect(
+      runPurge({ db, asOf: AS_OF, directory, writerHostId: 'test-host', writerLockKey: 'test-lock' }),
+    ).rejects.toMatchObject({ code: 'EEXIST' });
+
+    expect(await readFile(planted, 'utf8')).toBe('planted bytes');
+    expect((await readdir(directory)).filter((f) => f.endsWith('.partial'))).toEqual([]);
+    // Something it did not write is there: the export stays unresolved for the operator, never discarded automatically.
+    expect(db.outcome).toBeNull();
+    expect(db.calls.some(({ sql }) => sql.includes('audit.confirm_purge_report'))).toBe(false);
   });
 });

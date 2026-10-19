@@ -1,6 +1,18 @@
+import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, chmod, mkdtemp, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +20,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { hostIdentity } from '../../src/modules/audit/purge-host.js';
+import { sha256File, verifyHandover, writeHandover } from '../../src/modules/audit/purge-handover.js';
 import { acquirePurgeLock } from '../../src/modules/audit/purge-lock.js';
+import { runPurge } from '../../src/modules/audit/purge.js';
+import type { Queryable } from '../../src/platform/db.js';
 
 // The operator's purge command as the operator runs it — a process of its own, against this run's database (P5 plan
 // §8.6, the Tests paragraph): the listing while another command holds the lock, a squatted lock name, the export and
@@ -30,12 +45,18 @@ afterAll(() => owner.end());
 type Result = { code: number | null; stdout: string; stderr: string };
 /** Starts the command; `done` settles when it exits. */
 function start(args: string[], env: Record<string, string> = {}) {
+  const overrides: Record<string, string> = { DATABASE_MIGRATOR_URL: inject('ownerDatabaseUrl'), ...env };
+  // Windows names are case-insensitive: drop an inherited ONEDRIVE before setting OneDrive, or it may win.
+  const names = new Set(Object.keys(overrides).map((k) => k.toLowerCase()));
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([k]) => !names.has(k.toLowerCase())),
+  );
   const child = spawn(
     process.execPath,
     ['--import', 'tsx', '--conditions=@alphakolect/source', SCRIPT, ...args],
     {
       cwd: API,
-      env: { ...process.env, DATABASE_MIGRATOR_URL: inject('ownerDatabaseUrl'), ...env },
+      env: { ...inherited, ...overrides },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     },
@@ -243,20 +264,43 @@ describe('an export killed at each point, and its recovery', () => {
   /** Runs an export that stops at `stage`, kills it there, and returns its run and the folder. */
   async function killedAt(stage: string) {
     const dir = await privateDir();
-    const pauseFile = join(tmpdir(), `akpause-${process.pid}-${stage}`);
+    const pauseFile = join(tmpdir(), `akpause-${process.pid}-${stage}-${randomUUID()}`);
+    await rm(pauseFile, { force: true });
     const { child, done } = start(['run', '--dir', dir], {
       AUDIT_PURGE_TEST_PAUSE_AT: stage,
       AUDIT_PURGE_TEST_PAUSE_FILE: pauseFile,
     });
-    for (let i = 0; i < 600 && !existsSync(pauseFile); i++) await new Promise((r) => setTimeout(r, 100));
-    expect(existsSync(pauseFile), `the export never reached ${stage}`).toBe(true);
-    child.kill('SIGKILL');
-    await done;
-    await rm(pauseFile, { force: true });
+    let exited: Result | undefined;
+    void done.then((r) => (exited = r));
+    try {
+      for (let i = 0; i < 600 && !existsSync(pauseFile) && !exited; i++)
+        await new Promise((r) => setTimeout(r, 100));
+      if (!existsSync(pauseFile)) {
+        const detail = exited?.stderr ?? 'still running';
+        child.kill('SIGKILL');
+        await done;
+        throw new Error(`the export never reached ${stage}: ${detail}`);
+      }
+      child.kill('SIGKILL');
+      await done;
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL');
+        await done;
+      }
+      await rm(pauseFile, { force: true });
+    }
     await new Promise((r) => setTimeout(r, 1100)); // the lease runs out
     const { run_id: runId } = (
-      await owner.query(`SELECT run_id FROM audit.purge_exports ORDER BY started_at DESC LIMIT 1`)
+      await owner.query(
+        `SELECT run_id FROM audit.purge_exports WHERE directory = $1 ORDER BY started_at DESC LIMIT 1`,
+        [dir],
+      )
     ).rows[0];
+    if (stage === 'mid_write') {
+      const partial = await readFile(join(dir, `alphakolect-purge-report-${runId}.jsonl.partial`), 'utf8');
+      expect(partial.split('\n').filter(Boolean)).toHaveLength(1);
+    }
     return { dir, runId: runId as string };
   }
 
@@ -269,19 +313,20 @@ describe('an export killed at each point, and its recovery', () => {
       const ids = await oldEvents(2);
       const request = requestId(await cli('request-report', '--note', `cli test: ${stage}`));
       const { dir, runId } = await killedAt(stage);
+      await writeFile(join(dir, 'operator-notes.txt'), 'not the run’s'); // every other file is left alone
       const name = `alphakolect-purge-report-${runId}.jsonl`;
       const expected = {
         final: name,
         partial: `${name}.partial`,
         marker: `alphakolect-purge-run-${runId}.marker`,
       };
-      expect(await runFiles(dir)).toEqual(files.map((f) => expected[f]).sort());
+      expect(await runFiles(dir)).toEqual([...files.map((f) => expected[f]), 'operator-notes.txt'].sort());
       expect((await exportOf(runId)).outcome).toBeNull();
       refused(await cli('run', '--dir', dir), 'export_unresolved'); // it blocks every new run
       expect(await present(ids)).toBe(2);
 
       expect((await cli('export-discarded', '--run', runId)).code).toBe(0);
-      expect(await runFiles(dir)).toEqual([]);
+      expect(await runFiles(dir)).toEqual(['operator-notes.txt']);
       expect((await exportOf(runId)).outcome).toBe('discarded');
       expect(await present(ids)).toBe(2);
       expect((await cli('request-cancel', '--request', request, '--note', 'cli test: cancelled')).code).toBe(
@@ -292,6 +337,74 @@ describe('an export killed at each point, and its recovery', () => {
       await rm(dir, { recursive: true, force: true });
     }, 180_000);
   }
+
+  it('recovery by attestation (files removed by hand) and as lost (the machine gone)', async () => {
+    await oldEvents(2);
+    const request = requestId(await cli('request-report', '--note', 'cli test: attest and lost'));
+    try {
+      // Attested: only once the run's files are gone; then the record, then the marker.
+      const first = await killedAt('mid_write');
+      expect((await cli('export-discarded', '--run', first.runId, '--attest', 'removed by hand')).code).toBe(
+        1,
+      );
+      expect((await exportOf(first.runId)).outcome).toBeNull();
+      await rm(join(first.dir, `alphakolect-purge-report-${first.runId}.jsonl.partial`));
+      expect((await cli('export-discarded', '--run', first.runId, '--attest', 'removed by hand')).code).toBe(
+        0,
+      );
+      expect(await exportOf(first.runId)).toMatchObject({ outcome: 'discarded', lost: false });
+      expect(await runFiles(first.dir)).toEqual([]);
+      // Lost: recorded without the files (an incident); the files stay where they were.
+      const second = await killedAt('after_link');
+      expect(
+        (await cli('export-discarded', '--run', second.runId, '--lost', 'cli test: the machine is gone'))
+          .code,
+      ).toBe(0);
+      expect(await exportOf(second.runId)).toMatchObject({ outcome: 'discarded', lost: true });
+      expect((await runFiles(second.dir)).length).toBe(3);
+      await rm(first.dir, { recursive: true, force: true });
+      await rm(second.dir, { recursive: true, force: true });
+    } finally {
+      expect((await cli('request-cancel', '--request', request, '--note', 'cli test: cancelled')).code).toBe(
+        0,
+      );
+    }
+  }, 240_000);
+
+  it('the marker is removed only after the outcome is recorded: a failed record leaves it, and the retry finishes', async () => {
+    await oldEvents(2);
+    const request = requestId(await cli('request-report', '--note', 'cli test: marker order'));
+    try {
+      const { dir, runId } = await killedAt('mid_write');
+      const fn = `test_fail_discard_${process.pid}`;
+      await owner.query(
+        `CREATE FUNCTION audit.${fn}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+         BEGIN
+           IF NEW.action = 'platform.purge_export_discarded' THEN RAISE EXCEPTION 'injected' USING ERRCODE = 'XX000'; END IF;
+           RETURN NEW;
+         END $fn$`,
+      );
+      await owner.query(
+        `CREATE TRIGGER ${fn} BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION audit.${fn}()`,
+      );
+      try {
+        expect((await cli('export-discarded', '--run', runId)).code).toBe(1);
+        expect(await runFiles(dir)).toEqual([`alphakolect-purge-run-${runId}.marker`]); // the files gone, the marker kept
+        expect((await exportOf(runId)).outcome).toBeNull();
+      } finally {
+        await owner.query(`DROP TRIGGER ${fn} ON audit.audit_events`);
+        await owner.query(`DROP FUNCTION audit.${fn}()`);
+      }
+      expect((await cli('export-discarded', '--run', runId)).code).toBe(0);
+      expect(await runFiles(dir)).toEqual([]);
+      expect((await exportOf(runId)).outcome).toBe('discarded');
+      await rm(dir, { recursive: true, force: true });
+    } finally {
+      expect((await cli('request-cancel', '--request', request, '--note', 'cli test: cancelled')).code).toBe(
+        0,
+      );
+    }
+  }, 180_000);
 
   it('killed after its confirmation committed: the report stands, its file present and matching', async () => {
     await oldEvents(2);
@@ -389,4 +502,366 @@ describe('the seven-day reminders (O21 S3)', () => {
       await owner.query(`DELETE FROM audit.purge_report_requests WHERE id = ANY($1)`, [ids.requests]);
     }
   }, 120_000);
+});
+
+describe('the report folder’s checks, and a marker left behind', () => {
+  it('refuses a git work tree, a OneDrive folder, and a folder other accounts may open, recording nothing', async () => {
+    const exportsBefore = (await owner.query(`SELECT count(*)::int AS n FROM audit.purge_exports`)).rows[0].n;
+    const request = requestId(await cli('request-report', '--note', 'cli test: folders'));
+    const roots: string[] = [];
+    try {
+      const repo = await privateDir();
+      roots.push(repo);
+      await mkdir(join(repo, '.git'));
+      const inside = join(repo, 'reports');
+      await mkdir(inside);
+      refused(await cli('run', '--dir', inside), 'report_directory_is_git_worktree');
+
+      const synced = await privateDir();
+      roots.push(synced);
+      refused(await start(['run', '--dir', synced], { OneDrive: synced }).done, 'report_directory_is_synced');
+
+      const shared = await privateDir();
+      roots.push(shared);
+      if (process.platform === 'win32') {
+        // Readable by every local user (the Users group), beside the operator.
+        execFileSync('C:\\Windows\\System32\\icacls.exe', [shared, '/grant', '*S-1-5-32-545:(OI)(CI)R']);
+        refused(await cli('run', '--dir', shared), 'non_operator_acl');
+      } else {
+        await chmod(shared, 0o750);
+        refused(await cli('run', '--dir', shared), 'report_directory_not_owner_only');
+      }
+      expect((await owner.query(`SELECT count(*)::int AS n FROM audit.purge_exports`)).rows[0].n).toBe(
+        exportsBefore,
+      );
+    } finally {
+      for (const root of roots) await rm(root, { recursive: true, force: true });
+      expect((await cli('request-cancel', '--request', request, '--note', 'cli test: cancelled')).code).toBe(
+        0,
+      );
+    }
+  }, 120_000);
+
+  it('--check-files lists a marker left behind after its run’s outcome is recorded', async () => {
+    await oldEvents(1);
+    const request = requestId(await cli('request-report', '--note', 'cli test: leftover marker'));
+    const dir = await privateDir();
+    const exported = json(await cli('run', '--dir', dir)) as { runId: string };
+    const marker = join(dir, `alphakolect-purge-run-${exported.runId}.marker`);
+    const kept = await readFile(marker);
+    expect((await cli('request-cancel', '--request', request, '--note', 'cli test: cancelled')).code).toBe(0);
+    expect(await runFiles(dir)).toEqual([]);
+    await writeFile(marker, kept); // left behind (a copy restored, a removal that failed)
+    const listing = json(await cli('reports', '--check-files')) as { leftoverMarkers: string[] };
+    expect(listing.leftoverMarkers).toContain(exported.runId);
+    await rm(dir, { recursive: true, force: true });
+    json(await cli('run'));
+  }, 120_000);
+});
+
+// Answers lost after a step took effect (P5 plan §8.6; the reviewer's finding of 2026-10-19): the database committed,
+// or the file system did the work, and the command saw an error instead. Each step's real effect is kept; the command
+// fails, and what it leaves is what its recovery expects. The engine and the handover steps run in this process, on a
+// connection that loses the answer of one chosen statement after the statement committed (each is its own transaction).
+describe('answers lost after a step took effect', () => {
+  const lostError = () =>
+    Object.assign(new Error('Connection terminated unexpectedly'), { code: 'ECONNRESET' });
+  /**
+   * Runs every statement. The first that contains `match` runs `before` first (another command's step, if given), and
+   * then — unless `lose` is false — commits and throws as a lost answer.
+   */
+  const losing = (
+    match: string,
+    { before, lose = true }: { before?: () => Promise<void>; lose?: boolean } = {},
+  ): Queryable & { lost: number } => {
+    let met = false;
+    const db = {
+      lost: 0,
+      async query<T extends pg.QueryResultRow>(sql: string, params: unknown[] = []): Promise<T[]> {
+        const hit = !met && sql.includes(match);
+        if (hit) met = true;
+        if (hit && before) await before();
+        const rows = (await owner.query<T>(sql, params)).rows;
+        if (hit && lose) {
+          db.lost++;
+          throw lostError();
+        }
+        return rows;
+      },
+    };
+    return db;
+  };
+  const plainDb: Queryable = {
+    query: async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) =>
+      (await owner.query<T>(sql, params)).rows,
+  };
+  const exportInto = (db: Queryable, dir: string, extra: Partial<Parameters<typeof runPurge>[0]> = {}) =>
+    runPurge({
+      db,
+      asOf: new Date().toISOString(),
+      directory: dir,
+      writerHostId: host.hostId,
+      writerLockKey: host.lockKey,
+      ...extra,
+    });
+  const request = async (note: string) =>
+    (await owner.query(`SELECT audit.request_purge_report($1) AS id`, [note])).rows[0].id as string;
+  const cancel = (id: string) =>
+    owner.query(`SELECT audit.cancel_purge_report_request($1, 'lost answers: cancelled')`, [id]);
+  const reservationFree = async () =>
+    (await owner.query(`SELECT run_id IS NULL AS free FROM audit.purge_reservation`)).rows[0].free as boolean;
+  const lastExport = async () =>
+    (await owner.query(`SELECT run_id, outcome FROM audit.purge_exports ORDER BY started_at DESC LIMIT 1`))
+      .rows[0] as {
+      run_id: string;
+      outcome: string | null;
+    };
+  beforeAll(() => setLease('1 second')); // a run left reserved by a lost release is taken over by the next one
+  afterAll(() => setLease('15 minutes'));
+  const leaseOut = () => new Promise((r) => setTimeout(r, 1100));
+
+  describe('the purge run', () => {
+    it('a page deleted, its answer lost: the run reads the page’s own mark, counts it once, and goes on', async () => {
+      const ids = await oldEvents(3);
+      const db = losing('audit.purge_expired_events');
+      const result = await runPurge({ db, asOf: new Date().toISOString() });
+      expect(db.lost).toBe(1);
+      expect(result).toMatchObject({ kind: 'plain' });
+      expect(await present(ids)).toBe(0);
+      const { rows } = await owner.query(`SELECT rows_deleted FROM audit.purge_runs WHERE run_id = $1`, [
+        (result as { runId: string }).runId,
+      ]);
+      expect(rows[0].rows_deleted).toBe((result as { rowsDeleted: number }).rowsDeleted);
+    });
+
+    it('the release, its answer lost: the reservation is free all the same; the command reports a failure', async () => {
+      await oldEvents(1);
+      await expect(
+        runPurge({ db: losing('audit.release_purge_run'), asOf: new Date().toISOString() }),
+      ).rejects.toMatchObject({
+        code: 'ECONNRESET',
+      });
+      expect(await reservationFree()).toBe(true);
+    });
+  });
+
+  describe('the export', () => {
+    for (const step of ['audit.begin_purge_export', 'audit.record_export_artifact'] as const) {
+      it(`${step.slice(6)} took effect, its answer lost: nothing deleted, the export discarded, its files removed`, async () => {
+        const ids = await oldEvents(2);
+        const id = await request(`lost answers: ${step}`);
+        const dir = await privateDir();
+        try {
+          await expect(exportInto(losing(step), dir)).rejects.toMatchObject({ code: 'ECONNRESET' });
+          expect((await lastExport()).outcome).toBe('discarded');
+          expect(await runFiles(dir)).toEqual([]);
+          expect(await present(ids)).toBe(2);
+        } finally {
+          await leaseOut();
+          await cancel(id);
+          await rm(dir, { recursive: true, force: true });
+        }
+      });
+    }
+
+    it('the confirmation committed, its answer lost: the report stands with its file and marker; nothing is removed', async () => {
+      const ids = await oldEvents(2);
+      const id = await request('lost answers: confirm');
+      const dir = await privateDir();
+      try {
+        await expect(exportInto(losing('audit.confirm_purge_report'), dir)).rejects.toMatchObject({
+          code: 'ECONNRESET',
+        });
+        const { run_id: runId, outcome } = await lastExport();
+        expect(outcome).toBe('confirmed');
+        const { rows } = await owner.query(
+          `SELECT file_location, file_sha256 FROM audit.purge_reports WHERE run_id = $1`,
+          [runId],
+        );
+        expect(await sha256File(rows[0].file_location)).toBe(rows[0].file_sha256); // the report's own file, intact
+        expect((await runFiles(dir)).length).toBe(2); // the report and its marker
+        expect(await present(ids)).toBe(2);
+      } finally {
+        await leaseOut();
+        await cancel(id); // withdraws the report; its files are the operator's to destroy (report-destroyed)
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('a failed write discarded, the discard’s answer lost: recorded discarded, files removed, the marker left for the listing', async () => {
+      const id = await request('lost answers: discard');
+      await oldEvents(1);
+      const dir = await privateDir();
+      try {
+        const full = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+        await expect(
+          exportInto(losing('audit.discard_purge_export'), dir, {
+            writeChunk: async () => {
+              throw full;
+            },
+          }),
+        ).rejects.toMatchObject({ code: 'ECONNRESET' }); // what the operator sees: the lost answer
+        const { run_id: runId, outcome } = await lastExport();
+        expect(outcome).toBe('discarded');
+        expect(await runFiles(dir)).toEqual([`alphakolect-purge-run-${runId}.marker`]);
+      } finally {
+        await leaseOut();
+        await cancel(id);
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('the publication link made, its answer lost: the export left unresolved with both names, for export-discarded', async () => {
+      const ids = await oldEvents(1);
+      const id = await request('lost answers: publish');
+      const dir = await privateDir();
+      try {
+        await expect(
+          exportInto(plainDb, dir, {
+            publish: async (from, to) => {
+              await link(from, to);
+              throw Object.assign(new Error('i/o error'), { code: 'EIO' });
+            },
+          }),
+        ).rejects.toMatchObject({ code: 'EIO' });
+        const { run_id: runId, outcome } = await lastExport();
+        // Something it cannot account for is in the folder (the final name): never discarded automatically here.
+        expect(outcome).toBeNull();
+        expect(await runFiles(dir)).toEqual(
+          [`alphakolect-purge-report-${runId}.jsonl`, `alphakolect-purge-run-${runId}.marker`].sort(),
+        );
+        expect(await present(ids)).toBe(1);
+        await leaseOut();
+        // The recovery the runbook names removes the run's files and records the discard.
+        expect((await cli('export-discarded', '--run', runId)).code).toBe(0);
+        expect(await runFiles(dir)).toEqual([]);
+        expect((await lastExport()).outcome).toBe('discarded');
+      } finally {
+        await cancel(id);
+        await rm(dir, { recursive: true, force: true });
+      }
+    }, 120_000);
+  });
+
+  describe('the handover', () => {
+    /** A confirmed report in a private folder, and a folder standing in for the stick. */
+    async function confirmedReport() {
+      await oldEvents(1);
+      const requestId = await request('lost answers: handover');
+      const dir = await privateDir();
+      const exported = (await exportInto(plainDb, dir)) as {
+        reportId: string;
+        runId: string;
+        reportPath: string;
+        sha256: string;
+      };
+      const stick = await mkdtemp(join(tmpdir(), 'akstick-'));
+      const report = {
+        id: exported.reportId,
+        run_id: exported.runId,
+        file_location: exported.reportPath,
+        file_sha256: exported.sha256,
+      };
+      const medium = { path: stick, volumeKey: 'E:', label: 'OWNER COPY', serial: '1A2B3C4D', diskseq: null };
+      const onStick = join(stick, `alphakolect-purge-report-${exported.runId}.jsonl`);
+      const done = async () => {
+        await owner.query(
+          `SELECT audit.record_handover_abandoned(id, 'lost answers: stick wiped')
+             FROM audit.purge_report_handovers WHERE report_id = $1 AND fate_attested_at IS NULL`,
+          [report.id],
+        );
+        await owner.query(`SELECT audit.cancel_purge_report_request($1, 'lost answers: cancelled')`, [
+          requestId,
+        ]);
+        await rm(dir, { recursive: true, force: true });
+        await rm(stick, { recursive: true, force: true });
+      };
+      return { report, medium, onStick, done };
+    }
+    const attemptOf = async (reportId: string) =>
+      (
+        await owner.query(
+          `SELECT id, outcome, written_at FROM audit.purge_report_handovers WHERE report_id = $1`,
+          [reportId],
+        )
+      ).rows[0] as { id: string; outcome: string | null; written_at: Date | null };
+    const yes = async () => true;
+    const quiet = () => undefined;
+
+    it('the write recorded, its answer lost: the attempt is recorded written, the copy on the stick whole, the operator told', async () => {
+      const h = await confirmedReport();
+      try {
+        const unresolved: string[] = [];
+        await expect(
+          writeHandover(losing('audit.record_handover_written'), h.report, h.medium, (a) =>
+            unresolved.push(a),
+          ),
+        ).rejects.toMatchObject({ code: 'ECONNRESET' });
+        const attempt = await attemptOf(h.report.id);
+        expect(attempt.written_at).not.toBeNull();
+        expect(unresolved).toEqual([attempt.id]);
+        expect(await sha256File(h.onStick)).toBe(h.report.file_sha256);
+      } finally {
+        await h.done();
+      }
+    });
+
+    it('the handover recorded, its answer lost: the attempt is recorded, the stick untouched', async () => {
+      const h = await confirmedReport();
+      try {
+        await writeHandover(plainDb, h.report, h.medium, quiet);
+        await expect(
+          verifyHandover(losing('audit.record_report_handover'), h.report, h.medium, undefined, yes, quiet),
+        ).rejects.toMatchObject({ code: 'ECONNRESET' });
+        expect((await attemptOf(h.report.id)).outcome).toBe('recorded');
+        expect(await sha256File(h.onStick)).toBe(h.report.file_sha256);
+      } finally {
+        await h.done();
+      }
+    });
+
+    it('a failed verification recorded, its answer lost: the attempt is abandoned, the stick left for the operator', async () => {
+      const h = await confirmedReport();
+      try {
+        await writeHandover(plainDb, h.report, h.medium, quiet);
+        await appendFile(h.onStick, '{"changed":true}\n'); // the stick's bytes changed between the two steps
+        const failed: string[] = [];
+        await expect(
+          verifyHandover(losing('audit.record_handover_failed'), h.report, h.medium, undefined, yes, (a) =>
+            failed.push(a),
+          ),
+        ).rejects.toMatchObject({ code: 'ECONNRESET' });
+        expect((await attemptOf(h.report.id)).outcome).toBe('abandoned');
+        expect(existsSync(h.onStick)).toBe(true); // not removed: the command stopped at the lost answer
+        expect(failed).toEqual([]);
+      } finally {
+        await h.done();
+      }
+    });
+
+    it('the attempt recorded by another command after this one read it: the failure record is refused and the stick untouched', async () => {
+      const h = await confirmedReport();
+      try {
+        const { attemptId } = await writeHandover(plainDb, h.report, h.medium, quiet);
+        await appendFile(h.onStick, '{"changed":true}\n');
+        const before = await readFile(h.onStick);
+        const db = losing('audit.record_handover_failed', {
+          lose: false,
+          before: async () => {
+            await owner.query(`SELECT audit.record_report_handover($1, $2, true, NULL)`, [
+              attemptId,
+              h.report.file_sha256,
+            ]);
+          },
+        });
+        await expect(verifyHandover(db, h.report, h.medium, attemptId, yes, quiet)).rejects.toMatchObject({
+          code: '55000',
+        });
+        expect((await attemptOf(h.report.id)).outcome).toBe('recorded');
+        expect(await readFile(h.onStick)).toEqual(before);
+      } finally {
+        await h.done();
+      }
+    });
+  });
 });

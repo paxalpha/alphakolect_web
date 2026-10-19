@@ -17,9 +17,13 @@ let watcher: pg.Client;
 /** Backend ids, read once: a busy connection cannot answer a query until its blocked statement ends. */
 let pidA = 0;
 beforeAll(async () => {
-  [owner, a, b, x, watcher] = await Promise.all(
-    ['migrator', 'migrator', 'migrator', 'migrator', 'migrator'].map((r) => connectAs(r as 'migrator')),
-  );
+  [owner, a, b, x, watcher] = await Promise.all([
+    connectAs('migrator'),
+    connectAs('migrator'),
+    connectAs('migrator'),
+    connectAs('migrator'),
+    connectAs('migrator'),
+  ]);
   pidA = (await a.query(`SELECT pg_backend_pid() AS pid`)).rows[0].pid as number;
 });
 afterAll(async () => {

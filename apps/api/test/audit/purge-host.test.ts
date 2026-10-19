@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 import { hostIdentity, realSystem, type HostSystem } from '../../src/modules/audit/purge-host.js';
 
 // The purge command's host identity (P5 plan §8.6 item 1 and its tests: "an unsupported platform, a detected container,
@@ -44,7 +45,10 @@ describe('the purge command’s host identity', () => {
       lockKey: `windows:${SID}`,
       lockAddress: `\\\\.\\pipe\\alphakolect-purge-${SID}`,
     });
-    expect(called).toEqual(['C:\\Windows\\System32\\whoami.exe', 'C:\\Windows\\System32\\reg.exe']);
+    expect(called).toEqual([
+      join('C:\\Windows', 'System32', 'whoami.exe'),
+      join('C:\\Windows', 'System32', 'reg.exe'),
+    ]);
   });
 
   it('Linux: the machine id, the uid, and an abstract socket of that uid', () => {

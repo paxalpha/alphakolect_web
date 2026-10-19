@@ -1,6 +1,6 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 98 — lost-answer tests re-checked; approved to push for Ubuntu CI, not to merge or close.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 99 — owner approval recorded; CI suite reported passing; P5 is not yet closed.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
 and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
@@ -10,10 +10,12 @@ lost-response fault-injection item and a required pre-handover rehearsal; P5.9's
 written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
 gitleaks found no leaks over the full history (both at `45c044f`), and the owner approved closing on a condition (O24).
 **Since revision 97:** the lost-response suite now passes after its `as_of` fixture was changed to use the database's
-UTC clock. The reviewer has re-checked that fix and approves pushing the branch to activate Ubuntu CI. **Waiting for:**
-the full gate after this final test edit, passing Ubuntu CI, the reviewer's final record of P5.8's test gate and closure,
-and the owner's final approval. Nothing is merged or closed by revision 98. Separately, the recorded rehearsal is
-required before the first real copy. The owner
+UTC clock. The reviewer has re-checked that fix and approves pushing the branch to activate Ubuntu CI. **Since revision
+98:** the owner has approved closing P5, and reports that the full P5 test suite passed on CI (2026-10-19). **Still
+required before closure:** rerun the full gate twice after the final test edit; rerun full-history gitleaks; and obtain
+the reviewer's final record of the P5.8 test gate and P5.8–P5.10 closure review. These independent gates are not
+approved by the owner's sign-off. P5 remains open until they are completed and recorded. Separately, the recorded
+rehearsal is required before the first real copy. The owner
 approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
 
 | | |
@@ -3465,6 +3467,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 99 | 2026-10-19 | **Owner final approval recorded; CI pass reported.** The owner approved closing P5 and reports the full P5 test suite passed on CI. Still open: full gate twice after the final test edit, fresh full-history gitleaks, and the independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record. Approval does not waive those gates; P5 is not closed. |
 | 98 | 2026-10-19 | **Reviewer re-check of the lost-response tests; approved to push for Ubuntu CI only.** Replaced Node-host `Date` values with the database's canonical UTC clock; the 11-case lost-response group passes, as do formatting, lint and API typecheck. Push to a PR is approved to activate Ubuntu CI. Not approved to merge or close: rerun the final gate twice after this edit, rerun full-history gitleaks, pass Ubuntu CI, and satisfy the owner's conditional O24 before closure. |
 | 97 | 2026-10-19 | **The lost-response tests built; the final gate and gitleaks green; the owner's conditional approval recorded (O24).** For the independent reviewer's re-check: the fault injection the review of revision 96 required (`e648b0b`, handover steps extracted for it in `0013185`); the full gate twice and gitleaks at `45c044f`. Still waiting: the reviewer's record of P5.8's test gate and of closure, and a passing Ubuntu CI run. Nothing approved or closed. |
 | 96 | 2026-10-19 | **Combined P5.8–P5.10 technical review; revised §8.6 allocation approved, P5.8 test gate still open.** POSIX directory mode is assigned to existing Ubuntu CI; injected `ENOSPC` and a renamed directory are accepted only as code-path stand-ins; physical full-disk, unmount and removable-media checks are assigned to the test-database rehearsal before first handover. The one-minute idle timeout is verified against PostgreSQL (`25P03`). A separate lost-response-after-commit fault-injection test remains untested and is not waived. P5 closure requires that test, passing Ubuntu CI, the final gate twice, full-history gitleaks, and unconditional owner approval; the rehearsal is required before first handover, not as a closure gate. |

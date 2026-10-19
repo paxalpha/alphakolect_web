@@ -111,8 +111,11 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
     expect(byClass('T5')).toEqual(['AuditLog.recordBestEffort']);
     expect(byClass('T3')).toContain('MembershipService.list');
     expect(byClass('T3')).toContain('PlatformStaffService.list');
-    // P5.7: the platform team's view of the businesses — each page one call of its designated read function
+    // P5.7: the platform team's view of the businesses, and P5.8: the activity record — each page one call of its
+    // designated read function
     expect(byClass('T4')).toEqual([
+      'AuditReadService.merchant',
+      'AuditReadService.platform',
       'PlatformMerchantListService.members',
       'PlatformMerchantListService.merchants',
     ]);

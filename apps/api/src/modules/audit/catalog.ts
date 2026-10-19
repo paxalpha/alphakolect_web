@@ -35,6 +35,8 @@ const status16 = { type: 'string', max: 16 } as const;
 const uuid = { type: 'string', max: 36 } as const;
 const nullableUuid = { type: 'string', max: 36, nullable: true } as const;
 const flag = { type: 'boolean' } as const;
+/** A timestamp as the database writes it (to_char … 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'). */
+const instant = { type: 'string', max: 40 } as const;
 const denial = { reason, kind } as const;
 const member = { kind, status: status16, roleId: nullableUuid, branchId: nullableUuid } as const;
 /** A role's or a platform staff member's permission set (P5.6, the list rule): at most 32 catalog identifiers. */
@@ -160,6 +162,23 @@ export const AUDIT_CATALOG = [
   // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
   sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
   sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
+  // sensitive reads (P5.8): the activity record itself, one event per page — the window, the page and the filters
+  sensitiveRead('merchant.audit_read', {
+    from: instant,
+    to: instant,
+    limit: { type: 'integer' },
+    continued: flag,
+    membershipId: nullableUuid,
+  }),
+  sensitiveRead('platform.audit_read', {
+    from: instant,
+    to: instant,
+    limit: { type: 'integer' },
+    continued: flag,
+    merchantId: nullableUuid,
+    membershipId: nullableUuid,
+    event: { type: 'string', max: 100, nullable: true },
+  }),
   // best effort — identity failures, and the link-issuing successes of O6
   bestEffort('auth.signup', 'failure', { reason }),
   bestEffort('auth.email_verify', 'failure', { reason }),
@@ -210,6 +229,8 @@ export const AUDIT_CATALOG = [
   bestEffort('platform.grants_set', 'failure', { reason }),
   bestEffort('platform.merchant_list_read', 'denied', { reason }),
   bestEffort('platform.merchant_members_read', 'denied', { reason }),
+  bestEffort('merchant.audit_read', 'denied', { reason }),
+  bestEffort('platform.audit_read', 'denied', { reason }),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

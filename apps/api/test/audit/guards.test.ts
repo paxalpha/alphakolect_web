@@ -238,6 +238,9 @@ const INVENTORY: Record<
       // P5.7: a refused sensitive read (a refusal by the database)
       'platform.merchant_list_read/denied',
       'platform.merchant_members_read/denied',
+      // P5.8: a refused activity-record read (a refusal by the database)
+      'merchant.audit_read/denied',
+      'platform.audit_read/denied',
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

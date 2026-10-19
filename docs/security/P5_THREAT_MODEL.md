@@ -5,12 +5,9 @@
 Its input is the design-stage table in `docs/architecture/P5_AUDIT_REPORT.md` §15; every row of that table is answered
 below with what was built, the test that holds it, and what risk remains.
 
-**Not yet built, and therefore not covered here:** the two activity-record reads — `GET /v1/merchant/audit-events`
-(#33) and `GET /v1/platform/audit-events` (#34) — whose contracts (ADR-16 "Addendum — the activity-record reads") await
-the independent reviewer's confirmation. Until they are built, no endpoint returns activity entries, the app keeps the
-`SELECT` on `audit.audit_events` that P1 granted (no app code uses it), and the reporting role keeps the `ip` and
-`user_agent` columns; both are removed by the migration that creates the reads (P5 plan §8.6). This document is to be
-extended when they land.
+**The activity-record reads** — `GET /v1/merchant/audit-events` (#33) and `GET /v1/platform/audit-events` (#34),
+built on the ADR-16 addendum the independent reviewer confirmed on 2026-10-19 — are covered below (T-21 to T-24). With
+them the app lost its `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns.
 
 ## How authority is decided (the boundary the threats are measured against)
 
@@ -62,6 +59,10 @@ extended when they land.
 | T-18 | The owner's copy leaks | The report file is named by its run, owner-only, in a local unsynced folder, tracked from creation to destruction; handed over on a stick verified after a physical re-insertion; the operator's copy destroyed and recorded after the owner's written receipt | `purge.test.ts`, `retention.test.ts`; the runbook `docs/operations/AUDIT_PURGE.md` | The eject, the stick's fate, the folder's encryption and the absence of other sync or backup tools rest on the operator's attestations |
 | T-19 | Two operator commands race | A kernel-held lock per operator account and a database reservation judged by the database's clock; every wait `NOWAIT` or `SKIP LOCKED` | `purge-lock.test.ts`; the lock-order guard | Commands on another machine, or another OS account, are separated only by the database reservation |
 | T-20 | IP addresses and devices kept too long outside the record | Session and link details cleared two years after the sign-in ended (the earliest of revocation, absolute and idle expiry) or the link was sent, in batches on every purge invocation | `retention.test.ts` | Until P12 schedules it, the purge is run by hand, once a month on the first working day (the owner's choice, O23); a missed month keeps details up to a month longer |
+| T-21 | One business reads another's activity, or the platform's | #33 takes the business from the session only and filters every query by it, the person filter included (R19, its insert rule extended for the read's own event); no merchant parameter, and a cursor carries only a position bound to its window and filters | `audit-reads.test.ts`, `audit-reads-api.test.ts`, the isolation matrix (another business's identifiers appear only as the targets of the reader's own refused attempts); the R19 guard (mutation: the business filter removed fails it) | A new merchant-scoped read without its filter — refused by the R19 guard |
+| T-22 | The platform team member, or their address and device, exposed in a business's record | #33 shows the team's actions as "AlphaKolect team", without membership, email, IP address or device; the recorded audience is kept as recorded (O19, CF5) | `audit-reads.test.ts` (mutation: the address shown fails it); the API tests on real platform reads | None specific |
+| T-23 | Addresses and devices read by platform staff | #34 returns them to the super admin only, whatever a staff member's grants (D9, F3) — the one role-tied visibility rule the authority guard lists | `audit-reads.test.ts`, `audit-reads-api.test.ts` | A change of the rule needs the owner and a guard-list change |
+| T-24 | Reading the record without trace, or reading it in bulk | Each page is a sensitive read: its event is written before the rows and nothing is returned if it cannot be; at most 100 events and 31 days a request (O4); a refusal recorded; the app and reporting role cannot read the table directly | `audit-reads.test.ts` (failure injection), `audit-reads-api.test.ts`; the writer guard (one writer per read pair) | Volume over many requests is visible in the record, not limited; alerting on it is P15's |
 
 ## Residual risks accepted for P5
 
@@ -69,4 +70,4 @@ extended when they land.
 2. Part 2 (the retention design) was approved under delegation, not by an independent review.
 3. The operator's attestations (the eject, sticks' fates, the folder's properties) are not machine-verifiable.
 4. Monitoring and alerting (activity-write failures, containment, a copy awaited) are P15 obligations.
-5. The activity-record reads (#33, #34) are not built: this model is extended when they are.
+5. Bulk reading of the activity record across many requests is recorded, not rate-limited; alerting on it is P15's.

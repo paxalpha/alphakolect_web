@@ -22,10 +22,30 @@ class ScriptedDb implements Queryable {
   /** Steps that examine their ceiling of rows and take none (a held block) before the first page. */
   emptySteps = 0;
   emptyExport = false;
+  /** How long a page takes, and what a heartbeat's renewal answers: nothing, or an error with this SQLSTATE. */
+  pageDelayMs = 0;
+  renewFails: string | null = null;
+  /** Whether a statement ever started while another was still running (the client runs one at a time). */
+  overlapped = false;
+  private inFlight = 0;
   private nextPage = 1;
 
   async query<T extends pg.QueryResultRow>(sql: string, params: unknown[] = []): Promise<T[]> {
+    if (this.inFlight > 0) this.overlapped = true;
+    this.inFlight++;
+    try {
+      return await this.answer<T>(sql, params);
+    } finally {
+      this.inFlight--;
+    }
+  }
+
+  private async answer<T extends pg.QueryResultRow>(sql: string, params: unknown[]): Promise<T[]> {
     this.calls.push({ sql, params });
+    if (sql.includes('audit.renew_purge_run')) {
+      if (this.renewFails) throw Object.assign(new Error('renewal refused'), { code: this.renewFails });
+      return [];
+    }
     let rows: Record<string, unknown>[] = [];
     if (sql.includes('audit.reserve_purge_run')) {
       rows = [{ run_id: RUN_ID, kind: this.kind, as_of: AS_OF }];
@@ -35,6 +55,7 @@ class ScriptedDb implements Queryable {
       this.artifactRecordedAt = new Date();
     } else if (sql.includes('audit.purge_candidates')) {
       if (this.failDuringExport && this.kind === 'export') throw new Error('injected page failure');
+      if (this.pageDelayMs) await new Promise((r) => setTimeout(r, this.pageDelayMs));
       const pageNo = params[2];
       // As the database does: a page number other than the next one is refused.
       if (pageNo !== this.nextPage) throw Object.assign(new Error('page_out_of_order'), { code: '23514' });
@@ -176,6 +197,60 @@ describe('operator purge run engine', () => {
     expect(await readdir(directory)).toEqual([]);
     expect(db.outcome).toBe('discarded');
     expect(db.calls.at(-1)?.sql).toContain('audit.release_purge_run');
+  });
+
+  describe('the heartbeat between statements (§8.6 item 2)', () => {
+    const exportWith = async (setup: (db: ScriptedDb) => void) => {
+      const db = new ScriptedDb();
+      setup(db);
+      const directory = await tempDirectory();
+      const result = runPurge({
+        db,
+        asOf: AS_OF,
+        directory,
+        writerHostId: 'test-host',
+        writerLockKey: 'test-lock',
+        heartbeatMs: 5,
+      });
+      return { db, directory, result };
+    };
+    const renewals = (db: ScriptedDb) =>
+      db.calls.filter(({ sql }) => sql.includes('audit.renew_purge_run')).length;
+
+    it('renews the lease while the export works, never inside another statement', async () => {
+      const { db, result } = await exportWith((d) => {
+        d.pageDelayMs = 40;
+      });
+      await expect(result).resolves.toMatchObject({ kind: 'export' });
+      expect(renewals(db)).toBeGreaterThan(0);
+      expect(db.overlapped).toBe(false);
+    });
+
+    it('a refused renewal stops the export: discarded with its reason, its files removed, no report', async () => {
+      const { db, directory, result } = await exportWith((d) => {
+        d.pageDelayMs = 40;
+        d.renewFails = '55000';
+      });
+      await expect(result).rejects.toThrow('heartbeat_refused');
+      expect(db.outcome).toBe('discarded');
+      expect(
+        db.calls.some(
+          ({ sql, params }) =>
+            sql.includes('audit.discard_purge_export') && params[1] === 'heartbeat_refused',
+        ),
+      ).toBe(true);
+      expect(db.calls.some(({ sql }) => sql.includes('audit.confirm_purge_report'))).toBe(false);
+      expect(await readdir(directory)).toEqual([]);
+    });
+
+    it('a momentary lock_not_available is not a refusal', async () => {
+      const { db, result } = await exportWith((d) => {
+        d.pageDelayMs = 40;
+        d.renewFails = '55P03';
+      });
+      await expect(result).resolves.toMatchObject({ kind: 'export' });
+      expect(renewals(db)).toBeGreaterThan(0);
+    });
   });
 
   it('discards an empty export with its reason and removes its files', async () => {

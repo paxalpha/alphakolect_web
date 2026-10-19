@@ -3,9 +3,12 @@ import { createReadStream } from 'node:fs';
 import { access, link, open, rm, unlink } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
+import type pg from 'pg';
 import type { Queryable } from '../../platform/db.js';
 
 const PAGE_LIMIT = 1000;
+/** How often an export renews its run's lease between its own statements (the lease is 15 minutes). */
+const HEARTBEAT_MS = 60_000;
 const REPORT_PREFIX = 'alphakolect-purge-report-';
 
 type PurgeRun = { run_id: string; kind: 'plain' | 'export'; as_of: string };
@@ -40,6 +43,46 @@ export class PurgeError extends Error {
 }
 
 const sha256 = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
+
+/**
+ * The command's one client, one statement at a time — the heartbeat's included. Every statement of the engine is its
+ * own transaction, so a heartbeat queued behind a page statement runs after it, never inside it (§8.6 item 2: heartbeats
+ * go only between the command's own transactions).
+ */
+function serialized(db: Queryable): Queryable {
+  let tail: Promise<unknown> = Promise.resolve();
+  return {
+    query<T extends pg.QueryResultRow = pg.QueryResultRow>(sql: string, params?: unknown[]): Promise<T[]> {
+      const result = tail.then(() => db.query<T>(sql, params));
+      tail = result.catch(() => undefined);
+      return result;
+    },
+  };
+}
+
+/**
+ * Renews the run's lease every `everyMs` while an export works between statements (the file's writes, its read-back).
+ * A renewal refused because the run is no longer live stops the export at its next step; a momentary
+ * lock_not_available (another command holding the reservation row for one statement) is not a refusal.
+ */
+function startHeartbeat(db: Queryable, run: PurgeRun, everyMs: number) {
+  let refused: unknown;
+  const timer = setInterval(() => {
+    db.query(`SELECT audit.renew_purge_run($1, $2)`, [run.run_id, run.as_of]).catch((error: unknown) => {
+      const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+      if (code !== '55P03') refused ??= error;
+    });
+  }, everyMs);
+  timer.unref();
+  return {
+    check() {
+      if (refused) throw new PurgeError('heartbeat_refused');
+    },
+    stop() {
+      clearInterval(timer);
+    },
+  };
+}
 
 const reportName = (runId: string) => `${REPORT_PREFIX}${runId}.jsonl`;
 
@@ -128,6 +171,7 @@ async function writeReport(
   directory: string,
   hostId: string,
   lockKey: string,
+  heartbeatMs: number,
 ): Promise<Omit<Extract<PurgeResult, { kind: 'export' }>, 'metadataCleared'>> {
   const name = reportName(run.run_id);
   const finalPath = join(directory, name);
@@ -142,6 +186,7 @@ async function writeReport(
   const pageCounts: number[] = [];
   const pageDigests: string[] = [];
   let rowCount = 0;
+  let heartbeat: ReturnType<typeof startHeartbeat> | undefined;
 
   try {
     await db.query(`SELECT audit.begin_purge_export($1, $2, $3, $4, $5)`, [
@@ -168,6 +213,7 @@ async function writeReport(
       await marker.close();
     }
     await syncDirectory(directory);
+    heartbeat = startHeartbeat(db, run, heartbeatMs);
 
     try {
       handle = await open(partialPath, 'wx', 0o600);
@@ -202,6 +248,7 @@ async function writeReport(
         rowCount += page.row_count;
         pageNo++;
       }
+      heartbeat.check();
       if (page.exhausted) break;
     }
 
@@ -212,6 +259,7 @@ async function writeReport(
 
     const verified = await verifyReportFile(partialPath, pageCounts, pageDigests);
     if (verified.rowCount !== rowCount) throw new PurgeError('report_row_count_mismatch');
+    heartbeat.check();
     const pageManifestDigest = sha256(`${pageDigests.join('\n')}\n`);
 
     try {
@@ -232,6 +280,8 @@ async function writeReport(
       if (published.sha256 !== verified.sha256) throw new PurgeError('published_report_hash_mismatch');
     }
 
+    heartbeat.check();
+    heartbeat.stop();
     const fileLocation = finalPath;
     const [confirmedRow] = await db.query<{ report_id: string }>(
       `SELECT audit.confirm_purge_report($1, $2, $3, $4, $5, $6, $7) AS report_id`,
@@ -250,6 +300,7 @@ async function writeReport(
       directoryFsync,
     };
   } catch (error) {
+    heartbeat?.stop();
     if (handle) await handle.close().catch(() => undefined);
     const state = await readExportState(db, run.run_id).catch(() => undefined);
     if (state?.outcome === 'confirmed') {
@@ -288,6 +339,7 @@ async function writeReport(
     }
     throw error;
   } finally {
+    heartbeat?.stop();
     if (handle) await handle.close().catch(() => undefined);
   }
 }
@@ -298,7 +350,10 @@ export async function runPurge(args: {
   directory?: string;
   writerHostId?: string;
   writerLockKey?: string;
+  /** The export's heartbeat interval (tests shorten it). */
+  heartbeatMs?: number;
 }): Promise<PurgeResult> {
+  args = { ...args, db: serialized(args.db) };
   const [run] = await args.db.query<PurgeRun>(`SELECT * FROM audit.reserve_purge_run($1::timestamptz)`, [
     args.asOf,
   ]);
@@ -342,6 +397,7 @@ export async function runPurge(args: {
         args.directory!,
         args.writerHostId!,
         args.writerLockKey!,
+        args.heartbeatMs ?? HEARTBEAT_MS,
       );
       pages = exportResult.pages;
     }

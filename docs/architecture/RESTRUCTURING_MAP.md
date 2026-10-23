@@ -368,6 +368,8 @@ Security track §6 runs **in parallel from now**. **P0 and P0-Q ship together as
 - **Still open:** the P5.8–P5.10 gate reviews; the rest of §8.6's tests; the owner's final approval (the policy is approved and signed, O22; the clean-up runs monthly, O23; the review documents stay in the history, O17). CI has not run on this branch.
 - **Threat model (as built):** `docs/security/P5_THREAT_MODEL.md`. **Runbooks:** `docs/operations/AUDIT_PURGE.md`, `docs/operations/AUTHORIZATION_CONTAINMENT.md`.
 
+**P5 closure addendum (2026-10-23):** The independent reviewer approved P5.8–P5.10 closure after the 23rd P5 forward migration, `20261019000200_retention_handover_guards`, added the final handover-fate and pending-copy safeguards. The final GitHub Actions run passed on the branch head, including the complete test/concurrency gate and full-history secret scan; see the dated verdict in `docs/architecture/P5_IMPLEMENTATION_PLAN.md` §14. This supersedes the older migration count and “Still open” status above. The hardware rehearsal remains required before the first real report handover, not for P5 closure. The PR remains open for the owner to merge.
+
 **Obligations P5 passes to P15 (2026-10-12; ADR-16 §3.5, owner decisions D9/F3/CF4 and follow-up C1/C2):**
 1. **Backups** keep deleted activity entries no longer than the owner's backup retention (O10, decided: 35 days).
 2. **Alerts** on the `audit_write_failure` signal and on sign-in failures caused by audit unavailability (500s on the

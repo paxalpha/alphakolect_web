@@ -613,8 +613,28 @@ describe('answers lost after a step took effect', () => {
     });
   const request = async (note: string) =>
     (await owner.query(`SELECT audit.request_purge_report($1) AS id`, [note])).rows[0].id as string;
-  const cancel = (id: string) =>
-    owner.query(`SELECT audit.cancel_purge_report_request($1, 'lost answers: cancelled')`, [id]);
+  const cancel = async (id: string) => {
+    const [report] = (
+      await owner.query<{ id: string; file_location: string; directory: string; run_id: string }>(
+        `SELECT p.id, p.file_location, e.directory, p.run_id
+           FROM audit.purge_reports p JOIN audit.purge_exports e ON e.run_id = p.run_id
+          WHERE p.request_id = $1 AND p.delivered_at IS NULL AND p.withdrawn_at IS NULL AND p.lost_at IS NULL`,
+        [id],
+      )
+    ).rows;
+    await owner.query(`SELECT audit.cancel_purge_report_request($1, 'lost answers: cancelled')`, [id]);
+    if (report) {
+      await Promise.all([
+        rm(report.file_location, { force: true }),
+        rm(`${report.file_location}.partial`, { force: true }),
+        rm(join(report.directory, `alphakolect-purge-run-${report.run_id}.marker`), { force: true }),
+      ]);
+      await owner.query(`SELECT audit.record_report_copy_destroyed($1, 'automatic', $2)`, [
+        report.id,
+        'test files removed; no other operator copy retained',
+      ]);
+    }
+  };
   const reservationFree = async () =>
     (await owner.query(`SELECT run_id IS NULL AS free FROM audit.purge_reservation`)).rows[0].free as boolean;
   const lastExport = async () =>
@@ -782,6 +802,10 @@ describe('answers lost after a step took effect', () => {
         ]);
         await rm(dir, { recursive: true, force: true });
         await rm(stick, { recursive: true, force: true });
+        await owner.query(`SELECT audit.record_report_copy_destroyed($1, 'automatic', $2)`, [
+          report.id,
+          'test files and stick removed; no other operator copy retained',
+        ]);
       };
       return { report, medium, onStick, done };
     }

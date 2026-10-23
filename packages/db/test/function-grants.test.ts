@@ -47,6 +47,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'audit.d9_retention()': OWNER_ONLY,
   'audit.discard_purge_export(uuid, text, text)': OWNER_ONLY,
   'audit.event_canonical_text(audit.audit_events)': OWNER_ONLY,
+  'audit.guard_pending_report_copy_destruction()': OWNER_ONLY,
   'audit.purge_candidates(uuid, timestamp with time zone, integer, integer)': OWNER_ONLY,
   'audit.purge_expired_events(uuid, timestamp with time zone, integer)': OWNER_ONLY,
   'audit.purge_lease()': OWNER_ONLY,

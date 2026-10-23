@@ -155,6 +155,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'audit.event_canonical_text': { class: 'reader' },
   // the table's own guard (L4): reads without locks, locks and writes nothing
   'audit.audit_events_guard': { class: 'trigger' },
+  'audit.guard_pending_report_copy_destruction': { class: 'trigger' },
   'audit.reserve_purge_run': {
     class: 'operation',
     planned: ['0:W', '0:W', '0:W', '+0'],

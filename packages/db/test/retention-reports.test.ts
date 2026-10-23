@@ -276,13 +276,23 @@ describe('handover and delivery', () => {
       await written(failed);
       await op.query(`SELECT audit.record_handover_failed($1, 'hash mismatch on the stick')`, [failed]);
       expect(await attemptRow(failed)).toEqual({ outcome: 'abandoned', fate_attested_at: null });
+      await refused(`SELECT audit.begin_report_handover($1, 'F:')`, [report], NOT_READY);
+      await op.query(abandonSql, [failed]);
       const good = await begin(report);
       await written(good);
       await op.query(verifySql, [good, SHA, true, null]);
+      const unaccounted = await one<{ id: string }>(
+        `INSERT INTO audit.purge_report_handovers
+           (report_id, started_at, medium, written_at, outcome, ended_at)
+         VALUES ($1, now(), 'F:', now(), 'abandoned', now()) RETURNING id`,
+        [report],
+      );
+      await refused(deliverSql, [report, good, 'receipt'], NOT_READY);
+      await op.query(abandonSql, [unaccounted.id]);
       await op.query(deliverSql, [report, good, 'receipt']);
-      await refused(destroySql, [report], NOT_READY); // the failed attempt's stick is unaccounted
-      expect((await one<{ outcome: string }>(abandonSql, [failed])).outcome).toBe('abandoned'); // fate attested after delivery
+      await refused(`SELECT * FROM audit.reserve_purge_run(now())`, [], NOT_READY);
       await op.query(destroySql, [report]);
+      expect((await reserve()).kind).toBe('plain');
       await refused(destroySql, [report], NOT_READY); // twice
     });
   });

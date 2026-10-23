@@ -1,6 +1,6 @@
 # Activity Record Privacy Policy Draft
 
-**Status: draft for the owner's review and approval. Not approved for publication.** This document records the owner's decisions for the P5 activity-record controls and the operator copy process. It is not legal advice and does not replace any notice required by applicable law. Do not present it to users as final until the owner approves the wording and the product displays the notice at sign-up and invitation, as assigned to P13.
+**Status: owner-approved policy for P5.** This document records the owner's decisions for the P5 activity-record controls and the operator copy process. It is not legal advice and does not replace any notice required by applicable law. It is not the user-facing privacy notice; that notice remains assigned to P13.
 
 ## What Is Recorded
 
@@ -25,7 +25,7 @@ A requested copy contains only the entries due for deletion at the time it is ge
 
 Backups are planned to be retained for 35 days. A backup taken before deletion may still contain an entry until that backup expires; after the backup retention period, it should no longer be present in any retained backup. Backup implementation and verification are assigned to P15 and are not established by this P5 document.
 
-How often: the clean-up is run by hand by the operator until scheduled runs exist (P12), at the frequency the owner chooses (pending: `P5_OWNER_POLICY_AND_CLOSURE.md`, Q2).
+How often: the clean-up is run by hand by the operator once a month, on the first working day, until scheduled runs exist (P12), as decided by the owner on 18 October 2026.
 
 Money records and all other records remain subject to the separate business rule that they are retained indefinitely; this activity-record exception does not change that rule.
 

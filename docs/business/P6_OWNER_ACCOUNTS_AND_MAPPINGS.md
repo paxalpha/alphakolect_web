@@ -10,7 +10,7 @@ accounts are fixed, we need your decisions below.
 
 As before, **"Not sure" is a fine answer** — we will then ask your accountant.
 
-**Answered by:** **Date:**
+**Answered by:Mayowa Edward Fadahunsi** **Date: 23th of October, 2026**
 
 ---
 
@@ -22,7 +22,7 @@ its own accounts on top (for example for rent or salaries).
 - ☐ **A short list, made for AlphaKolect** *(Our suggestion.)* About 20 accounts covering exactly what the system
   records — cash, the business's wallet, cash with agents, customer savings, target savings, investments, loans, each
   kind of charge and interest, and the platform subscription. Codes with 4 digits (1000s assets, 2000s liabilities,
-  3000s capital, 4000s income, 5000s expenses), listed below.
+  3000s capital, 4000s income, 5000s expenses), listed below. - Yes, the system can add more accounts later if the business needs them. I choose this option because it is simpler, and the system can add more accounts later if the business needs them.
 - ☐ The list in the "Map" sheet, with its 6-digit codes (100200 Wallet, 200100 Customer Collection – Savings, …),
   corrected as in Q2.
 - ☐ The long list in the "ChartofAccounts" sheet (264 accounts, codes 100100 to 900989), for every business.
@@ -56,6 +56,8 @@ The short list we suggest (names can be changed; your accountant may rename them
 | 5200 | Interest on target savings | Expense | interest paid to customers on target savings |
 | 5300 | Interest on investments | Expense | interest paid to customers on fixed deposits and investments |
 
+I agree with the short list of accounts, and I understand that the system can add more accounts later if the business needs them.
+
 ## Q2. Corrections to the "Map" sheet
 
 Some lines in the "Map" sheet would put money on the wrong side of the books. For each, we propose the correction on the
@@ -74,7 +76,7 @@ right. Please tick the ones you agree with.
 - ☐ I agree with these only: ______
 - ☐ Not sure — please ask my accountant
 
-> Answer:
+> Answer: I agree with all the corrections.
 
 ## Q3. When is loan interest counted as income?
 
@@ -87,7 +89,7 @@ income only when the customer pays it.
 - ☐ As the PDF says: only when the customer pays the interest
 - ☐ Not sure — please ask my accountant
 
-> Answer:
+> Answer: As the sheet says: recorded at disbursement as unearned, and counted as income as it is repaid. The books then show what customers still owe, interest included, and income only when earned.
 
 ## Q4. Unusual entries recorded in the activity record
 
@@ -99,7 +101,7 @@ accounts** (which reduce income).
 - ☐ Capital only
 - ☐ Not sure
 
-> Answer:
+> Answer: Record both.
 
 ## Q5. Money sent to someone else ("Remittance" in the PDF)
 
@@ -112,7 +114,7 @@ money to another person something AlphaKolect should offer?
 - ☐ Yes, in this stage
 - ☐ Not sure
 
-> Answer:
+> Answer: Not now. It needs the payment provider and its regulator's rules; we keep a clearing account ready for it.
 
 ## Q6. "Load wallet" through the Directors' account
 
@@ -124,7 +126,7 @@ this how money the directors put into the business should be recorded?
 - ☐ No: it is capital the directors invest (a capital account)
 - ☐ Not sure — please ask my accountant
 
-> Answer:
+> Answer: Yes: money put in by the directors is owed back to them (a Directors' current account, a liability).
 
 ---
 

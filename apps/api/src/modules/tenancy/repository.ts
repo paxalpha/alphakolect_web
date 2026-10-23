@@ -1,6 +1,6 @@
 import { scopeOf, type TenantTx } from '../../platform/tenant.js';
 import { POSITION_AT, type Position, type Positioned } from '../../platform/pagination.js';
-import type { RequestContext } from '../identity/sessions.js';
+import type { RequestContext } from '../../platform/request-context.js';
 
 // The tenancy module's scoped repository (TARGET_ARCHITECTURE §4, ADR-15 T13–T15). Every function takes a TenantTx
 // — a transaction opened by withTenant, with app.merchant_id set — and calls scopeOf(tx) before any query, so it

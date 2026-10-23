@@ -7,8 +7,8 @@ import { refusalMessage } from '../../platform/authorization.js';
 import { AppError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
-import type { AuditLog } from '../audit/audit-log.js';
-import type { RequestContext } from '../identity/sessions.js';
+import type { AuditLog } from '../audit/index.js';
+import type { RequestContext } from '../../platform/request-context.js';
 
 // Merchant lifecycle and ownership transfer — platform super admin only (TARGET_ARCHITECTURE ADR-15 T6, T9, T17;
 // P4.1, P4.5).

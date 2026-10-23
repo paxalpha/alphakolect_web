@@ -11,13 +11,13 @@ import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
 import { decodeCursor, pageOf } from '../../platform/pagination.js';
 import { withTenant, type TenantContext } from '../../platform/tenant.js';
-import type { AuditLog } from '../audit/audit-log.js';
-import { INVITATION_TTL_SECONDS, invitationAcceptEmail, invitationSetupEmail } from '../identity/emails.js';
-import { burnPasswordCheck, verifyPassword } from '../identity/passwords.js';
-import type { RateLimiter } from '../identity/rate-limits.js';
-import type { IdentityRepository } from '../identity/repository.js';
-import type { RequestContext } from '../identity/sessions.js';
-import { hashReceivedToken, newOpaqueToken } from '../identity/tokens.js';
+import type { AuditLog } from '../audit/index.js';
+import { INVITATION_TTL_SECONDS, invitationAcceptEmail, invitationSetupEmail } from '../identity/index.js';
+import { burnPasswordCheck, verifyPassword } from '../identity/index.js';
+import type { RateLimiter } from '../identity/index.js';
+import type { IdentityRepository } from '../identity/index.js';
+import type { RequestContext } from '../../platform/request-context.js';
+import { hashReceivedToken, newOpaqueToken } from '../identity/index.js';
 import { tenancyRepository as repo, type InvitationRow } from './repository.js';
 
 // Staff and agent invitations (P4.6; TARGET_ARCHITECTURE ADR-15 T10, T11, T16; D12).

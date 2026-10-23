@@ -11,8 +11,8 @@ import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import { withTenant, type TenantContext, type TenantTx } from '../../platform/tenant.js';
-import type { AuditLog } from '../audit/audit-log.js';
-import type { RequestContext } from '../identity/sessions.js';
+import type { AuditLog } from '../audit/index.js';
+import type { RequestContext } from '../../platform/request-context.js';
 import {
   NameTakenError,
   tenancyRepository as repo,

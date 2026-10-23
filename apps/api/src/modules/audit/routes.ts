@@ -5,7 +5,7 @@ import type {
   PlatformAuditEventsQuery,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
-import type { RequestContext } from '../identity/sessions.js';
+import type { RequestContext } from '../../platform/request-context.js';
 import type { AuditReadService } from './reads.js';
 
 // GET /v1/merchant/audit-events (#33) and GET /v1/platform/audit-events (#34) (contracts:

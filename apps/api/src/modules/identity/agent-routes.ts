@@ -8,8 +8,7 @@ import type {
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import { AppError } from '../../platform/errors.js';
-import { tenantContextOf } from '../../platform/tenant.js';
-import type { MerchantSettingsService } from '../tenancy/merchant-settings.js';
+import { tenantContextOf, type TenantContext } from '../../platform/tenant.js';
 import type { RateLimiter } from './rate-limits.js';
 import type { IdentityRepository } from './repository.js';
 import { type IssuedSession, type RequestContext, type SessionService } from './sessions.js';
@@ -35,6 +34,12 @@ const tokensOf = (issued: IssuedSession): AgentTokens => ({
   session: issued.session,
 });
 
+/**
+ * What the agent routes need from the business side: the agent's own membership. Declared here, so that identity does
+ * not depend on tenancy (TA-10); the composition root passes tenancy's settings service, which satisfies it.
+ */
+export type MembershipReader = { currentMembership(tenant: TenantContext): Promise<CurrentMembership> };
+
 export function agentHandlers({
   identity,
   sessions,
@@ -44,7 +49,7 @@ export function agentHandlers({
   identity: IdentityRepository;
   sessions: SessionService;
   limiter: RateLimiter;
-  settings: MerchantSettingsService;
+  settings: MembershipReader;
 }) {
   const agentLogin: RequestHandler = async (req, res) => {
     const { email, password } = req.body as AgentLoginRequest;

@@ -4,10 +4,10 @@ import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
 import { decodeCursor, pageOf, POSITION_AT, type Positioned } from '../../platform/pagination.js';
-import type { AuditLog } from '../audit/audit-log.js';
-import type { RequestContext } from '../identity/sessions.js';
-import type { MemberRow } from '../tenancy/repository.js';
-import { toMember } from '../tenancy/memberships.js';
+import type { AuditLog } from '../audit/index.js';
+import type { RequestContext } from '../../platform/request-context.js';
+import type { MemberRow } from '../tenancy/index.js';
+import { toMember } from '../tenancy/index.js';
 
 // The platform team's view of the businesses (P5.7; closes P4 limitation 1): every business, and one business's
 // members. Both are sensitive reads (§8.1 #35, #36; §8.2a rule 7): each page is one call of its designated database

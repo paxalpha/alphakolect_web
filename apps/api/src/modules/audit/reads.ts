@@ -10,7 +10,7 @@ import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
 import { decodeCursor, pageOf, type Position, type Positioned } from '../../platform/pagination.js';
-import type { RequestContext } from '../identity/sessions.js';
+import type { RequestContext } from '../../platform/request-context.js';
 import type { AuditLog } from './audit-log.js';
 
 // The activity-record reads (P5.8; ADR-16 §3.5, "Addendum — the activity-record reads", confirmed 2026-10-19): the

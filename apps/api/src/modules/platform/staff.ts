@@ -9,10 +9,10 @@ import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
 import { decodeCursor, pageOf, POSITION_AT } from '../../platform/pagination.js';
-import type { AuditLog } from '../audit/audit-log.js';
-import { ACCOUNT_SETUP_TTL_SECONDS, accountSetupEmail } from '../identity/emails.js';
-import type { RequestContext } from '../identity/sessions.js';
-import { newOpaqueToken } from '../identity/tokens.js';
+import type { AuditLog } from '../audit/index.js';
+import { ACCOUNT_SETUP_TTL_SECONDS, accountSetupEmail } from '../identity/index.js';
+import type { RequestContext } from '../../platform/request-context.js';
+import { newOpaqueToken } from '../identity/index.js';
 
 // The platform team (P5.7; P5 plan §7.4, §7.5; owner decisions D4, O8(a), O8(b)). Only the super admin manages it
 // (platform.staff.manage, reserved): the router's policy middleware refuses anyone else first, and each database

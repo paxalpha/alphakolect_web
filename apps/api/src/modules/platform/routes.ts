@@ -8,7 +8,7 @@ import type {
   SetPlatformStaffPermissionsRequest,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
-import type { RequestContext } from '../identity/sessions.js';
+import type { RequestContext } from '../../platform/request-context.js';
 import type { PlatformMerchantListService } from './merchant-lists.js';
 import type { PlatformStaffService } from './staff.js';
 

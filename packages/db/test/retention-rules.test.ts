@@ -151,6 +151,9 @@ describe('a held block does not stall the purge (O21 S1; the critic’s round 5)
 
     // Cancelled in writing: the report is withdrawn, its rows no longer held, and the next plain run deletes them.
     await op.query(`SELECT audit.cancel_purge_report_request($1, 'rules test: cancelled')`, [request]);
+    await op.query(`SELECT audit.record_report_copy_destroyed($1, 'attested', 'test report copy removed')`, [
+      report,
+    ]);
     expect(
       (await op.query(`SELECT withdrawn_at FROM audit.purge_reports WHERE id = $1`, [report])).rows[0]
         .withdrawn_at,

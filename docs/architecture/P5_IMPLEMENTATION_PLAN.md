@@ -1,6 +1,6 @@
 # P5 implementation plan — authorization catalog, policy enforcement and audit
 
-**Status: revision 100 — CI, two full local gates and full-history gitleaks pass; independent closure review remains open.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+**Status: revision 101 — P5 closure approved 2026-10-23.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
 addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
 and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
 (the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
@@ -10,16 +10,16 @@ and pass (final evidence below); a recorded rehearsal is required before the fir
 the P5.10 documents are written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
 gitleaks found no leaks over the full history (both at `45c044f`), and the owner approved closing on a condition (O24).
 **Since revision 97:** the lost-response suite now passes after its `as_of` fixture was changed to use the database's
-UTC clock. The reviewer has re-checked that fix and approves pushing the branch to activate Ubuntu CI. **Since revision
-99:** GitHub Actions run [39313373095](https://github.com/paxalpha/alphakolect_web/actions/runs/39313373095) for PR #7
-passed on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`; all three checks passed: main CI, API contract and secret scan.
-On local HEAD `05c1210552817c85b9b7dcc716d930d33949a853`, the full repository gate passed twice: format, lint, OpenAPI
-check, typecheck, contracts 65/65, database 722/722, API 1219/1219, concurrency 17/17, build, and the required-config
-boot refusal. Gitleaks 8.30.1 scanned 477 commits on that HEAD and found no leaks. The CI run predates two documentation-
-only commits; the two complete local gates and gitleaks scan cover current HEAD. **Still required before closure:** the
-reviewer's final record of the P5.8 test gate and P5.8–P5.10 closure review. These independent approvals are not supplied
-by the owner's sign-off. P5 remains open until they are completed and recorded. Separately, the recorded rehearsal is
-required before the first real copy. The owner
+UTC clock. **Since revision 100:** the reviewer identified a P2 handover gap: delivery could release held rows while a
+failed medium's fate was unrecorded, and another purge could begin before operator-copy destruction was recorded.
+Forward migration `20261019000200_retention_handover_guards` closes both paths. The tests cover refused replacement and
+delivery before every other medium's fate is attested, plus purge refusal until delivered or withdrawn copies are
+recorded destroyed. The new trigger is included in the function-grant and lock-order inventories. GitHub Actions run
+[39912951275](https://github.com/paxalpha/alphakolect_web/actions/runs/39912951275) passed twice on
+`f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`: format, lint, OpenAPI check, typecheck, all package tests, concurrency,
+build, boot-config refusal, API contract and full-history secret scan. The owner approved closure; the reviewer approves
+closure after the remediation. **P5 is closed.** The physical rehearsal remains required before the first real copy,
+not as a closure gate. The owner
 approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
 
 | | |
@@ -3019,11 +3019,11 @@ volume-removal checks, and the physical removable-stick handover (new-process ve
 checks and truncation) are assigned to the documented test-database rehearsal in
 `docs/operations/AUDIT_PURGE.md`. The operator must record that rehearsal before the first real copy is handed to the
 owner; a failed step stops that handover. **The rehearsal has not yet been performed.** This disposition replaces
-requiring those hardware conditions in the automated §8.6 suite. **Still required before P5.8's test gate is complete:**
-fault-injected lost responses at database/filesystem operation boundaries, especially a committed mutation whose reply
-is lost. No current test injects that unknown outcome; killing the command after it receives the confirmation response
-is not equivalent. This remains an automated fault-injection obligation and is not moved to the physical rehearsal by
-this review. **Built in revision 97 (`0013185`, `e648b0b`), for the reviewer's re-check:** a connection that commits one
+requiring those hardware conditions in the automated §8.6 suite. The lost-response fault-injection obligation was built
+in revision 97 (`0013185`, `e648b0b`); revision 101 adds database guards for unaccounted handover media and pending
+operator-copy destruction, with regression tests. Both have passed in two full CI runs. The hardware rehearsal remains
+required before the first real copy, not as a P5 closure gate. **Lost-response tests built in revision 97 for review:**
+a connection that commits one
 chosen statement and then throws as a lost answer, against the real database; and a publication link made, then
 reported failed. The purge run: a page deleted (the run reads the page's own mark, counts it once and goes on); the
 release (the reservation free all the same). The export: begin and the file record (nothing deleted, discarded, files
@@ -3045,13 +3045,11 @@ After `1f7200f` and `6e7919f` (tests only): the database suite 698 of 698 in 41 
 passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean. **Focused
 validation on 2026-10-19 after the read and purge follow-ups:** API purge slice (five files, 33 tests, run in focused
 groups), database audit-read/purge slice (three files, 32 tests), including the idle-timeout test, API typecheck,
-**Validation after the final test edit (revision 100):** GitHub Actions PR #7 run `39313373095` passed all three checks
-on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`. The full repository gate then passed twice locally on
-`05c1210552817c85b9b7dcc716d930d33949a853`, including 2,006 package tests and all 17 concurrency tests per run;
-format, lint, OpenAPI check, typecheck, build and the missing-configuration boot refusal also passed both times.
-Gitleaks 8.30.1 scanned 477 commits on current HEAD with no leaks. Two documentation-only commits follow the CI-tested
-SHA; current HEAD received the full local gates and secret scan. The independent reviewer's final P5.8 test-gate and
-P5.8–P5.10 closure record remain outstanding.
+**Validation after the closure fix (revision 101):** GitHub Actions PR #7 run `39912951275` passed twice on
+`f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`. Both attempts passed format, lint, OpenAPI check, typecheck, contracts,
+database and API tests, concurrency tests, build, the required-config boot refusal, API contract comparison and
+full-history Gitleaks. The P2 handover and pending-copy guard regressions passed; the function-grant and lock-order
+inventories include the new trigger. This is the final code/test SHA for P5.
 
 **Steps (c)(3)–(4) built after the addendum confirmation (revision 95).** The R19 guard now recognizes and checks the
 merchant-scoped read's own audit-event insert (`3cd0362`). The O4 measurement named by the reviewer was run against
@@ -3108,12 +3106,16 @@ consistency scenarios run against both reads (`357df26`).
   (`fecca3f`, `d08dcdc`); the threat model `docs/security/P5_THREAT_MODEL.md` (`d5fbfb0`); the runbooks
   `docs/operations/AUDIT_PURGE.md` (`c7cc91a`) and `AUTHORIZATION_CONTAINMENT.md` (`3fc54d9`); the D9 policy drafted for
   the owner (`995fbc6`); the full gate twice and gitleaks over the full history (P5.8 above). The review documents stay
-  in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **§13, item by item:** 1 met;
-  2 met for every endpoint built; 3, 4, 5, 6, 7, 8, 10, 11 met (both reads are isolated and audited, and R25/R35 are
-  exercised against both reads); 9 open — the lost-response fault injection, Ubuntu CI, final gate twice and full-history
-  gitleaks remain; the owner approved and signed the policy (O22). **Open for closure:** these validations and the
-  owner's unconditional final approval. **Operational prerequisite:** record the approved hardware rehearsal before
-  the first real handover. The combined P5.8–P5.10 technical review is approved below, not a closure sign-off.
+  in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **Closure review
+  (revision 101, 2026-10-23):** §13 items 1–11 are met. The final handover-fate and copy-destruction safeguards are in
+  forward migration `20261019000200_retention_handover_guards`, with regression tests and updated function-grant and
+  lock-order inventories. GitHub Actions run `39912951275` passed on the exact final code SHA
+  `f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`, including the full test and concurrency suites, build, contract check,
+  boot-config refusal and full-history secret scan. The owner-approved D9 policy, as-built threat model and both
+  operator runbooks are present. I found no remaining P5 closure blocker. **Verdict: P5 approved to close.** The
+  physical hardware rehearsal remains required before the first real report handover, not for P5 closure. The local
+  focused database test could not run because PostgreSQL was unavailable at `127.0.0.1:5436`; the passing CI run is
+  the execution evidence for that suite.
 
 ## 11. Rollout and rollback (no fail-open)
 
@@ -3238,6 +3240,15 @@ Part 2 boundary in place (§14, §16).
     the matrix; P5 claims no end-to-end branch isolation for resources that do not exist yet (D7, §7.6).
 
 ## 14. Open items for the reviewer and owner
+
+**Independent reviewer — P5.8–P5.10 closure gate (2026-10-23, revision 101). Verdict: approved to close.** I reviewed
+the final handover-fate and copy-destruction safeguards and their database tests, checked the current branch head
+against the successful GitHub Actions run, and reconciled the §13 criteria with the as-built record. The workflow
+passed on `f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`, including the test/concurrency suites and full-history Gitleaks.
+No P5 closure blocker remains. The hardware rehearsal remains a prerequisite before the first real report handover
+only. The focused local database test was unavailable because PostgreSQL was not running at `127.0.0.1:5436`; CI
+provides the passing database-suite evidence. This reviewer record satisfies the condition in O24. The PR remains
+open for the repository owner to merge.
 
 **Independent reviewer — combined P5.8–P5.10 technical review and revised §8.6 test allocation (2026-10-19, revision 96). Verdict:**
 "I approve the revised §8.6 allocation. The POSIX report-directory mode check is assigned to the existing Ubuntu CI
@@ -3476,6 +3487,7 @@ not reproduced). Facts about the **old** system, recorded so the plan's delibera
 
 | Rev | Date | Change |
 |---|---|---|
+| 101 | 2026-10-23 | **P5 closure approved by independent reviewer.** Final handover-fate and pending-copy guards are present in `20261019000200_retention_handover_guards`; the current-head GitHub Actions run passed, including tests, concurrency and full-history Gitleaks. The reviewer found §13 items 1–11 met. The hardware rehearsal remains required before the first real report handover, not as a closure gate. Updated the owner-approved activity-record policy to reflect its signed approval and monthly cleanup decision. |
 | 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
 | 100 | 2026-10-19 | **CI and local closure gates verified.** GitHub Actions PR #7 run `39313373095` passed all checks on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`; two full local gates and Gitleaks 8.30.1 (477 commits, no leaks) passed on `05c1210552817c85b9b7dcc716d930d33949a853`. The CI-tested commit precedes two documentation-only commits. The independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record remain open; P5 is not closed. |
 | 99 | 2026-10-19 | **Owner final approval recorded; CI pass reported.** The owner approved closing P5 and reports the full P5 test suite passed on CI. Still open: full gate twice after the final test edit, fresh full-history gitleaks, and the independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record. Approval does not waive those gates; P5 is not closed. |

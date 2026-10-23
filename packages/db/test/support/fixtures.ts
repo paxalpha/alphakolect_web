@@ -78,7 +78,7 @@ export async function loadFixtures(db: Client): Promise<void> {
       );
       await db.query(
         `INSERT INTO audit.audit_events (id, merchant_id, action, outcome, summary)
-         VALUES ($1, $2, 'fixture.loaded', 'success', '{"fixture": true}')`,
+         VALUES ($1, $2, 'merchant.profile_updated', 'success', '{"name": "Fixture"}')`,
         [f.auditEventId, f.merchantId],
       );
       await db.query(

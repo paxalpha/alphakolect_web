@@ -2,8 +2,10 @@ import { randomBytes } from 'node:crypto';
 import {
   AUTH_COOKIES,
   CSRF_HEADER,
+  CurrentSession,
   ErrorResponse,
   LoginResponse,
+  PERMISSIONS,
   Session,
   type LoginRequest,
 } from '@alphakolect/contracts';
@@ -52,7 +54,11 @@ async function superAdmin({ totp }: { totp: boolean }) {
   } = await owner.query(`SELECT identity.bootstrap_super_admin($1, true) AS id`, [email]);
   const setup = newOpaqueToken();
   await repo.issueOneTimeToken(id, 'account_setup', setup.hash, 86400, null);
-  await repo.completeAccountSetup(setup.hash, await hashPassword(PASSWORD));
+  await repo.completeAccountSetup(setup.hash, await hashPassword(PASSWORD), {
+    ip: '203.0.113.1',
+    userAgent: null,
+    requestId: 'test-setup',
+  });
   if (totp) {
     await repo.beginTotpEnrollment(id, randomBytes(60), 'test');
     await repo.confirmTotpEnrollment(
@@ -191,7 +197,11 @@ describe('POST /v1/auth/login — merchant owner', () => {
 
     const session = await getSession(jarOf(res));
     expect(session.status).toBe(200);
-    expect(Session.parse(session.body)).toEqual(res.body.session);
+    // The session endpoint adds the effective permissions (P5.7): an owner holds every merchant permission.
+    expect(CurrentSession.parse(session.body)).toEqual({
+      ...res.body.session,
+      permissions: PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort(),
+    });
   });
 
   it('answers a wrong password and an unknown email identically (D12, exit criterion 8)', async () => {

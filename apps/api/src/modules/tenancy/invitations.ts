@@ -1,8 +1,16 @@
-import type { AcceptInvitationRequest, CreateInvitationRequest, Invitation } from '@alphakolect/contracts';
+import type {
+  AcceptInvitationRequest,
+  CreateInvitationRequest,
+  Invitation,
+  InvitationList,
+  InvitationListQuery,
+} from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import type { Mailer } from '../../platform/email.js';
 import { AppError } from '../../platform/errors.js';
-import { requireOwner, withTenant, type TenantContext } from '../../platform/tenant.js';
+import { decodeCursor, pageOf } from '../../platform/pagination.js';
+import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import { INVITATION_TTL_SECONDS, invitationAcceptEmail, invitationSetupEmail } from '../identity/emails.js';
 import { burnPasswordCheck, verifyPassword } from '../identity/passwords.js';
@@ -14,9 +22,10 @@ import { tenancyRepository as repo, type InvitationRow } from './repository.js';
 
 // Staff and agent invitations (P4.6; TARGET_ARCHITECTURE ADR-15 T10, T11, T16; D12).
 //
-// Issuing and revoking: the owner, through the scoped repository; the database decides authority from the session
-// and every rule, and tells this service which email to send — an account-setup link to a new person, the
-// invitation link to an existing account, nothing to a disabled one. The owner's answer never reveals which (D12).
+// Issuing and revoking: whoever holds merchant.invitations.manage (checked first by the router's policy middleware,
+// P5.4), through the scoped repository; the database decides authority again from the session and every rule, and
+// tells this service which email to send — an account-setup link to a new person, the invitation link to an existing
+// account, nothing to a disabled one. The issuer's answer never reveals which (D12).
 // Acceptance by an existing account: the invitation link plus that account's password (T11), rate-limited, one
 // generic error for every failure; the database re-checks the invitation, the business and the person at that
 // moment and creates the membership and consumes the invitation together. A new person joins by finishing account
@@ -49,7 +58,7 @@ const invalidInvitation = () =>
 export type InvitationDeps = {
   db: Db;
   identity: IdentityRepository;
-  audit: Pick<AuditLog, 'record' | 'recordWithin'>;
+  audit: Pick<AuditLog, 'recordBestEffort'>;
   limiter: RateLimiter;
   mailer: Pick<Mailer, 'dispatch'>;
   webAppUrl: string;
@@ -58,9 +67,15 @@ export type InvitationDeps = {
 export class InvitationService {
   constructor(private readonly deps: InvitationDeps) {}
 
-  async list(tenant: TenantContext): Promise<InvitationRow[]> {
-    requireOwner(tenant);
-    return withTenant(this.deps.db, tenant, (tx) => repo.invitations(tx));
+  /** One page of the invitations, newest first: the open ones (pending and unexpired) or all (P5.8, O9). */
+  async list(tenant: TenantContext, query: InvitationListQuery, now = new Date()): Promise<InvitationList> {
+    // A cursor is bound to its status filter: one from status=all is refused for the open list, and the reverse.
+    const scope = `listInvitations|status=${query.status}`;
+    const after = decodeCursor(query.cursor, scope);
+    const rows = await withTenant(this.deps.db, tenant, (tx) =>
+      repo.invitations(tx, null, { status: query.status, page: { limit: query.limit, after } }),
+    );
+    return pageOf(rows, query.limit, scope, (row) => toInvitation(row, now));
   }
 
   async create(
@@ -70,7 +85,6 @@ export class InvitationService {
   ): Promise<InvitationRow> {
     const { db, audit, limiter, mailer, webAppUrl } = this.deps;
     const event = this.event(tenant, 'merchant.invitation_issued', null, ctx);
-    await this.ownerOrDenied(tenant, event);
     await limiter.enforce('invitation_issue', ctx.ip, tenant.merchantId);
 
     const token = newOpaqueToken();
@@ -87,34 +101,25 @@ export class InvitationService {
         token.hash,
         setup.hash,
         INVITATION_TTL_SECONDS,
+        ctx,
       );
+      // On success the function wrote the invitation's audit row itself, in this transaction (pattern A, §8.1).
       if (issued.outcome !== 'ok') return { issued, row: null, business: null };
       const [row] = await repo.invitations(tx, issued.invitation_id);
-      const business = await repo.merchant(tx);
-      await audit.recordWithin(tx, {
-        ...event,
-        targetId: row!.id,
-        outcome: 'success',
-        // Internal record only: which delivery says whether the email had an account (never told to the owner).
-        summary: {
-          kind: row!.kind,
-          roleId: row!.role_id,
-          branchId: row!.branch_id,
-          delivery: issued.delivery,
-        },
-      });
-      return { issued, row: row!, business: business! };
+      // The business's name for the email: the issuer's own business (read_own_membership; no permission needed).
+      const own = await repo.ownMembership(tx);
+      return { issued, row: row!, business: own!.merchant_name };
     });
 
     const { issued, row, business } = result;
     if (issued.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: issued.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: issued.outcome },
       });
       if (issued.outcome === 'forbidden') {
-        throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+        throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.invitations.manage'));
       }
       throw issued.outcome === 'already_member'
         ? new AppError(409, 'ALREADY_MEMBER', 'This person is already a member of the business')
@@ -123,9 +128,9 @@ export class InvitationService {
 
     // Sent only after the commit: an email never announces an invitation that does not exist.
     if (issued.delivery === 'setup') {
-      mailer.dispatch(invitationSetupEmail(row!.email, webAppUrl, setup.raw, business!.name));
+      mailer.dispatch(invitationSetupEmail(row!.email, webAppUrl, setup.raw, business!));
     } else if (issued.delivery === 'accept') {
-      mailer.dispatch(invitationAcceptEmail(row!.email, webAppUrl, token.raw, business!.name));
+      mailer.dispatch(invitationAcceptEmail(row!.email, webAppUrl, token.raw, business!));
     }
     return row!;
   }
@@ -133,24 +138,23 @@ export class InvitationService {
   async revoke(tenant: TenantContext, invitationId: string, ctx: RequestContext): Promise<InvitationRow> {
     const { db, audit } = this.deps;
     const event = this.event(tenant, 'merchant.invitation_revoked', invitationId, ctx);
-    await this.ownerOrDenied(tenant, event);
 
     const result = await withTenant(db, tenant, async (tx) => {
-      const outcome = await repo.revokeInvitation(tx, invitationId);
+      // On success the function wrote the revocation's audit row itself, in this transaction (pattern A, §8.1).
+      const outcome = await repo.revokeInvitation(tx, invitationId, ctx);
       if (outcome !== 'ok') return { outcome, row: null };
       const [row] = await repo.invitations(tx, invitationId);
-      await audit.recordWithin(tx, { ...event, outcome: 'success', summary: { kind: row!.kind } });
       return { outcome, row: row! };
     });
     if (result.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: result.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: result.outcome },
       });
       switch (result.outcome) {
         case 'forbidden':
-          throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+          throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.invitations.manage'));
         case 'not_found':
           throw new AppError(404, 'NOT_FOUND', 'Invitation not found');
         case 'invalid_transition':
@@ -173,56 +177,38 @@ export class InvitationService {
     const tokenHash = hashReceivedToken(input.token);
 
     const event = {
-      action: 'auth.invitation_accepted',
+      action: 'auth.invitation_accepted' as const,
       actorIdentityId: candidate?.identity_id ?? null,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
       requestId: ctx.requestId,
     };
     const fail = async (reason: string) => {
-      await audit.record({ ...event, outcome: 'failure', summary: { reason } });
+      await audit.recordBestEffort({ ...event, outcome: 'failure', summary: { reason } });
       return invalidInvitation();
     };
 
     if (!candidate || !passwordOk) throw await fail(candidate ? 'wrong_password' : 'unknown_account');
     if (!tokenHash) throw await fail('malformed_token');
 
-    const [result] = await db.query<{
-      outcome: string;
-      membership_id: string | null;
-      merchant_id: string | null;
-      invitation_id: string | null;
-    }>(`SELECT outcome, membership_id, merchant_id, invitation_id FROM tenancy.accept_invitation($1, $2)`, [
-      tokenHash,
-      candidate.identity_id,
-    ]);
-    if (result!.outcome !== 'ok') throw await fail(result!.outcome);
-
-    await audit.record({
-      ...event,
-      merchantId: result!.merchant_id,
-      actorMembershipId: result!.membership_id,
-      targetType: 'invitation',
-      targetId: result!.invitation_id,
-      outcome: 'success',
-      summary: {},
+    // The database admits and records the acceptance (#14) together (pattern A, P5.5): the actor is the invitation's
+    // identity, never this request's claim of one; the request context is recorded as given.
+    const outcome = await db.transaction(async (tx) => {
+      const [result] = await tx.query<{ outcome: string }>(
+        `SELECT outcome FROM tenancy.accept_invitation($1, $2, $3, $4, $5)`,
+        [tokenHash, candidate.identity_id, ctx.ip, ctx.userAgent, ctx.requestId],
+      );
+      return result!.outcome;
     });
+    if (outcome !== 'ok') throw await fail(outcome);
   }
 
-  private async ownerOrDenied(tenant: TenantContext, event: ReturnType<InvitationService['event']>) {
-    try {
-      requireOwner(tenant);
-    } catch (err) {
-      await this.deps.audit.record({
-        ...event,
-        outcome: 'denied',
-        summary: { reason: 'not_owner', kind: tenant.kind },
-      });
-      throw err;
-    }
-  }
-
-  private event(tenant: TenantContext, action: string, targetId: string | null, ctx: RequestContext) {
+  private event<A extends 'merchant.invitation_issued' | 'merchant.invitation_revoked'>(
+    tenant: TenantContext,
+    action: A,
+    targetId: string | null,
+    ctx: RequestContext,
+  ) {
     return {
       action,
       merchantId: tenant.merchantId,

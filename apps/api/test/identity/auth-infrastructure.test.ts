@@ -11,7 +11,7 @@ import { clearSessionCookies, setSessionCookies } from '../../src/modules/identi
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { LIMITS, RateLimiter } from '../../src/modules/identity/rate-limits.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../../src/platform/http/request-id.js';
+import { honourRequestId } from '../support/request-id.js';
 import { createTestApp } from '../support/app.js';
 import { databaseWindow, inOneWindow } from '../support/rate-limit-window.js';
 
@@ -23,7 +23,7 @@ afterAll(() => owner.end());
 
 describe('AuditLog (as alphakolect_app, through RLS)', () => {
   it('records tenant-less and tenant events without secrets', async () => {
-    const audit = new AuditLog(db);
+    const audit = new AuditLog(db, pino({ level: 'silent' }));
     const email = `audit-${randomBytes(4).toString('hex')}@example.test`;
     const signup = await auth.identity.signupMerchantOwner(
       email,
@@ -32,20 +32,23 @@ describe('AuditLog (as alphakolect_app, through RLS)', () => {
     );
     const requestId = `req-${randomBytes(4).toString('hex')}`;
 
-    await audit.record({
+    await audit.recordBestEffort({
       action: 'auth.login',
       outcome: 'failure',
       requestId,
       summary: { reason: 'invalid_credentials' },
     });
-    await audit.record({
-      action: 'auth.login',
-      outcome: 'success',
-      merchantId: signup.merchant_id,
-      actorIdentityId: signup.identity_id,
-      actorAudience: 'merchant',
-      requestId,
-    });
+    // P5.3a: an atomic event is written inside its change's transaction; mutateAudited scopes it to its tenant.
+    await db.transaction((tx) =>
+      audit.mutateAudited(tx, {
+        action: 'auth.login',
+        outcome: 'success',
+        merchantId: signup.merchant_id,
+        actorIdentityId: signup.identity_id,
+        actorAudience: 'merchant',
+        requestId,
+      }),
+    );
 
     const { rows } = await owner.query(
       `SELECT merchant_id, actor_identity_id, outcome, summary FROM audit.audit_events WHERE request_id = $1 ORDER BY occurred_at`,
@@ -116,7 +119,7 @@ describe('RateLimiter (D13)', () => {
     await inOneWindow(window, LIMITS.mfa.windowSeconds, async () => {
       const id = `retry-${randomBytes(4).toString('hex')}@example.test`;
       const app = express();
-      app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+      app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
       app.post('/try', async (_req, res, next) => {
         try {
           await limiter.enforce('mfa', '198.51.100.1', id);

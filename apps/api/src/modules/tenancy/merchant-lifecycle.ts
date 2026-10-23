@@ -3,6 +3,7 @@ import type {
   OwnershipTransferred,
   TransferOwnershipRequest,
 } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import { AppError } from '../../platform/errors.js';
 import type { Db } from '../../platform/db.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
@@ -29,7 +30,7 @@ type TransferRow = {
 function transferRefusal(outcome: Exclude<TransferOutcome, 'ok'>): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only a platform super admin may transfer ownership');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('platform.merchants.transfer_ownership'));
     case 'not_found':
       return new AppError(404, 'NOT_FOUND', 'Merchant not found');
     case 'invalid_new_owner':
@@ -45,15 +46,15 @@ function transferRefusal(outcome: Exclude<TransferOutcome, 'ok'>): AppError {
 type Outcome = 'ok' | 'forbidden' | 'not_found' | 'invalid_transition' | 'invalid_reason';
 type Row = { outcome: Outcome; status: MerchantLifecycle['status'] | null };
 
-const AUDIT_ACTION: Record<Action, string> = {
+const AUDIT_ACTION = {
   deactivate: 'platform.merchant_deactivated',
   reactivate: 'platform.merchant_reactivated',
-};
+} as const satisfies Record<Action, string>;
 
 function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only a platform super admin may change a merchant’s status');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('platform.merchants.lifecycle'));
     case 'not_found':
       return new AppError(404, 'NOT_FOUND', 'Merchant not found');
     case 'invalid_transition':
@@ -71,7 +72,7 @@ function refusal(outcome: Exclude<Outcome, 'ok'>, status: string | null): AppErr
 }
 
 export class MerchantLifecycleService {
-  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'record' | 'recordWithin'> }) {}
+  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
 
   async change(
     auth: AuthContext,
@@ -93,27 +94,20 @@ export class MerchantLifecycleService {
       requestId: ctx.requestId,
     };
 
+    // The function writes the change's audit row itself, in its transaction: if that insert fails, the status change
+    // rolls back with it (pattern A, §8.1).
     const row = await db.transaction(async (tx) => {
-      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
       const [result] = await tx.query<Row>(
-        `SELECT outcome, status FROM tenancy.set_merchant_status($1, $2, $3, $4)`,
-        [auth.sessionId, merchantId, action, reason],
+        `SELECT outcome, status FROM tenancy.set_merchant_status($1, $2, $3, $4, $5, $6, $7)`,
+        [auth.sessionId, merchantId, action, reason, ctx.ip, ctx.userAgent, ctx.requestId],
       );
-      if (result!.outcome === 'ok') {
-        // Same transaction: if this insert fails, the status change rolls back with it.
-        await audit.recordWithin(tx, {
-          ...event,
-          merchantId,
-          outcome: 'success',
-          summary: { status: result!.status, ...(action === 'deactivate' ? { reason } : {}) },
-        });
-      }
       return result!;
     });
 
     if (row.outcome !== 'ok') {
-      // Nothing changed; the refused attempt is recorded on its own (tenant-less: the target may not exist).
-      await audit.record({
+      // Nothing changed; the refused attempt is recorded on its own, best effort (tenant-less: the target may not
+      // exist).
+      await audit.recordBestEffort({
         ...event,
         outcome: row.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: row.outcome },
@@ -135,7 +129,7 @@ export class MerchantLifecycleService {
   ): Promise<OwnershipTransferred> {
     const { db, audit } = this.deps;
     const event = {
-      action: 'platform.ownership_transferred',
+      action: 'platform.ownership_transferred' as const,
       actorIdentityId: auth.identityId,
       actorAudience: auth.audience,
       actorMembershipId: auth.membershipId,
@@ -146,39 +140,27 @@ export class MerchantLifecycleService {
       requestId: ctx.requestId,
     };
 
+    // The function writes the transfer's audit row itself, naming both identities, in its transaction (pattern A).
     const row = await db.transaction(async (tx) => {
-      await tx.query(`SELECT set_config('app.merchant_id', $1, true)`, [merchantId]);
       const [result] = await tx.query<TransferRow>(
         `SELECT outcome, former_owner_membership_id, former_owner_identity_id, new_owner_identity_id
-           FROM tenancy.transfer_ownership($1, $2, $3, $4, $5)`,
+           FROM tenancy.transfer_ownership($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           auth.sessionId,
           merchantId,
           input.newOwnerMembershipId,
           input.formerOwnerRoleId,
           input.deactivateFormerOwner,
+          ctx.ip,
+          ctx.userAgent,
+          ctx.requestId,
         ],
       );
-      if (result!.outcome === 'ok') {
-        await audit.recordWithin(tx, {
-          ...event,
-          merchantId,
-          outcome: 'success',
-          summary: {
-            formerOwnerIdentityId: result!.former_owner_identity_id,
-            formerOwnerMembershipId: result!.former_owner_membership_id,
-            newOwnerIdentityId: result!.new_owner_identity_id,
-            newOwnerMembershipId: input.newOwnerMembershipId,
-            formerOwnerRoleId: input.formerOwnerRoleId,
-            formerOwnerDeactivated: input.deactivateFormerOwner,
-          },
-        });
-      }
       return result!;
     });
 
     if (row.outcome !== 'ok') {
-      await audit.record({
+      await audit.recordBestEffort({
         ...event,
         outcome: row.outcome === 'forbidden' ? 'denied' : 'failure',
         summary: { reason: row.outcome },

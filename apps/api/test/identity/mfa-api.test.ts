@@ -248,9 +248,13 @@ describe('bootstrap CLI core (D9, option A)', () => {
     ).rejects.toMatchObject({ code: '23514' });
   });
 
-  it('an existing account with a password gets the membership and no link', async () => {
-    const address = uniqueEmail('owner');
-    await auth.identity.signupMerchantOwner(address, await hashPassword(PASSWORD), 'Existing Ltd');
+  it('an existing account with a password and no membership gets the membership and no link', async () => {
+    // As one is after finishing setup for an invitation withdrawn in the meantime: a password, in no audience.
+    const address = uniqueEmail('unaffiliated');
+    await migrator.query(
+      `INSERT INTO identity.identities (email, email_verified_at, password_hash) VALUES ($1, now(), $2)`,
+      [address, await hashPassword(PASSWORD)],
+    );
     const result = await bootstrapSuperAdmin({
       migrator,
       sender: email,
@@ -260,6 +264,29 @@ describe('bootstrap CLI core (D9, option A)', () => {
     });
     expect(result.outcome).toBe('existing_password');
     expect(email.to(address)).toHaveLength(0);
+  });
+
+  it('a business account is refused: platform and business accounts stay apart (P5.5, CF3)', async () => {
+    const address = uniqueEmail('owner');
+    const signup = await auth.identity.signupMerchantOwner(
+      address,
+      await hashPassword(PASSWORD),
+      'Existing Ltd',
+    );
+    await expect(
+      bootstrapSuperAdmin({
+        migrator,
+        sender: email,
+        webAppUrl: TEST_WEB_APP_URL,
+        email: address,
+        allowAdditional: true,
+      }),
+    ).rejects.toMatchObject({ code: '23514' });
+    expect(email.to(address)).toHaveLength(0);
+    const rows = await migrator.query(`SELECT 1 FROM identity.platform_memberships WHERE identity_id = $1`, [
+      signup.identity_id,
+    ]);
+    expect(rows).toHaveLength(0);
   });
 
   it('reports an email failure without the link, and forgot-password then sends a fresh setup link', async () => {

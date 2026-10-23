@@ -5,9 +5,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { connectAs, expectSqlState, inTenantTx, SQLSTATE } from './support/db.js';
 import { FIXTURE } from './support/fixtures.js';
 
-// P4.3 branches and roles (ADR-15 T7, T8, T13), as the API will use them: alphakolect_app inside a transaction with
-// app.merchant_id set. Positive (same tenant works) and negative (other tenants, no context, grants, bypass
-// attempts, mismatched composite references). inTenantTx rolls back, so nothing leaks between tests.
+// P4.3 branches and roles (ADR-15 T7, T8, T13): the tables' own rules — names, archiving, composite references —
+// which hold for every writer, and the roles' privileges. Since P5.5 (the enforcement boundary, ADR-16 B1) the app
+// has no direct access to either table: it reads and writes them only through the database functions, whose tenant
+// isolation, authority and audit are tested in enforcement.test.ts; the table rules are exercised here as the table
+// owner. inTenantTx rolls back, so nothing leaks between tests.
 
 const { A, B } = FIXTURE;
 let app: pg.Client;
@@ -29,68 +31,25 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
   const ownId = table === 'branches' ? A.branchId : A.roleId;
   const foreignId = table === 'branches' ? B.branchId : B.roleId;
 
-  it('same tenant: insert, read, rename and archive', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
-      const name = unique('North');
-      const {
-        rows: [row],
-      } = await db.query(
-        `INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2) RETURNING id, status`,
-        [A.merchantId, name],
-      );
-      expect(row.status).toBe('active');
-      await db.query(`UPDATE tenancy.${table} SET name = $2, updated_at = now() WHERE id = $1`, [
-        row.id,
-        `${name} 2`,
-      ]);
-      await db.query(`UPDATE tenancy.${table} SET status = 'archived', archived_at = now() WHERE id = $1`, [
-        row.id,
-      ]);
-      const { rows } = await db.query(`SELECT name, status FROM tenancy.${table} WHERE id = $1`, [row.id]);
-      expect(rows).toEqual([{ name: `${name} 2`, status: 'archived' }]);
-    });
-  });
-
-  it('another tenant’s rows are invisible and unchangeable', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
-      expect((await db.query(`SELECT 1 FROM tenancy.${table} WHERE id = $1`, [foreignId])).rowCount).toBe(0);
-      const updated = await db.query(`UPDATE tenancy.${table} SET name = 'Hijacked' WHERE id = $1`, [
-        foreignId,
-      ]);
-      expect(updated.rowCount).toBe(0);
-      expect((await db.query(`SELECT DISTINCT merchant_id::text AS m FROM tenancy.${table}`)).rows).toEqual([
-        { m: A.merchantId },
-      ]);
-    });
-    const { rows } = await owner.query(`SELECT name FROM tenancy.${table} WHERE id = $1`, [foreignId]);
-    expect(rows[0].name).not.toBe('Hijacked');
-  });
-
-  it('cannot insert a row for another tenant', async () => {
-    await inTenantTx(app, A.merchantId, (db) =>
-      expectSqlState(
-        db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [
-          B.merchantId,
-          unique('X'),
-        ]),
-        SQLSTATE.rlsViolation,
-      ),
-    );
-  });
-
-  it('without a tenant context: sees nothing and writes nothing', async () => {
-    await inTenantTx(app, null, async (db) => {
-      expect((await db.query(`SELECT 1 FROM tenancy.${table}`)).rowCount).toBe(0);
-    });
-    await inTenantTx(app, null, (db) =>
-      expectSqlState(
-        db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [
-          A.merchantId,
-          unique('X'),
-        ]),
-        SQLSTATE.rlsViolation,
-      ),
-    );
+  it('the app has no direct access, whatever the tenant context: no read, no insert, no update (P5.5)', async () => {
+    for (const tenant of [A.merchantId, null]) {
+      for (const [sql, params] of [
+        [`SELECT 1 FROM tenancy.${table} WHERE id = $1`, [ownId]],
+        [`SELECT 1 FROM tenancy.${table} WHERE id = $1`, [foreignId]],
+        [`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [A.merchantId, unique('X')]],
+        [`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [B.merchantId, unique('X')]],
+        [`UPDATE tenancy.${table} SET name = 'Hijacked' WHERE id = $1`, [ownId]],
+        [`UPDATE tenancy.${table} SET name = 'Hijacked' WHERE id = $1`, [foreignId]],
+      ] as const) {
+        await inTenantTx(app, tenant, (db) =>
+          expectSqlState(db.query(sql, [...params]), SQLSTATE.insufficientPrivilege),
+        );
+      }
+    }
+    const { rows } = await owner.query(`SELECT name FROM tenancy.${table} WHERE id = ANY($1)`, [
+      [ownId, foreignId],
+    ]);
+    expect(rows.map((r) => r.name)).not.toContain('Hijacked');
   });
 
   it.each([
@@ -101,14 +60,6 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
     await inTenantTx(app, A.merchantId, (db) =>
       expectSqlState(db.query(sql, [ownId]), SQLSTATE.insufficientPrivilege),
     );
-  });
-
-  it('cannot switch row security off', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
-      await db.query('SET LOCAL row_security = off');
-      // For a role subject to RLS, Postgres refuses the query instead of silently bypassing the policy.
-      await expectSqlState(db.query(`SELECT 1 FROM tenancy.${table}`), SQLSTATE.insufficientPrivilege);
-    });
   });
 
   it('readonly sees every tenant and writes nothing', async () => {
@@ -125,7 +76,7 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
 
   it('names: trimmed, 1–120 characters, one active per merchant (case-insensitive); reusable once archived and across merchants', async () => {
     for (const bad of ['', ' padded ', 'x'.repeat(121)]) {
-      await inTenantTx(app, A.merchantId, (db) =>
+      await inTenantTx(owner, A.merchantId, (db) =>
         expectSqlState(
           db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [A.merchantId, bad]),
           SQLSTATE.checkViolation,
@@ -133,7 +84,7 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
       );
     }
     const name = unique('Main');
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       await db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [
         A.merchantId,
         name,
@@ -146,7 +97,7 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
         SQLSTATE.uniqueViolation,
       );
     });
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       const {
         rows: [first],
       } = await db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
@@ -161,13 +112,13 @@ describe.each(['branches', 'roles'] as const)('tenancy.%s', (table) => {
         name,
       ]);
     });
-    await inTenantTx(app, B.merchantId, (db) =>
+    await inTenantTx(owner, B.merchantId, (db) =>
       db.query(`INSERT INTO tenancy.${table} (merchant_id, name) VALUES ($1, $2)`, [B.merchantId, name]),
     );
   });
 
   it('archiving is consistent: archived ⇔ archived_at set', async () => {
-    await inTenantTx(app, A.merchantId, (db) =>
+    await inTenantTx(owner, A.merchantId, (db) =>
       expectSqlState(
         db.query(`UPDATE tenancy.${table} SET status = 'archived' WHERE id = $1`, [ownId]),
         SQLSTATE.checkViolation,

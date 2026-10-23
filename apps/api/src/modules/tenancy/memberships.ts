@@ -1,7 +1,9 @@
-import type { AssignMemberRequest, Member } from '@alphakolect/contracts';
+import type { AssignMemberRequest, Member, MemberList, PageQuery } from '@alphakolect/contracts';
+import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
-import { requireOwner, withTenant, type TenantContext } from '../../platform/tenant.js';
+import { decodeCursor, pageOf } from '../../platform/pagination.js';
+import { withTenant, type TenantContext } from '../../platform/tenant.js';
 import type { AuditLog } from '../audit/audit-log.js';
 import type { RequestContext } from '../identity/sessions.js';
 import {
@@ -11,18 +13,23 @@ import {
   type MembershipChange,
 } from './repository.js';
 
-// The owner manages their business's members (P4.5; ADR-15 T5, T7–T9, T15).
+// Members are managed by whoever holds merchant.members.manage — in practice the owner until P5.6 lets roles hold it
+// (P4.5; ADR-15 T5, T7, T8, T15; ADR-16).
 //
-// requireOwner (T9) answers early with 403; the database functions decide authority again from the session, at the
-// moment of the change, under the merchant lock — they are the boundary, this check only the courtesy. Each change
-// and its audit row commit together; a refused one is audited on its own. The effect on the member is immediate:
-// their next request re-reads the membership (T5), and a deactivation also revokes their sessions.
+// The router's policy middleware answers early with 403 (P5.4); the database functions decide authority again from
+// the session, at the moment of the change, under the merchant lock — they are the boundary, that check only the
+// courtesy. Each change and its audit row commit together; a refused one is audited on its own. The effect on the
+// member is immediate: their next request re-reads the membership (T5), and a deactivation also revokes their
+// sessions.
 
-const AUDIT_ACTION: Record<MembershipAction, string> = {
+const AUDIT_ACTION = {
   assign: 'merchant.member_assigned',
   deactivate: 'merchant.member_deactivated',
   reactivate: 'merchant.member_reactivated',
-};
+} as const satisfies Record<MembershipAction, string>;
+
+/** The members list's cursor scope: the business comes from the session, never from a cursor. */
+const LIST_SCOPE = 'listMembers';
 
 export const toMember = (row: MemberRow): Member => ({
   membershipId: row.membership_id,
@@ -38,7 +45,7 @@ export const toMember = (row: MemberRow): Member => ({
 function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: MembershipAction): AppError {
   switch (outcome) {
     case 'forbidden':
-      return new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
+      return new AppError(403, 'FORBIDDEN', refusalMessage('merchant.members.manage'));
     case 'owner_protected':
       return new AppError(403, 'FORBIDDEN', 'The owner’s membership changes only by an ownership transfer');
     case 'not_found':
@@ -61,15 +68,18 @@ function refusal(outcome: Exclude<MembershipChange['outcome'], 'ok'>, action: Me
 }
 
 export class MembershipService {
-  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'record' | 'recordWithin'> }) {}
+  constructor(private readonly deps: { db: Db; audit: Pick<AuditLog, 'recordBestEffort'> }) {}
 
-  async list(tenant: TenantContext): Promise<MemberRow[]> {
-    requireOwner(tenant);
-    return withTenant(this.deps.db, tenant, (tx) => repo.members(tx));
+  /** One page of the members, oldest first (P5.8, O9). */
+  async list(tenant: TenantContext, query: PageQuery): Promise<MemberList> {
+    const after = decodeCursor(query.cursor, LIST_SCOPE);
+    const rows = await withTenant(this.deps.db, tenant, (tx) =>
+      repo.members(tx, null, { limit: query.limit, after }),
+    );
+    return pageOf(rows, query.limit, LIST_SCOPE, toMember);
   }
 
   async get(tenant: TenantContext, membershipId: string): Promise<MemberRow> {
-    requireOwner(tenant);
     const [row] = await withTenant(this.deps.db, tenant, (tx) => repo.members(tx, membershipId));
     if (!row) throw new AppError(404, 'NOT_FOUND', 'Member not found');
     return row;
@@ -94,37 +104,17 @@ export class MembershipService {
       userAgent: ctx.userAgent,
       requestId: ctx.requestId,
     };
-    try {
-      requireOwner(tenant);
-    } catch (err) {
-      await this.deps.audit.record({
-        ...event,
-        outcome: 'denied',
-        summary: { reason: 'not_owner', kind: tenant.kind },
-      });
-      throw err;
-    }
-
     const result = await withTenant(this.deps.db, tenant, async (tx) => {
-      const change = await repo.changeMembership(tx, membershipId, action, assignment);
+      // On success the function wrote the change's audit row itself, in this transaction (pattern A, §8.1).
+      const change = await repo.changeMembership(tx, membershipId, action, assignment, ctx);
       if (change.outcome !== 'ok') return { change, member: null };
       const [member] = await repo.members(tx, membershipId);
-      await this.deps.audit.recordWithin(tx, {
-        ...event,
-        outcome: 'success',
-        summary: {
-          kind: member!.kind,
-          status: member!.status,
-          roleId: member!.role_id,
-          branchId: member!.branch_id,
-        },
-      });
       return { change, member: member! };
     });
 
     if (result.change.outcome !== 'ok') {
       const outcome = result.change.outcome;
-      await this.deps.audit.record({
+      await this.deps.audit.recordBestEffort({
         ...event,
         outcome: outcome === 'forbidden' || outcome === 'owner_protected' ? 'denied' : 'failure',
         summary: { reason: outcome },

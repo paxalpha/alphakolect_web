@@ -1,18 +1,12 @@
-import { existsSync } from 'node:fs';
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
+import { baseTest, CONCURRENCY_SUITES } from './vitest.base.js';
 
-// Locally, the database passwords live in infrastructure/.env (gitignored). CI sets them directly.
-const localEnv = new URL('../../infrastructure/.env', import.meta.url);
-if (existsSync(localEnv)) process.loadEnvFile(localEnv);
-
+// `pnpm test`: every suite except the two-connection ones, which run in `pnpm test:concurrency`
+// (vitest.concurrency.config.ts) — both are part of the gate.
 export default defineConfig({
   test: {
+    ...baseTest,
     include: ['test/**/*.test.ts'],
-    environment: 'node',
-    globalSetup: ['test/support/global-setup.ts'],
-    // Tests share one database; run files one at a time so privilege/RLS assertions never interleave.
-    fileParallelism: false,
-    testTimeout: 30_000,
-    hookTimeout: 120_000,
+    exclude: [...configDefaults.exclude, ...CONCURRENCY_SUITES],
   },
 });

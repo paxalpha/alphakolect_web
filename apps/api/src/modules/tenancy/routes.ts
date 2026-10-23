@@ -9,13 +9,17 @@ import type {
   DeactivateMerchantRequest,
   Invitation,
   InvitationList,
+  InvitationListQuery,
   Member,
   MemberList,
+  PageQuery,
   MerchantLifecycle,
   MerchantProfile,
   OwnershipTransferred,
+  PermissionCatalog,
   Role,
   RoleList,
+  SetRolePermissionsRequest,
   TransferOwnershipRequest,
   UpdateCatalogItemRequest,
   UpdateMerchantProfileRequest,
@@ -161,8 +165,22 @@ export function merchantHandlers({
     res.json(body);
   };
 
+  const listPermissionCatalog: RequestHandler = async (req, res) => {
+    const body: PermissionCatalog = await settings.permissionCatalog(tenant(req));
+    res.json(body);
+  };
+
+  const setRolePermissions: RequestHandler = async (req, res) => {
+    const { permissions } = req.body as SetRolePermissionsRequest;
+    const body: Role = toRole(
+      await settings.setRolePermissions(tenant(req), roleId(req), permissions, contextOf(req)),
+    );
+    res.json(body);
+  };
+
   const listMembers: RequestHandler = async (req, res) => {
-    const body: MemberList = { items: (await members.list(tenant(req))).map(toMember), nextCursor: null };
+    // The validator replaced req.query with the contract's parsed values (limit coerced, its default applied).
+    const body: MemberList = await members.list(tenant(req), req.query as unknown as PageQuery);
     res.json(body);
   };
 
@@ -191,11 +209,11 @@ export function merchantHandlers({
   };
 
   const listInvitations: RequestHandler = async (req, res) => {
-    const now = new Date();
-    const body: InvitationList = {
-      items: (await invitations.list(tenant(req))).map((row) => toInvitation(row, now)),
-      nextCursor: null,
-    };
+    // The validator replaced req.query with the contract's parsed values (status open and limit 50 by default).
+    const body: InvitationList = await invitations.list(
+      tenant(req),
+      req.query as unknown as InvitationListQuery,
+    );
     res.json(body);
   };
 
@@ -232,6 +250,8 @@ export function merchantHandlers({
     createRole,
     getRole,
     updateRole,
+    listPermissionCatalog,
+    setRolePermissions,
   };
 }
 

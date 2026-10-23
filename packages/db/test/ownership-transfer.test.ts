@@ -299,7 +299,7 @@ describe('refusals change nothing', () => {
 
 describe('grants', () => {
   it('executable by the app only', async () => {
-    const sig = 'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean)';
+    const sig = 'tenancy.transfer_ownership(uuid, uuid, uuid, uuid, boolean, text, text, text)';
     const { rows } = await owner.query(
       `SELECT has_function_privilege('alphakolect_app', $1, 'EXECUTE') AS app,
               has_function_privilege('alphakolect_readonly', $1, 'EXECUTE') AS ro`,

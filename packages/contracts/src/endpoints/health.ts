@@ -13,6 +13,7 @@ export const getHealth = defineEndpoint({
   id: 'getHealth',
   method: 'get',
   path: '/v1/health',
+  authorization: { class: 'public' },
   audience: 'public',
   summary: 'Liveness check',
   responses: {

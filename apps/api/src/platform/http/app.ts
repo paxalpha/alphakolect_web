@@ -16,6 +16,11 @@ import {
   selectionHandlers,
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
+import { AuditReadService } from '../../modules/audit/reads.js';
+import { auditReadHandlers } from '../../modules/audit/routes.js';
+import { PlatformMerchantListService } from '../../modules/platform/merchant-lists.js';
+import { platformMerchantListHandlers, platformStaffHandlers } from '../../modules/platform/routes.js';
+import { PlatformStaffService } from '../../modules/platform/staff.js';
 import { MerchantLifecycleService } from '../../modules/tenancy/merchant-lifecycle.js';
 import { MerchantSettingsService } from '../../modules/tenancy/merchant-settings.js';
 import { InvitationService } from '../../modules/tenancy/invitations.js';
@@ -26,12 +31,14 @@ import {
   platformMerchantHandlers,
 } from '../../modules/tenancy/routes.js';
 import { SessionService } from '../../modules/identity/sessions.js';
+import { authorize } from '../authorization.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { Mailer, type EmailSender } from '../email.js';
+import { HTTP_LOG_SERIALIZERS, routeProps } from '../logger.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
-import { resolveRequestId } from './request-id.js';
+import { serverRequestId, type RequestIdSource } from './request-id.js';
 import { API_PREFIX, buildV1Router } from './routes.js';
 
 export type AppDeps = {
@@ -50,6 +57,8 @@ export type AppDeps = {
   mfaEncryption: { current: EncryptionKey; previous?: EncryptionKey | undefined };
   /** D14: CAPTCHA hook for signup (P15). */
   signupGuard?: SignupGuard;
+  /** How a request gets its id: the server's own, always (§8.6). Only the tests' app passes another. */
+  requestId?: RequestIdSource;
 };
 
 export function createApp({
@@ -62,6 +71,7 @@ export function createApp({
   webAppUrl,
   signupGuard,
   mfaEncryption,
+  requestId = serverRequestId,
 }: AppDeps): Express {
   const app = express();
   // An array of addresses/subnets (never a hop count): see TrustedProxies.
@@ -72,16 +82,21 @@ export function createApp({
   app.use(
     pinoHttp({
       logger,
-      genReqId: resolveRequestId,
+      genReqId: requestId,
+      // The allowlist (§8.6): id, method, matched route and status — no path as sent, header, query string or
+      // remote address.
+      serializers: HTTP_LOG_SERIALIZERS,
+      customProps: (req) => routeProps(req),
       // Health probes are frequent and uninteresting.
       autoLogging: { ignore: (req) => req.url === '/v1/health' },
     }),
   );
   app.use(express.json({ limit: '100kb' }));
 
-  const audit = new AuditLog(db);
+  const audit = new AuditLog(db, logger);
   const limiter = new RateLimiter(auth.identity);
   const sessions = new SessionService({
+    db,
     identity: auth.identity,
     accessTokens: auth.accessTokens,
     audit,
@@ -89,6 +104,7 @@ export function createApp({
   });
   const mailer = new Mailer(email, logger);
   const accounts = new AccountService({
+    db,
     identity: auth.identity,
     audit,
     limiter,
@@ -96,9 +112,10 @@ export function createApp({
     webAppUrl,
     ...(signupGuard ? { signupGuard } : {}),
   });
-  const passwords = new PasswordService({ identity: auth.identity, audit, limiter, mailer, webAppUrl });
+  const passwords = new PasswordService({ db, identity: auth.identity, audit, limiter, mailer, webAppUrl });
   const cookies = { domain: cookieDomain };
   const mfa = new MfaService({
+    db,
     identity: auth.identity,
     sessions,
     secretBox: new SecretBox(mfaEncryption.current, mfaEncryption.previous),
@@ -122,6 +139,9 @@ export function createApp({
     ...mfaHandlers({ mfa, cookies }),
     ...selectionHandlers({ identity: auth.identity, sessions, limiter, cookies }),
     ...platformMerchantHandlers({ lifecycle: new MerchantLifecycleService({ db, audit }) }),
+    ...platformStaffHandlers({ staff: new PlatformStaffService({ db, audit, mailer, webAppUrl }) }),
+    ...platformMerchantListHandlers({ lists: new PlatformMerchantListService({ db, audit }) }),
+    ...auditReadHandlers({ reads: new AuditReadService({ db, audit }) }),
     ...merchantHandlers({
       settings,
       members: new MembershipService({ db, audit }),
@@ -134,7 +154,11 @@ export function createApp({
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).
   app.use(
     API_PREFIX,
-    buildV1Router(handlers, (endpoint) => authenticate(endpoint, auth)),
+    buildV1Router(
+      handlers,
+      (endpoint) => authenticate(endpoint, { ...auth, logger }),
+      (endpoint) => authorize(endpoint, { audit, logger }),
+    ),
   );
 
   app.use(notFoundHandler);

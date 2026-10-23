@@ -1,0 +1,3590 @@
+# P5 implementation plan — authorization catalog, policy enforcement and audit
+
+**Status: revision 101 — P5 closure approved 2026-10-23.** Part 1 is approved and authorized; P5.7 is closed. The P5.8 audit-read
+addendum was **confirmed by the independent reviewer** (2026-10-19, design only, §14); reads #33 and #34 are now built,
+and the named busy-platform-staff query shape was measured before the indexes were finalized. O19 is answered and signed by the owner (2026-10-17, `894d309`). Every sign-off stays with the independent reviewer
+(the project lead, 2026-10-18, §14) — except Part 2's, which he delegated to Claude. **Part 2 (the retention design) is
+APPROVED** (revision 91, 2026-10-18): by Claude under that delegation, after ten critic rounds — not an independent
+review (§14). P5.8's retention purge and audit reads are built; the §8.6 lost-response fault-injection tests are built
+and pass (final evidence below); a recorded rehearsal is required before the first real copy. P5.9's matrix is built;
+the P5.10 documents are written. **Since revision 96:** the lost-response tests are built (`e648b0b`, below), the full gate passed twice and
+gitleaks found no leaks over the full history (both at `45c044f`), and the owner approved closing on a condition (O24).
+**Since revision 97:** the lost-response suite now passes after its `as_of` fixture was changed to use the database's
+UTC clock. **Since revision 100:** the reviewer identified a P2 handover gap: delivery could release held rows while a
+failed medium's fate was unrecorded, and another purge could begin before operator-copy destruction was recorded.
+Forward migration `20261019000200_retention_handover_guards` closes both paths. The tests cover refused replacement and
+delivery before every other medium's fate is attested, plus purge refusal until delivered or withdrawn copies are
+recorded destroyed. The new trigger is included in the function-grant and lock-order inventories. GitHub Actions run
+[39912951275](https://github.com/paxalpha/alphakolect_web/actions/runs/39912951275) passed twice on
+`f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`: format, lint, OpenAPI check, typecheck, all package tests, concurrency,
+build, boot-config refusal, API contract and full-history secret scan. The owner approved closure; the reviewer approves
+closure after the remediation. **P5 is closed.** The physical rehearsal remains required before the first real copy,
+not as a closure gate. The owner
+approved and signed the D9 policy and chose a monthly clean-up (2026-10-18; O22, O23).
+
+| | |
+|---|---|
+| Repository | `paxalpha/alphakolect_web` |
+| Branch | `feat/p5-authorization-audit` (no upstream) |
+| Baseline | `5d8904b` (P4 merged). The three review documents and this plan are committed on this branch as planning records (permitted by §12) (`890e59a`, `9650ad4`, `8d8fdac`; the plan from `ce3321f`); no P5 code, migration or test exists |
+| Inputs | `P5_AUDIT_REPORT.md` (incl. §22 review outcome and owner decisions), `P5_REVIEW_HANDOFF.md`, `P5_EVIDENCE_PACK.md`, the plan draft supplied by the reviewer, and direct source inspection |
+| Prepared | 2026-10-11 |
+
+Labels: **[Fact]** verified in the source at `5d8904b` during planning · **[Plan]** a planned change ·
+**[Assumption]** to be confirmed at the start of the package named · **[Open]** needs a decision (§14).
+
+---
+
+## 1. Scope and hard constraints
+
+**In scope:** a database permission catalog; merchant role permissions; per-platform-membership staff grants;
+authorization declared for every endpoint, with its branch scope (§7.6); one authorization source shared by the API
+and the `SECURITY DEFINER` functions; write-time re-checks; owner-only member and invitation management (D5′); platform staff sign-in and lifecycle
+(§7.4); an audit event catalog with explicit failure semantics (including A7); audit read APIs; cross-tenant platform
+reads; query-parameter validation; tests proving P4 is preserved. §1.1 traces every inherited obligation.
+
+**Out of scope (by decision):** assigned-customer authorization for agents and anything else that needs customers,
+assignments, collections or remittances (D1 → P7/P8); permissions for features that do not exist yet (D2); billing
+suspension (P10); end-to-end branch isolation, which needs a branch-owned resource (D7, §7.6). The IP/user-agent rules
+are the owner's decisions (D9, §8.6); the owner-approved written policy is a P5 closure requirement (§13 item 9).
+
+### 1.1 Obligations P5 inherits — where each is placed
+
+Every item that an earlier document assigns to P5, and where this plan discharges it. An item without a package here
+is not in P5 and says where it goes instead.
+
+| Source | Obligation | Where in this plan |
+|---|---|---|
+| RESTRUCTURING_MAP §7, P5 row | permission catalog | §6; P5.1 |
+| RESTRUCTURING_MAP §7, P5 row; ADR-15 T1 | policies; central authorization | §4, §5, §7; P5.2 (resolver), P5.3 (declarations), P5.4 (API), P5.5 (database) |
+| RESTRUCTURING_MAP §7, P5 row | audit hooks, audit module | §8; P5.3a (foundation), P5.8 (reads) |
+| RESTRUCTURING_MAP §7, P5 exit; ADR-15 T1 | authorization matrix green | P5.9; §13 item 2 |
+| RESTRUCTURING_MAP §7, P5 exit (BR-3) | agents record collections only for assigned customers | **not P5** — moved to P7/P8 by D1; roadmap amended in P5.0; §13 item 10 |
+| ADR-15 T2 | platform staff come online | §7.4; P5.7 |
+| ADR-15 T5 | no authorization cache; changes apply from the next request | §4 invariant 2; P5.2 tests |
+| ADR-15 T8 | P5 attaches permissions to roles | §6, §7.3; P5.6 |
+| ADR-15 T9 | interim kind checks replaced wholesale by policies | P5.4 (API, `requireOwner`/`ownerOrDenied`), P5.5 (SQL, with the SQL authority guard) |
+| ADR-15 T14 | platform cross-tenant reads as separate, permission-gated services | #35, #36 (P5.7); #34 (P5.8) |
+| ADR-15 T15, T16 | 404 across tenants, 403 within; capabilities never bypass current state | §4 invariant 8, §5 `capability` class; P5.9; P4 tests kept (§9.2) |
+| P4 closure review (B) | branch scope decided for every endpoint opened to staff; "branch isolation is a P5 exit criterion" | §7.6; P5.3, P5.4, P5.9; §13 item 11. End-to-end branch isolation needs a branch-owned resource, so P5 proves the declarations and the policy and claims no isolation (D7); the first branch-scoped resource (P7/P8) proves it end to end |
+| P4 closure review (C) | archived role grants nothing; restriction to an archived branch reaches nothing | D6: §4 invariant 5, P5.2 tests; D7: §7.6 |
+| P4 closure review (D) | members and invitations paginated before production; query-parameter validation first | validation: P5.3. Pagination of the two lists: **O9** |
+| P4 known limitation (1) | no platform endpoint lists a merchant's memberships | #36; P5.7 |
+| P4 known limitations (2), (3) | branch restriction unenforced; archiving does not affect holders | §7.6; D6, D7 |
+| P4 known limitation (6) | list endpoints return everything with `nextCursor: null` | O9 (members, invitations); P5's own lists are paginated (§8.5, P5.7) |
+| P4 known limitations (4), (5), (7) | setup emails from several businesses; owner-written business name in emails; best-effort email delivery | **not P5** — not authorization; unchanged (P12 outbox for delivery) |
+| P4 closure notes (TARGET_ARCHITECTURE §3.4) | authority from the session inside definer functions; deactivation revokes sessions | §8.5 (R19), §7.2 footprints (category 10); P5.5 |
+| TARGET_ARCHITECTURE §27 | threat model in `docs/security/` | P5.10 (as-built; `P5_AUDIT_REPORT.md` §15 is design-stage input) |
+| RESTRUCTURING_MAP §2.3, §2.4 | UI navigation from server-provided permissions; platform staff with grants (BR-3) | §5 (permission fields on `GET /v1/merchant/membership` — P5.4 — and `GET /v1/auth/session` — P5.7); D4 |
+| `P5_AUDIT_REPORT.md` §22.2 | A7: an audit failure turns 401/403 into 500 | §8.3; P5.3a |
+| `P5_AUDIT_REPORT.md` §22.4 | owner decisions D1, D4, D5, D9 | §3; D9: §8.6, P5.10, §13 item 9 |
+| Found in planning (§7.2, §8.1) | latent P4 deadlock (re-invite during account setup); no acceptance event on the setup path | §7.2 footprints, P5.5 test (h); #14, P5.5 |
+| Legacy system (§15) | per-staff audit view | O4 actor filter; P5.8 |
+| D9 decisions (§8.6) and the availability consequence, passed forward | backups must not keep deleted entries longer than the owner's backup retention; error tracking must send no IP address or user agent; the reverse proxy records no client IP address or user agent and logs the server's `x-request-id`; alerts on `audit_write_failure` and on sign-in failures caused by audit unavailability | **not P5** — P15 obligations, recorded here, in RESTRUCTURING_MAP (obligations P5 passes to P15) and in ADR-16; the retention itself is O10 |
+
+**Constraints for every package:**
+
+1. No change weakens authentication, MFA, CSRF, refresh rotation, session revocation, RLS, composite keys, the
+   one-owner rule or the identity definer boundary.
+2. Forward-only migrations following the repository convention (§9.1); no edits to existing migration files.
+3. No fail-open state at any commit or deployment step (§10).
+4. Each package ends with the full local gate (§9.3) green and its new guards proven by mutation (break → test fails →
+   restore).
+5. Commits small and separate, on this branch only; nothing pushed or merged without the owner.
+
+## 2. Verified baseline (facts the plan builds on)
+
+| Area | Fact | Evidence |
+|---|---|---|
+| Per-request validation | Session, identity, membership, merchant status, kind, role and branch are re-read on every request | `apps/api/src/platform/http/authenticate.ts:125`; `20261010000200_session_context` |
+| Tenant context | Derived only from the validated session; scoped repository transactions set `app.merchant_id` | `apps/api/src/platform/tenant.ts:34-72` |
+| Interim authority (API) | `requireOwner` (`tenant.ts:78`) with 13 call sites in `merchant-settings.ts`, `memberships.ts`, `invitations.ts` | audit report §7 |
+| Interim authority (SQL) | `v.kind = 'owner'` in `list_members`/`update_membership` (`20261011000200:31,62`) and `issue_invitation`/`revoke_invitation` (`20261012000100:195,262`); `pm.role = 'super_admin'` in `set_merchant_status` (`20261009000100:104`) and `transfer_ownership` (`20261011000300:40`) | evidence pack §C |
+| Platform sign-in | Only `super_admin` is eligible (`20261009000200:57`); roles `support`, `verification`, `finance` exist (`20261003000100:230`) | evidence pack §C, §D |
+| Direct writes | The app writes branches and roles (`INSERT`, `UPDATE(name,status,archived_at,updated_at)`, `20261009000300:86-87`) and merchant `name` (`20260927000200:17`) under RLS, with no database authority check | evidence pack §D |
+| Registry | 44 operations; authentication and validation are mounted from contract metadata; no authorization metadata | `packages/contracts/src/registry.ts:33-58`; `apps/api/src/platform/http/routes.ts:21-37` |
+| Query parameters | Request validation refuses contracts that declare `query` (startup error) — needed for pagination | `apps/api/src/platform/http/validate.ts` (`needsValidation`) |
+| Audit storage | Append-only (grant + trigger for every role); RLS: app reads own tenant, inserts own-tenant or tenant-less events | `20260927000300:142-147`; `20260927000400:69-78` |
+| Audit atomicity (P4) | Tenancy commands call the definer function and `recordWithin(tx)` in the same `withTenant` transaction — **already atomic** | `modules/tenancy/memberships.ts:108-113` |
+| Audit atomicity (P3) | Identity mutations run as single autocommitted calls, then `audit.record` in a separate transaction — **not atomic** | `password-flows.ts:136-137`, `sessions.ts:328-329`, `accounts.ts:46-62,79-91`, `mfa.ts` |
+| A7 | Refusal paths `await audit.record(...)` before rethrowing; an audit failure turns 401/403 into 500 | §8.3 inventory |
+| Precedent | A definer function writing its own audit row | `20261003000500_rate_limit_and_bootstrap:64` |
+| No future resources | No customer, assignment, collection or remittance tables or endpoints | `packages/db/prisma/schema.prisma` (21 models) |
+
+## 3. Governing decisions
+
+**Numbering.** In this plan, **D1–D12** are the P5 decisions below. The identity decisions of ADR-14 also use D-numbers
+(D1–D15); whenever one of those is meant, it is written **ADR-14 Dn** (e.g. ADR-14 D12, anti-enumeration).
+
+Owner decisions (recorded in `P5_AUDIT_REPORT.md` §22.4): **D1** assigned-customer authorization → P7/P8; **D4**
+per-platform-membership grants, no defaults, merchant lifecycle / ownership transfer / platform staff management
+super-admin only; **D5** only owners edit roles and their permissions, staff assign or invite only within their own
+permission ceiling and never touch the owner; **D9** open, policy before P5 closes.
+
+**Superseded by later owner decisions (2026-10-11/12, decision log in §14) — the wording above is kept as history:**
+D5's clause letting staff assign or invite within a ceiling is replaced by **D5′: inviting staff or agents, cancelling
+invitations, changing a member's role or branch, and deactivating or reactivating a member are owner-only** (F1a); the
+owner may restrict a staff member to one branch or give all branches (F1b, T7 unchanged). D8 (grantable
+`merchant.audit.read`) is replaced by **D8′: the business activity record is owner-only, always** (F2). D9 is decided
+(§8.6).
+
+Agreed positions (report §22.3), proceeding unless the owner objects: **D2** permissions per phase; **D3**
+read/manage per area; **D6** archived roles grant nothing; **D7** fail closed for branch restriction, no
+branch-resource isolation claimed; **D8** grantable `merchant.audit.read`, tenant-scoped; **D10** security-state
+identity changes atomic with their audit event, login attempts best effort; **D11** actor derived from the validated
+session for privileged operations; **D12** privileged writes re-check current authority in their own transaction.
+
+## 4. Authorization model and invariants
+
+1. **One source of truth.** The permission catalog table is authoritative for identifiers, scope and grantability.
+   The contracts package exports the same identifiers as a literal union **for typing only**; an API test compares it
+   with the catalog table on every run and fails on any difference (no second authority).
+2. **No permissions in tokens.** Effective permissions are resolved from the database per request (alongside
+   `validate_session`), never cached, never read from claims.
+3. **Fixed sets are code, not rows.** The owner holds every **merchant** permission; the super admin every
+   **platform** permission. Resolved implicitly, so a new catalog permission reaches owners and super admins
+   automatically and **no one else** (staff need an explicit role grant; platform staff an explicit membership grant).
+4. **Reserved permissions** (`grantable = false`) are never storable in a grant table: `merchant.roles.manage`
+   (owner only, D5), `merchant.members.manage` and `merchant.invitations.manage` (owner only, D5′),
+   `merchant.audit.read` (owner only, D8′); `platform.merchants.lifecycle`, `platform.merchants.transfer_ownership`,
+   `platform.staff.manage` (super admin only, D4).
+5. **Staff** hold exactly the permissions of their role, only while the membership is active, the merchant is
+   active and the role is active (archived ⇒ nothing, D6). **Agents** hold no merchant permission (self only, until
+   P7/P8). **Platform staff** hold exactly their membership's grants.
+6. **Write-time authority.** Every privileged write re-checks the actor's current authority inside the transaction
+   that performs it, under locks that serialize it with conflicting grant changes (§7).
+7. **Declared authorization.** Every endpoint declares exactly one class (§5); the router refuses to start on a
+   missing or invalid declaration; nothing defaults to public. **The authorization middleware fails closed:** any error
+   while resolving or evaluating authority ends the request with an error, never with `next()` (the legacy
+   subscription middleware failed open on error — CURRENT_SYSTEM_INVENTORY / ARCHITECTURE_RECONNAISSANCE §5.2).
+   **Failure versus denial:** an error while resolving or evaluating authority (database or network failure, an
+   unexpected resolver result) is an **operational error**: the request ends with **500 `INTERNAL_ERROR`** through the
+   existing error handler ([Fact] unknown errors are logged server-side and answered `500 INTERNAL_ERROR` with nothing
+   revealed — `apps/api/src/platform/http/error-handler.ts`), is logged with the request id as the
+   `authorization_resolution_failure` signal (§9.4), and is **never** reported as 401/403 and **never** recorded as a denial
+   (`authz.denied` is written only for a resolved refusal, §8.2a rules 5–6). Genuine outcomes keep their codes: an
+   invalid or absent session 401, a resolved missing permission 403, another tenant's resource 404. Tests inject a
+   resolver failure and assert: no handler runs, the status is 500 with `INTERNAL_ERROR`, the signal line (§9.4) is
+   emitted, and no denial event is written.
+8. **Unchanged response semantics:** 401 invalid/absent session; 403 `WRONG_AUDIENCE`; 404 for another tenant's
+   resource (and for a forged id); 403 `FORBIDDEN` for a known own-tenant resource without permission (T15).
+9. **Tenant RLS stays in force** after every permission check; the scoped repository is unchanged.
+10. **Audit summaries are per-event allowlists**; failure behaviour is defined per event class (§8).
+
+## 5. Endpoint authorization classes and the complete route map
+
+Classes (exactly one per endpoint, declared in the contract):
+
+- **`public`** — no credential (health, signup, resend, forgot).
+- **`capability`** — a named, narrow credential other than a session: `credentials` (email+password),
+  `refresh_token` (cookie or body), `mfa_challenge`, `selection_challenge`, `email_verification_token`,
+  `password_reset_token`, `account_setup_token`, `invitation_token` (with password).
+- **`self`** — an authenticated session acting only on its own identity or membership.
+- **`permission`** — a catalog permission (one identifier; reserved permissions and the owner-protection rule are
+  enforced by the database, not by combining permissions).
+
+[Fact] 44 operations at `5d8904b`; [Plan] the classification below is frozen in P5.0.
+
+| Operation | Class | Declaration |
+|---|---|---|
+| getHealth, signup, resendVerification, forgotPassword | public | — |
+| login, agentLogin | capability | `credentials` |
+| refreshSession, agentRefresh | capability | `refresh_token` |
+| verifyMfa | capability | `mfa_challenge` |
+| listLoginMemberships, selectLoginMembership, agentSelectMembership | capability | `selection_challenge` |
+| verifyEmail | capability | `email_verification_token` |
+| resetPassword | capability | `password_reset_token` |
+| completeAccountSetup | capability | `account_setup_token` |
+| acceptInvitation | capability | `invitation_token` |
+| logout, getSession, changePassword, beginTotpEnrollment, confirmTotpEnrollment, getCurrentMembership, getAgentMembership | self | — |
+| getMerchantProfile / updateMerchantProfile | permission | `merchant.profile.read` / `merchant.profile.update` |
+| listBranches, getBranch / createBranch, updateBranch | permission | `merchant.branches.read` / `merchant.branches.manage` |
+| listRoles, getRole / createRole, updateRole | permission | `merchant.roles.read` / `merchant.roles.manage` (reserved: owner) |
+| listMembers, getMember / assignMember, deactivateMember, reactivateMember | permission | `merchant.members.read` / `merchant.members.manage` (reserved: owner, D5′) |
+| listInvitations / createInvitation, revokeInvitation | permission | `merchant.invitations.read` / `merchant.invitations.manage` (reserved: owner, D5′) |
+| deactivateMerchant, reactivateMerchant | permission | `platform.merchants.lifecycle` (reserved: super admin) |
+| transferOwnership | permission | `platform.merchants.transfer_ownership` (reserved: super admin) |
+
+**New operations proposed for P5** (contracts finalized in P5.0; additive, non-breaking):
+
+| Proposed operation | Class / permission | Package |
+|---|---|---|
+| `GET /v1/merchant/permissions` — the merchant catalog (for role editing UIs) | `merchant.roles.read` | P5.6 |
+| `PUT /v1/merchant/roles/{roleId}/permissions` — replace a role's permission set | `merchant.roles.manage` (owner) | P5.6 |
+| Effective permissions added to `GET /v1/merchant/membership` (new response field) | self | P5.4 |
+| Effective permissions added to `GET /v1/auth/session` (new response field; platform sessions — the dashboard sidebar is built from server-provided permissions (RESTRUCTURING_MAP §2.3), and the platform console, whose staff hold per-person grants (§2.4, BR-3), needs the same; empty for agents and enrolment-only sessions) | self | P5.7 |
+| `GET /v1/merchant/audit-events` (cursor-paginated) | `merchant.audit.read` | P5.8 |
+| `GET /v1/platform/merchants` (list merchants; cursor-paginated) | `platform.merchants.read` | P5.7 |
+| `GET /v1/platform/merchants/{merchantId}/members` (one merchant's memberships; cursor-paginated) | `platform.merchants.read` | P5.7 |
+| Platform staff: create, deactivate, reactivate (O8(b)), list, set grants (`/v1/platform/staff…`; §7.4) | `platform.staff.manage` (super admin) | P5.7 |
+| `GET /v1/platform/audit-events` (cursor-paginated) | `platform.audit.read` | P5.8 |
+
+**Rate limits — none added, deliberately.** [Fact] The existing limits (`util.rate_limit_hit`) guard the
+unauthenticated and credential flows — sign-up, verification, resend, forgot-password, MFA, password change,
+membership selection (`apps/api/src/modules/identity/*.ts`) — and stay unchanged. Every new P5 operation requires a
+validated session and a catalog permission; the only one that sends email (platform staff creation) is reserved to
+the super admin; the audit reads are bounded by O4's page size and window. P5 therefore adds no rate limit, and the
+P5 record says so, so that a later phase that opens any of these to a wider audience revisits it.
+
+## 6. Permission catalog (frozen in P5.0)
+
+| Identifier | Scope | Grantable | Holders | Notes |
+|---|---|---|---|---|
+| `merchant.profile.read` | merchant | yes | owner; staff via role | |
+| `merchant.profile.update` | merchant | yes | owner; staff via role | audited |
+| `merchant.branches.read` | merchant | yes | owner; staff via role | |
+| `merchant.branches.manage` | merchant | yes | owner; staff via role | create/rename/archive/restore; audited |
+| `merchant.roles.read` | merchant | yes | owner; staff via role | includes the catalog and role permission sets |
+| `merchant.roles.manage` | merchant | **no** | owner only (D5) | role create/rename/archive/restore and permission sets; audited |
+| `merchant.members.read` | merchant | yes | owner; staff via role | exposes member emails |
+| `merchant.members.manage` | merchant | **no** | owner only (D5′) | role/branch changes, deactivate/reactivate of non-owner members; audited |
+| `merchant.invitations.read` | merchant | yes | owner; staff via role | exposes invitee emails |
+| `merchant.invitations.manage` | merchant | **no** | owner only (D5′) | invite staff or agents, cancel invitations; audited |
+| `merchant.audit.read` | merchant | **no** | owner only (D8′) | includes refused attempts and filtering by person; the read itself is audited |
+| `platform.merchants.read` | platform | yes | super admin; staff via grant | each read audited (fail closed) |
+| `platform.audit.read` | platform | yes | super admin; staff via grant | each read audited (fail closed) |
+| `platform.merchants.lifecycle` | platform | **no** | super admin (D4) | |
+| `platform.merchants.transfer_ownership` | platform | **no** | super admin (D4) | |
+| `platform.staff.manage` | platform | **no** | super admin (D4) | |
+
+Catalog rules: identifiers are unique, lower-case, dot-separated; `scope ∈ {merchant, platform}`; `status ∈ {active,
+retired}` — a retired permission is never resolved and cannot be granted, and its existing grant rows remain (history)
+but are inert; seeding a new identifier grants it to no grantee; the app role has no direct access to the catalog — it reads it
+through `tenancy.list_permission_catalog` and the resolver (owner decision B1, ADR-16 §3.5).
+
+## 7. Enforcement design
+
+### 7.1 Resolution (per request)
+
+[Plan] A definer function (working name `identity.session_authority(session)`) returns the actor's audience, kind,
+merchant, role/branch status and **effective permission set**, applying §4 rules 3–5. `authenticate()` calls it in
+place of (or together with) `validate_session`, in the same single round trip; the result is frozen on `AuthContext`
+and copied into `TenantContext`. The route's declared permission is checked by a router-mounted middleware
+(early 403, **not** the final decision for writes).
+
+### 7.2 Write-time re-check (D12) and lock order
+
+[Plan] Every privileged write executes in one database transaction that re-checks authority with
+`tenancy.assert_authority(session, permission)` (or the same logic inside the definer function) **before** its first
+write, after acquiring its locks.
+
+**Lock model.** The order below applies to **every lock a transaction can wait for**, whatever acquires it. The
+rules that make that set finite and checkable:
+
+- **L1 — lock modes.** Row locks are taken with `FOR SHARE` or `FOR NO KEY UPDATE` (an `UPDATE` of non-key
+  columns takes the same mode implicitly). **`FOR UPDATE` is not used**, keys are never updated, and rows that a
+  foreign key references are never deleted. [Fact] At `5d8904b` the only `DELETE`s are on `identity.recovery_codes`
+  and `util.rate_limit_counters`, which no foreign key references; `FOR UPDATE` appears in eight live functions — `consume_one_time_token`, `rotate_refresh_token`,
+  `take_selection` (P3) and `set_merchant_status`, `update_membership`, `transfer_ownership`, `admit_invitation`,
+  `revoke_invitation` (P4) — which P5 converts to `FOR NO KEY UPDATE`. [Plan] (Part 2 for the purge) P5 adds three kinds of `DELETE`, all of
+  rows that no foreign key references: grant rows (role-permission rewrites, platform-staff deactivation) and, outside
+  every request path, expired audit events (the retention purge, §8.6) and the purge's own manifest rows (Part 2). The
+  guard verifies "no foreign key references the table" for every `DELETE` it finds.
+- **L2 — foreign-key checks are outside the order.** A foreign-key check takes `FOR KEY SHARE` on the referenced row,
+  which conflicts only with `FOR UPDATE`, key updates and deletes — none of which L1 permits. Foreign-key checks
+  (including every `audit.audit_events` insert that references a merchant or identity) therefore never wait and never
+  make anyone wait; a guard enforces L1 so this stays true.
+- **L3 — contested unique keys.** An insert can wait for another transaction inserting the same unique key. Every
+  function inserts under a contested key (`identities.email`, `merchant_memberships (merchant_id, identity_id)`, the
+  open-invitation key, grant primary keys) **only after acquiring its whole footprint, and acquires nothing afterwards**.
+  The first of two competing inserters then needs nothing the second holds, so the wait cannot close a cycle. Keys made
+  of fresh random values (token and session hashes, UUIDv7 ids) are not contested.
+- **L4 — triggers and policies.** [Fact] The triggers on tables written by these flows lock nothing:
+  `merchant_keeps_one_owner` (deferred, reads only), the append-only triggers on `audit.audit_events` (fire on
+  `UPDATE`/`DELETE`/`TRUNCATE`; from rev 20 they call the dedicated `audit.audit_events_guard()` (Part 2), §8.6, which refuses
+  them except a plain purge run's age-checked `DELETE` of a row no active report holds, while no request awaits its copy
+  (§8.6 item 1, conditions (a)–(d)) — it reads the transaction's `audit.purge_run_id` setting, the
+  reservation row, the purge's own tables (whether a row is held by an active report) and the catalog — all without a
+  lock — and calls only `audit.d9_retention()` and `audit.purge_lease()`, `STABLE` functions that return a constant (the
+  guard's analysis of trigger functions classifies them as lock-free; rev 84) — nothing else, and
+  locks nothing; the ledger keeps `util.reject_modification()` unchanged), [Plan] the event-validation trigger (reads the event catalog, §8.1), and the ledger triggers (not touched by these flows); RLS policies call
+  `util.current_merchant_id()`, which reads a setting. The guard re-checks every trigger function.
+- **L5 — whole footprint first, one row at a time.** A function acquires its complete footprint before its first write,
+  category by category in the order below, ascending id within a category, one row per statement, through the
+  helpers below; a function whose footprint has several rows of a category (e.g. account setup with several pending
+  invitations) locks **all** of them at that category's turn, never one invitation's rows at a time.
+- **L6 — nested functions do not wait.** A function called inside another privileged function is a `…_locked` inner
+  function with a written precondition (the locks its caller must already hold). It acquires no new lock by waiting: it
+  **re-asserts** its precondition rows with `FOR … NOWAIT` — immediate if the caller holds them, an error (never a
+  wait) if a caller forgot — so it cannot take part in a deadlock and a violated precondition fails loudly. Inner
+  functions are not executable by the app (`REVOKE`); only their wrappers call them.
+
+**Categories (global order) — by category, then by primary key:**
+
+| # | Category | Mode |
+|---|---|---|
+| 0 | `audit.purge_reservation` — the purge's run-wide reservation row, maintenance only, taken `NOWAIT` by the purge functions (§8.6, R40, R43); never by a request path. After it, in the same transaction, the purge's own tables (`purge_runs`, `purge_run_pages`, `purge_run_events`, `purge_exports`, `purge_reports`, `purge_report_requests`, `purge_report_handovers`; Part 2, revs 81, 85–86), written only by purge functions | `FOR NO KEY UPDATE NOWAIT`; the purge tables written after it |
+| 1 | `identity.platform_memberships` (actor and target, one helper call, sorted) | `FOR SHARE` for the actor; `FOR NO KEY UPDATE` for a target whose row or grants change |
+| 2 | `tenancy.merchants` | `FOR SHARE`; `FOR NO KEY UPDATE` when the merchant row changes (lifecycle, transfer, profile) |
+| 3 | `tenancy.merchant_memberships` — actor and targets together | `FOR NO KEY UPDATE` in writes; `FOR SHARE` in sensitive reads |
+| 4 | `tenancy.invitations` | `FOR NO KEY UPDATE` |
+| 5 | single-purpose identity rows: `one_time_tokens`, `membership_selection_challenges`, `mfa_challenges`, `refresh_tokens` | `FOR NO KEY UPDATE` |
+| 6 | `identity.identities` and credential rows (`totp_credentials`, `recovery_codes`) | `FOR SHARE`; `FOR NO KEY UPDATE` in identity flows |
+| 7 | `tenancy.roles` — actor's role, targets' current roles, assigned/invited roles, edited role | `FOR SHARE`; `FOR NO KEY UPDATE` for a role being edited |
+| 8 | `tenancy.branches` | `FOR SHARE`; `FOR NO KEY UPDATE` for a branch being edited |
+| 9 | grant rows (`role_permissions`, platform grants) | written only after their parent (7 or 1) is held `FOR NO KEY UPDATE` |
+| 10 | `identity.sessions` (revocation) | `UPDATE` |
+| 11 | `audit.audit_events` rows — the purge's deletion by id only (Part 2, rev 80); nothing else locks them | `DELETE` |
+
+Flows that start from a token or challenge identify their rows with an **unlocked lookup**, then lock in this order
+and **re-check** what the lookup found (still unconsumed, unexpired, same identity) before acting. Locks are taken by
+helpers (working names `identity.lock_platform_memberships`, `tenancy.lock_memberships`, `tenancy.lock_roles`,
+`tenancy.lock_branches`, each taking a sorted, de-duplicated id array and a per-row mode) that issue one statement per
+row, so the order never depends on a query plan. Transactions run at `READ COMMITTED`; after locking, a function
+re-reads what it checks. **Built at P5.5 step 1** (`afe7499`, migration `20261013000900_lock_helpers`): seven
+helpers — one per category that a planned footprint acquires several rows of: `identity.lock_platform_memberships`
+(1), `tenancy.lock_merchants` (2), `tenancy.lock_memberships` (3), `tenancy.lock_invitations` (4),
+`identity.lock_one_time_tokens` (5), `tenancy.lock_roles` (7), `tenancy.lock_branches` (8). Each takes the ids to
+lock `FOR SHARE` and the ids to lock `FOR NO KEY UPDATE` and **sorts and de-duplicates their union itself** (a row in
+both is taken in the stronger mode), so the order cannot depend on a caller remembering to sort.
+
+**Planned lock footprints (the contract P5.5–P5.8 implement; [Plan]).** Rev 13: the member, invitation and
+merchant-audit-read footprints no longer lock the actor's role — it served only the superseded delegation ceiling, and
+these operations are owner-only (the owner has no role). The **global category order always
+governs**; nothing precedes it. Within it, the **authority lock** is the lock on the row that carries the actor's
+authority — the actor's platform membership (category 1) for platform operations, the actor's merchant membership
+(category 3) for merchant operations. The rule is:
+
+- **Authority is acquired by category, not by row.** The actor's row is locked **at its authority-bearing
+  category's turn**, in the same sorted acquisition as every other row of that category (targets included). Within a
+  category, rows are always acquired in ascending primary key — whether the actor's row or a target's row comes first
+  is decided by their ids, never by who is the actor. "Actor first" in the sense of the actor's row preceding a
+  target's row of the same category is **not** a rule: it would break the single global order that prevents
+  reciprocal deadlocks.
+- **Platform operations:** the authority-bearing category is 1. Category 1 is the **first category acquired
+  overall**, and the actor's platform membership is in that sorted acquisition (with any target platform membership),
+  before any merchant-side row and before any write.
+- **Merchant operations:** the merchant row (category 2, `FOR SHARE`) comes first by the global order; the
+  authority-bearing category is 3. The actor's merchant membership is in the **first** category-3 acquisition (one
+  sorted call with every target membership), before any category-4 or later row and before any write.
+- **Capability flows** (invitation acceptance, account setup, identity flows) have no actor membership; their
+  authority is the locked capability row (invitation or token) and identity, in category order.
+- In every case, authority and every rule are re-checked **after the whole footprint is held and before the first
+  write** (§8.2a rule 1).
+
+The guard enforces exactly this (check (1) in the guard below): it verifies (a) the **category-level** rule — the
+authority-bearing category is acquired at its turn, contains the actor's row, and precedes every later category and
+every write — and (b) the **row-level** rule — every multi-row acquisition within a category is one helper call over a
+sorted, de-duplicated id array, whatever the actor's position in it.
+
+| Operation | Footprint, in order (category: rows / mode) | Then |
+|---|---|---|
+| `update_membership` (assign, deactivate, reactivate; owner only, D5′) | 2: merchant / S → 3: {actor, target} / NKU → 7: assigned role / S (assign) → 8: assigned branch / S (assign) | write; 10: target's sessions (deactivate) |
+| `list_members` and the B1 read functions (`read_profile`, `list_branches`, `list_roles`, `list_permission_catalog`, `list_invitations`) | none — each re-validates the session and checks its permission without locks (lock-free readers); not a write, not a sensitive read | read |
+| `issue_invitation` | 2: merchant / S → 3: actor / NKU → 4: open invitations for (merchant, email) / NKU (superseded) → 5: the email's setup tokens / NKU (identity found by unlocked lookup) → 6: identity / S → 7: invited role / S → 8: invited branch / S | contested inserts last (L3): identity (if new), invitation, setup token |
+| `revoke_invitation` | 2: merchant / S → 3: actor / NKU → 4: invitation / NKU | write |
+| `accept_invitation` (invitee, password checked by the API) | 2: merchant / S → 4: invitation / NKU → 6: identity / S → 7: role / S → 8: branch / S | `admit_invitation_locked`: membership insert (L3), invitation consumed, `auth.invitation_accepted` row |
+| `complete_account_setup` | unlocked lookup of token and pending invitations → 2: their merchants / S → 4: the invitations / NKU → 5: token / NKU (consume after re-check) → 6: identity / NKU (password, verification) → 7: all their roles / S → 8: all their branches / S | `admit_invitation_locked` for each invitation in id order (L5, L6) |
+| branch / role / profile writers | 2: merchant / S (profile: NKU) → 3: actor / NKU → 7: {actor's role} / S, plus the edited role / NKU (one sorted call) → 8: edited branch / NKU | write |
+| `set_role_permissions` | 2: merchant / S → 3: owner / NKU → 7: role / NKU | 9: rewrite the role's grant rows |
+| `set_merchant_status` | 1: actor / S → 2: merchant / NKU → 6: owner identity / S | write |
+| `transfer_ownership` | 1: actor / S → 2: merchant / NKU → 3: {former owner, new owner} / NKU → 6: new owner's identity / S → 7: former owner's new role / S | write; 10: sessions |
+| `set_platform_grants` (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | 9: rewrite the target's grant rows |
+| `create_platform_staff` (P5.7) | unlocked lookup of the email (an existing identity ⇒ refused, O8(a)) → 1: actor / S | contested inserts last (L3): identity (`email`), platform membership (`identity_id`), setup token |
+| staff deactivate / reactivate (P5.7) | 1: {actor / S, target / NKU} (one sorted call) | write; 9: grant rows removed (deactivate); 10: sessions (deactivate) |
+| `audit.read_platform_events` (#34) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
+| `tenancy.platform_list_merchants` (#35) | 1: actor / S | read event insert, then the rows (one `SELECT`, no row locks) |
+| `tenancy.platform_list_merchant_members` (#36) | 1: actor / S | read event insert, then the rows (one `SELECT` over memberships and identities, no row locks) |
+| `audit.read_merchant_events` (#33) | 3: actor (the owner, D8′) / S | read event insert, then the rows (one `SELECT`, no row locks) |
+| identity flow: `reset_password` | 5 → 6 → 10 | — |
+| identity flow: `verify_email` — **proposed at P5.5 step 1, for the gate review** (it also activates the owner's pending merchants, BR-2.2, which the row "5 → 6" omitted) | unlocked lookup of the token and of the merchants the identity owns that are pending verification → 2: those merchants / NKU (one sorted call) → 5: token / NKU → 6: identity / NKU | write (activation, verification) |
+| `change_password` | 6 → 10 | — |
+| `rotate_refresh_token` | 5 → 10 | — |
+| selection, MFA verify / enrolment | 5 → 6 (credential rows) | session insert (fresh key) |
+| **Operator-only (outside every request path; never executable by the app, §9.1)** | | |
+| `bootstrap_super_admin` (operator only; rev 14) | unlocked lookup of the email → 6: existing identity / NKU (if any) | contested inserts last (L3): identity (if new), platform membership (`identity_id`); `platform.super_admin_bootstrapped` (#15) |
+| `util.set_authorization_containment` (operator only; R30) | the one row of `util.authorization_containment` / NKU (no request path locks it: the resolver and every re-check read it without a lock, §11.1) | #39 insert (fresh key) |
+| `audit.reserve_purge_run`, `audit.renew_purge_run`, `audit.release_purge_run`, `audit.request_purge_report`, `audit.cancel_purge_report_request`, `audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`, `audit.begin_report_handover`, `audit.record_handover_written`, `audit.record_report_handover`, `audit.record_handover_failed`, `audit.record_handover_abandoned`, `audit.record_report_delivery`, `audit.record_report_copy_destroyed`, `audit.record_report_lost` (Part 2; operator only; revs 84–89) | 0: reservation / NKU `NOWAIT` → 0: the purge's own tables, after it | write the reservation row and the run, export, report, handover-attempt, request and manifest tables (no request path touches any of them); #41–#50 inserts (fresh key) |
+| `audit.purge_candidates` (Part 2; operator only; rev 84) | 0: reservation / NKU `NOWAIT`, checked as this run's → 0: the run's row (its read position) and the manifest (page insert) | audit rows read without locks, bounded per call (rev 85) |
+| `audit.purge_expired_events` (Part 2; operator only; rev 84) | 0: reservation / NKU `NOWAIT`, checked as this run's → 0: the manifest page / NKU → 11: audit rows of the page, by id (`DELETE`; nothing else locks them; rev 85) | the page marked processed under its held lock; #38 insert (fresh key) |
+| `audit.clear_expired_request_metadata` (Part 2; operator only; rev 84 — no reservation) | 5: eligible one-time tokens / NKU `SKIP LOCKED` → 10: eligible sessions / NKU `SKIP LOCKED`, bounded per call | #40 insert (fresh key) |
+
+**Why these read footprints and no more (R20).** A sensitive read locks only the rows that carry the actor's
+authority, so that a concurrent revocation is either seen or waits (§7.5): the actor's platform membership for the
+three platform reads (platform authority comes entirely from it and its grants), and the owner's merchant membership
+for the merchant audit read (owner-only, D8′: authority comes from that membership; the merchant's active status is re-checked by
+the in-function session validation, and a concurrent merchant deactivation takes effect from the next request, as T5
+specifies). No merchant, membership or audit row is locked: nothing about them needs to be serialized with a read, and
+adding locks would only make readers block writers. **Read semantics:** transactions run at `READ COMMITTED`; the
+authority locks are held until commit, so authority cannot change during the read; the returned rows come from **one
+`SELECT` statement** and are therefore consistent as of that statement's start. No stronger guarantee is promised —
+in particular, successive pages are separate requests and do not form one snapshot (§8.5 cursor rules). Each of the four
+operations has its own planned-footprint entry above; the guard fails if a lock or nested call is added to one of them
+without updating its entry.
+
+**Read-consistency guarantees — the acceptance criterion for every paginated read (R25).** Locking the authority rows
+freezes **authority**, not the **contents** of the list: at `READ COMMITTED` each statement takes its own snapshot,
+and nothing locks the listed rows. Each of the four sensitive reads, the two platform lists and (with O9) the members
+and invitations lists therefore promises exactly the following, and no more:
+
+1. **Authority:** checked under the authority locks, which are held until commit — a revocation committed before the
+   check refuses the read; one attempted during the read waits for it (§7.5).
+2. **One page = one statement:** the rows of a page come from one `SELECT`, so they reflect the committed state at
+   that statement's start — never a mix of before and after a concurrent change, never an uncommitted row. The read
+   neither waits for, nor blocks, writers of the listed rows.
+3. **Across pages, no snapshot:** each page is a separate request. Because every ordering key is immutable
+   (`occurred_at`/`id` of append-only audit events; `created_at`/`id` of merchants, memberships and invitations), a
+   row committed **before the first page** and still matching the filters is returned **exactly once** across the
+   pages, **provided it is still present when its page is read** (R35). The one way a row can disappear is the
+   retention purge (§8.6), which deletes only rows past their retention period — so only a window that reaches back
+   past the retention boundary can be affected. Such a row is then **missing** from its later page; it is **never
+   repeated**, no other row is lost or repeated, and the traversal continues normally, because the cursor is a position
+   `(occurred_at, id)`, not a reference to a row, so the strict tuple predicate still works when the cursor's own row
+   has been deleted. A row committed later appears only if its key sorts after the cursor; [Fact] an audit event's `occurred_at`
+   is its transaction's **start** time (§8.5), so a long transaction committing after a page was read can land on a
+   later page or only on a fresh first page. Mutable fields (a member's status, role, branch) are shown as of the page
+   that returns the row.
+
+Tests (P5.7 for the platform lists, P5.8 for the audit reads and O9 lists), each with a second connection: (a) an
+**uncommitted** insert and an uncommitted update of a listed row — the read returns without waiting, omits the
+insert and shows the committed version of the updated row; (b) an event committed between two page requests with a
+key **older** than the cursor appears on the later page, one with a key **newer** than the first page's first row
+appears on no later page, and no row is repeated; (c) a member's status changed between two pages — the row appears
+once, with the state at its page's read; (d) the §7.5 revocation race for each read; (e) (Part 2) **traversal against a
+concurrent purge** (P5.8, R35) — events backdated past their retention period and recent events in one window, the
+purge committed between two pages: every row still present is returned exactly once, purged rows are absent, nothing
+is repeated, and a continuation whose cursor row was purged still returns the correct next page. No test may assume that
+authority locks freeze the list.
+
+The resolver (§7.1) and the early policy check take no locks. Category 3 takes `FOR NO KEY UPDATE` on the **actor's**
+row in writes so any change to the actor (deactivation, role change) serializes with the actor's write; any
+operation touching several memberships locks them in one id-ordered call, so concurrent operations on overlapping
+members cannot cycle (test (b)).
+
+**Baseline inventory at `5d8904b`** ([Fact], every locking clause and implicit `UPDATE` lock in every function body):
+`update_membership` 2 → 3 (target only, `FOR UPDATE`) → 7 → 8; `transfer_ownership` 2 (`FOR UPDATE`) → 3 (`ORDER BY id
+FOR UPDATE`) → 6 → 7; `set_merchant_status` **6 → 2**; `issue_invitation` 2 → 7 → 8 → **6 → 5 → 4**;
+`revoke_invitation` 2 → 4; `admit_invitation` 2 → 4 → 6 → 7 → 8; `complete_account_setup` **5 → 6 → 2 …** (via
+`admit_invitation`); identity flows as in the table above. Non-conforming today: `set_merchant_status`,
+`issue_invitation`, `complete_account_setup`; no function yet takes the actor's authority lock (1 or 3), because P4
+authority was hard-coded — the planned footprints above add it.
+
+**Baseline reconciliation (R34) — the single inventory the guard's baseline control and report mode use.** [Fact]
+from the live definitions at `5d8904b` (for `rotate_refresh_token`, the latest of its three definitions). The guard
+finds three **different kinds** of finding; "eight functions" and "three violations" count different kinds:
+
+| Kind (guard check) | Functions at `5d8904b` | Required P5.5 change |
+|---|---|---|
+| **L1 lock mode** (check 2: `FOR UPDATE` anywhere) — **8 functions, 10 clauses** | P3: `consume_one_time_token` (`20261003000200:85`, category 5), `rotate_refresh_token` (`20261013000100:38,43`, categories 5 then 10 — order already conforms), `take_selection` (`20261009000200:117`, category 5); P4: `set_merchant_status` (`20261009000100:118`, category 2), `update_membership` (`20261011000200:71`, category 3), `transfer_ownership` (`20261011000300:47,56`, categories 2 and 3), `admit_invitation` (`20261012000100:113`, category 4), `revoke_invitation` (`20261012000100:271`, category 4) | every clause becomes `FOR NO KEY UPDATE`; for the three P3 functions this is the **only** change |
+| **Category order** (check 1: order) — **4 functions** (amended at P5.5 step 1: `verify_email` added) | `set_merchant_status` (6 at `:116` before 2 at `:118`); `issue_invitation` (2 → 7 → 8 → 6 at `20261012000100:215` → 5 via `issue_one_time_token` → 4); `complete_account_setup` (5 → 6 → 2 …, via `admit_invitation`); `verify_email` (5 → 6 → **2**: it activates the owner's pending merchant after verifying the identity, `20261003000200`) | reordered to the planned footprints; `set_merchant_status` and `verify_email` are in both rows. **`verify_email` is a latent deadlock once `set_merchant_status` is reordered** (2 → 6 there, 6 → 2 here: verifying an owner's email while a super admin deactivates that merchant) — so step 2 reorders both |
+| **Planned footprint and authority** (check 1: footprint) — **9 functions** (amended at P5.5 step 1: `verify_email` added) | the five P4 privileged functions with no actor authority lock (`update_membership` — which also locks the target only —, `issue_invitation`, `revoke_invitation`, `set_merchant_status`, `transfer_ownership`); `admit_invitation` and `complete_account_setup` (not yet the `…_locked` / whole-footprint structure of L5–L6); `bootstrap_super_admin` (no identity lock, rev 14); `verify_email` (waits for category 2, outside its row) | each rewritten to its planned-footprint row |
+| **L3** (check 3: a wait after a contested insert) — **2 functions** (added at P5.5 step 1) | `issue_invitation` (the invitee's identity inserted `ON CONFLICT DO NOTHING`, then locked `FOR SHARE`, then the setup tokens and the open invitation written); `complete_account_setup` (a second invitation's merchant locked after the first admission's membership insert) | both rewritten to their planned footprints (contested inserts last) |
+
+The baseline control runs the guard against the P4 definitions (kept as fixtures) and must report **exactly the
+entries of this table — no more, no fewer** (as built: 25 entries — 10 L1 clauses, 4 order, 9 footprint, 2 L3 —
+`packages/db/test/support/lock-plan.ts` `BASELINE`). The tests of P5.5 then prove that every function in it, and every new
+function, satisfies L1–L6 and its planned footprint.
+
+**Latent deadlock found by this inventory** ([Probable] by analysis; test (h) confirms or refutes it before the fix):
+`issue_invitation` holds the invitee's identity `FOR SHARE` (`20261012000100_invitations:215`) and then, through
+`issue_one_time_token`, updates that identity's unconsumed setup tokens; `complete_account_setup` holds the setup token
+it consumes and then updates the same identity. Re-issuing an invitation while the person completes setup can therefore
+cycle — PostgreSQL aborts one transaction (no corruption, an avoidable failure). The planned footprints remove it.
+**Confirmed at P5.5 step 2:** against the P4 functions, test (h) — staged with a third connection holding the older
+setup token — deadlocked on its first run (`40P01`, account setup aborted); after the reorder (`8cdf7c6`), 50 staged
+runs, none.
+
+**Lock-order guard ([Plan], P5.5) — what it covers, and how it is itself tested.** A database test reads every
+function and trigger body from the migrated catalog (`pg_get_functiondef`) and every repository transaction in
+`apps/api/src`, and for each privileged operation computes its **waiting footprint**: explicit `FOR …` clauses (not
+`NOWAIT` or `SKIP LOCKED`, which never wait), `UPDATE`s and `DELETE`s (implicit row locks), contested inserts, and — recursively — the footprint of every
+function it calls. It fails if (1) any operation's footprint differs from the planned footprint in the table above, from
+the category order, or from the authority rule (category-level and row-level, as stated above); (2) `FOR UPDATE`, a key update or a `DELETE` of a referenced table appears anywhere (L1/L2);
+(3) a contested insert is followed by any further lock (L3); (4) a trigger function locks anything (L4); (5) a
+`…_locked` function waits for any lock, or is executable by the app (L6). **Guard self-tests:** it runs against the
+P4 definitions (kept as test fixtures) and must report exactly the entries of the baseline reconciliation table above
+(R34); and a mutation test
+installs, in a scratch schema of the test database, a copy of a planned function with (a) one inverted pair of
+categories, (b) an inversion reached only through a nested call, (c) a `FOR UPDATE`, (d) a lock after a contested
+insert, and (e) a waiting lock inside a `…_locked` function — each must fail the guard.
+
+**What the guard can analyse, and failing closed outside it (R11).** The guard's claim is bounded to a closed set of
+constructs, and anything outside that set **fails the guard** rather than being skipped:
+
+- **Scope:** every function reachable from a privileged entry point (the planned-footprint table, the helpers, the
+  `…_locked` functions, identity functions, and every function they call), every trigger on every table any of them
+  writes (enumerated from `pg_trigger`, so a newly added trigger is picked up), and every repository transaction in
+  `apps/api/src` (every `db.transaction` / `withTenant` body), each of which must belong to exactly one of the
+  **transaction classes** below (R17).
+- **Analysable constructs:** `LANGUAGE sql` and `plpgsql` bodies containing static SQL; explicit row-locking clauses;
+  `INSERT`/`UPDATE`/`DELETE`; `SELECT`/`PERFORM` and `RETURN QUERY` calls to **schema-qualified** functions;
+  control flow. In TypeScript transactions: `tx.query` with a **static template literal** calling a definer function,
+  and `mutateAudited`.
+- **Repository transaction classes (R17).** Every repository transaction is classified by its contents, and the
+  guard checks the rules of its class:
+
+  | Class | May contain | Footprint check |
+  |---|---|---|
+  | **T1 privileged write** | calls to definer functions of the planned-footprint table (one operation per transaction) | compared with that operation's planned footprint |
+  | **T2 pattern-B audited write** | the identity definer call(s) of one flow + exactly one `mutateAudited` call for an approved pattern-B pair | the definer calls' footprint (§7.2 table); the audit insert is the **only** direct table write allowed in it, and only through `mutateAudited`; audit inserts **inside** the definer calls only as listed in the nested-writer table below (R27) |
+  | **T3 read-only** | scoped-repository `SELECT`s and calls to functions classified as lock-free readers; no writes, no locking clauses, no calls to writers | exempt from footprint comparison; the guard verifies it really is read-only |
+  | **T4 sensitive read** | one call of a designated sensitive-read function | that function's planned footprint |
+  | **T5 best-effort audit** | exactly one `recordBestEffort` insert, nothing else | none (a single insert into `audit.audit_events`, which L2 makes non-waiting) |
+
+  **Classification uses the complete call graph (R22).** A transaction's class is decided on its **complete,
+  statically resolved call graph and database effects** — every function reachable from its statements (recursively,
+  through the definer functions it calls, their nested calls and the triggers their writes fire) and every write,
+  lock and insert those perform — never on the visible TypeScript body alone. A **T1** transaction is accepted only if
+  every reachable write is covered by its operation's approved planned footprint; a **T2** transaction only if every
+  definer call belongs to the approved identity flow, every write reachable from those calls is in that flow's
+  footprint, and its only direct table write is the matching approved `mutateAudited` insert; **T3** only if nothing
+  reachable writes or locks; **T4** only if the reachable effects are exactly the designated read function's footprint
+  and its one read event. A reachable function whose behaviour the guard cannot resolve (outside the analysable set
+  above) fails the guard; it is never assumed safe.
+
+  **Nested pattern-A events inside a pattern-B flow (R27) — one table, used by every guard.** One flow combines the
+  patterns: account setup. Its transaction is T2 — `complete_account_setup` plus one `mutateAudited` for
+  `auth.account_setup` (#10) — and the definer function, through `admit_invitation_locked`, inserts one
+  `auth.invitation_accepted` (#14, pattern A) per admitted invitation. This is permitted by an explicit **nested-writer
+  table**, kept in the guard and in this plan, whose only entry today is:
+
+  | T2 flow | Nested function (the pattern-A writer) | Pair | Rows per transaction |
+  |---|---|---|---|
+  | account setup (`PasswordService.completeSetup`) | `tenancy.admit_invitation_locked`, reached only through `identity.complete_account_setup` | #14 `auth.invitation_accepted` / success | 0..n — one per invitation admitted |
+
+  The transaction-class classifier, the writer guard and the coverage guard all read this same table: a T2 transaction
+  is accepted only if every audit insert reachable from its definer calls is an entry of the table for that flow, and
+  the TypeScript body still contains exactly one `mutateAudited`; a pattern-A pair is still written only by its one
+  designated function (the writer guard does not change), and the coverage guard still counts that one writer. Any
+  other nested audit insert in a T2 flow fails all three guards. **Tests (P5.5):** setup with no invitation (only #10),
+  with one and with two invitations of two merchants (one #10 and one #14 per admitted membership, each with the actor
+  of §8.1); an injected failure of #14 for the **second** invitation rolls back everything — password, verification,
+  both memberships, the first #14 and #10; an injected failure of #10 rolls back both #14 rows and the memberships;
+  guard self-tests: a scratch T2 flow whose definer function writes a pattern-A pair **not** in the table fails, and a
+  table entry whose function is not reachable from its flow fails.
+
+  **Direct-access exceptions, exhaustively:** a TypeScript transaction may write a table directly only to insert into
+  `audit.audit_events`, and only through `mutateAudited` (T2, approved pattern-B pair) or `recordBestEffort` (T5,
+  approved best-effort pair). Any other direct write — to a tenancy, identity or ledger table, or to the audit table by
+  any other code — fails the guard; so does a transaction matching no class or more than one.
+- **Fails the guard:** dynamic SQL (`EXECUTE`) anywhere in scope; unqualified function calls; other languages;
+  `LOCK TABLE`, advisory locks, `CALL`, `COPY`; an unrecognised statement form; a reachable function that is not
+  classified (planned footprint, helper, `…_locked`, or a declared lock-free reader); non-literal SQL in a repository
+  transaction; a transaction outside the classes above. [Fact] At `5d8904b` no function uses `EXECUTE`, so this
+  costs nothing today.
+- **Indirect effects are enumerated, not assumed:** foreign-key checks are excluded only because L1/L2 hold (the guard
+  verifies the L1 facts it relies on: no `FOR UPDATE`, no key update, no delete of a referenced table); triggers are
+  analysed as part of the statement that fires them; `INSERT … ON CONFLICT DO UPDATE` is treated as an `UPDATE` of the
+  conflicting row (category of its table) — [Fact] used today only by `begin_totp_enrollment`, on a category-6 row.
+- **Schema-level expressions on every table written in scope** are read from the catalog and must be lock-free: column
+  defaults (`pg_attrdef`), generated columns, `CHECK` and exclusion constraints (`pg_constraint`), foreign-key
+  actions, index expressions and predicates (`pg_index`), RLS policies (`pg_policy`), rewrite rules (`pg_rewrite`),
+  domain constraints, and triggers (`pg_trigger`). Every function they reference must be on an explicit **lock-free
+  allowlist**; anything else fails the guard. [Fact] At `5d8904b`: defaults call only `util.uuid_v7()` and
+  `CURRENT_TIMESTAMP`; `CHECK`, index and policy expressions call only `btrim`, `length`, `char_length`, `lower`,
+  `jsonb_typeof` and `util.current_merchant_id`; there are no cascading or `SET NULL` foreign-key actions, no rules,
+  no generated columns, no exclusion constraints and no domains. So the initial allowlist is exactly those functions,
+  foreign-key actions must be `RESTRICT`/`NO ACTION`, and a rule, generated column, exclusion constraint, domain or
+  non-allowlisted function on a table in scope fails the guard until it is classified and tested.
+
+Within that closed set the guard is the proof obligation for the order; it is **not** complete because its five
+mutations are caught — the mutations show it detects those kinds of violation, and the fail-closed rules ensure nothing
+it cannot analyse reaches a privileged path. The two-connection runs remain the adversarial evidence that the
+implementation behaves as analysed. Additional guard self-tests: a scratch function using `EXECUTE`, an unqualified
+call, and an unclassified reachable function must each fail it; so must a scratch table in scope with a default that
+calls a non-allowlisted function, a `CHECK` that does, a cascading foreign key, and a rewrite rule. **Transaction-
+class self-tests (R17):** a valid pattern-B transaction (identity call + `mutateAudited` with an approved pair)
+**passes**; a transaction with a direct `UPDATE` of `tenancy.branches` fails; `mutateAudited` with a pattern-A pair
+fails; a T3 transaction with a hidden `UPDATE` or `FOR …` clause fails; a T5 transaction with a second statement fails;
+a TypeScript insert of a sensitive-read pair fails; **a T1 and a T2 transaction whose TypeScript body is valid but
+whose called definer function contains a nested call to a scratch function performing an unapproved write** (e.g. an
+`UPDATE` of `tenancy.roles` outside the footprint) **fail** (R22). This differs from mutation (b) above, which injects a
+lock-order *inversion* through a nested call; this one injects an unapproved *write*.
+
+A permission revoked concurrently is either committed before the write's re-check (write refused) or waits until the
+write commits (the write was authorized when it happened).
+
+**Tests (two connections):** (a) revoke-vs-write in both orders (as P4's `membership-management.test.ts` does for
+transfer); (b) **concurrent member operations** — two sessions of the owner act concurrently on members A and B in
+opposite id orders (deactivate A while reassigning B, and the reverse), and a staff member's branch write races the
+owner deactivating that staff member, repeated 50 times: never SQLSTATE `40P01` (deadlock), every outcome per §7.2
+(staff can no longer act on each other, D5′, so the earlier staff-vs-staff case cannot arise); (c) role-permission edit vs assignment into that role; (d) ownership transfer vs member
+operation; (e) platform grant revocation vs platform read (§7.5); (f) merchant deactivation vs ownership transfer and
+vs invitation issue; (g) account setup with admission vs merchant deactivation; (h) re-issuing an invitation while the
+invitee completes account setup — run first against the P4 functions to record the latent deadlock, then against the
+reordered ones; (i) account setup admitting **two** invitations of two merchants vs concurrent member operations and
+role edits in both merchants; (j) acceptance of an invitation vs its revocation vs its re-issue; (k) a staff write vs
+the owner editing that staff member's role permissions. A deadlock in any run (after the fix) fails the test — PostgreSQL's deadlock detector aborting a
+transaction is treated as a defect, not a success. These runs are evidence, not proof; the static guard is the proof
+obligation.
+
+**Direct-grant writes become function writes (O1).** Branch, role and merchant-profile writes move into definer
+functions that apply the same re-check. Rationale: archiving a role changes effective permissions (D6) and archiving
+a branch changes access (D7), so these are privileged writes under D12.
+
+**Enforcement boundary = one migration.** The migration that creates those writer functions **also revokes**, in the
+same transaction, the app's direct `INSERT`/`UPDATE` on `tenancy.branches`, `tenancy.roles` and
+`UPDATE(name)` on `tenancy.merchants`. There is no state in which the functions exist and the direct path is still
+writable, so no deployment ordering is needed for safety:
+
+- an application instance of the previous version that still writes directly gets `permission denied` (a 500) —
+  over-denial, never a bypass;
+- the new application version ships in the same release and is started only after the release step has applied the
+  migration (TARGET_ARCHITECTURE §23: migrations run as the release step, then a health-checked switch);
+- if the release fails between the migration and the switch, writes to branches, roles and the profile are
+  unavailable until the new version is up; reads and every other endpoint are unaffected; recovery is forward (start
+  the new version). This is tested: with the migration applied, the **previous** commit's repository code is run
+  against the database and every direct write must fail with `insufficient_privilege`.
+
+[Fact] No environment runs the new system yet (Dockerfiles and deployment are P15; CI only builds and tests), so the
+first deployment will contain P5 complete; the boundary above is what keeps every later rolling deployment safe.
+
+**No permission can exist while writes are app-checked only.** Until P5.5, branch, role and profile writes keep P4's
+behaviour (API check, owner only). That is safe because no staff permission can exist before P5.5: the role- and
+platform-grant writers are only introduced in P5.6 and P5.7, after the enforcement boundary (§10).
+
+### 7.3 Delegation — owner-only (D5′; the ceiling below is superseded)
+
+**Decided 2026-10-11/12 (F1):** only the owner invites, cancels invitations, changes a member's role or branch, and
+deactivates or reactivates members. `merchant.members.manage` and `merchant.invitations.manage` are reserved
+(§4 invariant 4), so **no staff member can delegate anything** and the delegation ceiling is not built. The database
+functions refuse every member and invitation write by a non-owner, whatever grant rows exist. The owner-protection
+rule stays (the owner's own membership is never a target). Staff may still be granted `merchant.members.read` and
+`merchant.invitations.read`. The superseded design is kept below as history:
+
+> *Superseded (rev 11 design):* for a non-owner actor, `members.manage` and `invitations.manage` operations
+> succeeded only if the target was not the owner, the target's current role and the assigned or invited role were
+> both within the actor's own permissions (a subset test inside the definer functions), and that role was active.
+
+### 7.4 Platform staff (D4)
+
+Grants attach to `identity.platform_memberships.id`, not to the identity. Sign-in eligibility admits active platform
+memberships of every role; MFA remains mandatory for all platform identities (the existing login and enrolment flow
+applies unchanged). A platform staff member without grants can sign in and use `self` endpoints only.
+
+**Lifecycle of a platform staff member (all super admin only, `platform.staff.manage`, D4).** [Fact] An identity has at
+most one platform membership (`UNIQUE (identity_id)`, `20261003000100_identity_schema:144`); `role` is one of
+`super_admin`, `support`, `verification`, `finance` (CHECK, `:230`); today only the bootstrap creates a platform
+membership (`20261003000500:62`).
+
+- **Create** (`identity.create_platform_staff(session, email, role)`): the super admin gives an email and a role
+  label (`support`, `verification` or `finance`; never `super_admin`). One definer function creates a
+  **passwordless identity**, its platform membership **with no grants**, and a P3 **account-setup token** — the same
+  onboarding mechanism as a new person's invitation (T10); the API sends the setup link with the existing generic
+  `accountSetupEmail` ([Fact] `apps/api/src/modules/identity/emails.ts:47`, already used by the bootstrap; it names no
+  business) (best effort until the P12
+  outbox, as for invitations). The person sets a password through the existing setup flow, then signs in and must
+  enrol MFA through the existing platform enrolment flow before any `full` session exists. The role label grants
+  nothing (D4); access comes only from grants set afterwards. Event #30, actor from the session.
+- **An email that already has an identity — decided (O8(a), owner, 2026-10-11):** refused (`409 EMAIL_IN_USE`, a recorded denial) in P5. A
+  platform account stays a separate person-account from any merchant account, so no existing password, MFA state or
+  merchant membership is carried into the platform audience, and the one-membership-per-identity rule is never hit by
+  a second creation. The super admin uses another address. (Anti-enumeration does not apply: only the super admin can
+  call it.)
+- **Separation in the other direction — decided (CF3, owner, 2026-10-12: "Yes, keep them apart both ways").** The owner's reason for O8(a) was that
+  platform and business accounts stay "distinct and do not interfere with each other". [Fact] Sign-up already ignores an
+  email that has an account (`signup_merchant_owner` returns `created = false`, `20261003000200:19-22`), but a
+  business owner can invite an **existing** account, which then joins with its password (T11). So that a platform
+  account can never join a business: `admit_invitation_locked` refuses an identity that holds a platform membership
+  (any role, any status), on both paths, with the same generic failure as every other refused acceptance (T11); issuing
+  the invitation is unchanged, so the business owner's response still reveals nothing (T10).
+- **The operator bootstrap keeps the separation too (rev 14).** [Fact] `identity.bootstrap_super_admin` "creates (or
+  reuses)" an identity: it attaches the super-admin membership to an **existing** identity whose email matches, if that
+  identity has no platform membership (`20261003000500:38-60`) — so today it could make a business account a super
+  admin. P5.5 replaces it (same signature, operator-only): it locks an existing identity `FOR NO KEY UPDATE`
+  (category 6) and refuses it if it holds any merchant membership (any kind, any status), raising as it does today for
+  an identity that already has a platform membership. `create_platform_staff` only ever creates a new identity
+  (O8(a)), so bootstrap is the one path that can add a platform membership to an existing identity. The migration
+  refuses to run, with an explanation, if any identity already holds both a platform and a merchant membership (as
+  `20261010000100_staff_role_required` refused role-less staff), so the rule never starts from inconsistent data.
+- **Why the two checks cannot both pass.** Admission locks the invitee's identity (category 6: `FOR SHARE` on the link
+  path, `FOR NO KEY UPDATE` at account setup) before it checks for a platform membership; bootstrap locks the same row
+  `FOR NO KEY UPDATE` before it checks for merchant memberships. `FOR NO KEY UPDATE` conflicts with both modes, so the
+  two serialize on that row and the second sees the first's committed membership.
+- **Tests (P5.5):** an invitation to a platform staff member's (or the super admin's) email cannot be accepted by link
+  and password, nor admitted at account setup, and the issue response is identical; bootstrap on an email with a
+  merchant membership is refused and creates nothing; bootstrap on a passwordless identity without memberships still
+  works; two connections — admission of an invitation vs bootstrap of the same email, in both orders — end with the
+  identity in at most one audience, never `40P01`.
+- **Deactivate:** membership `deactivated`, its sessions revoked (category 10), **its grants removed** in the same
+  transaction (the event's allowlisted summary lists the identifiers removed); event #31.
+- **Reactivate — decided (O8(b), owner, 2026-10-11):** because the membership is unique per identity, a deactivated staff member
+  can never be re-created; without reactivation, re-employing someone needs a new email address. P5 adds
+  `reactivate` (super admin): status back to `active` with **no grants** (they were removed at deactivation), so access
+  is re-granted explicitly; a new atomic pair `platform.staff_reactivated` (success, #37; denied/failure best effort).
+
+### 7.5 Platform lock order and grant-revocation races
+
+Platform operations take locks in this fixed order:
+
+1. the **actor's** `identity.platform_memberships` row — `FOR SHARE` by every permission-protected platform
+   operation (reads included), after which the actor's grants are re-read; when the operation changes another platform
+   membership (grants, deactivation), actor and target are locked in one sorted helper call (target
+   `FOR NO KEY UPDATE`);
+2. then any merchant-side rows in the §7.2 order (merchant first).
+
+Grant changes (`platform.staff.manage`, super admin) and staff deactivation therefore hold the **target** platform
+membership row `FOR NO KEY UPDATE` before changing its grants or status (§7.2 table). Merchant-side operations never lock platform memberships, so
+the two orders cannot form a cycle.
+
+Outcome of a race between "revoke grant X from staff S" and "S performs an operation needing X": the two serialize on
+S's membership row. If the revocation commits first, the operation's re-check sees no X and is refused (403, nothing
+written, nothing returned). If the operation holds the row first, the revocation waits until it commits; the
+operation was authorized when it ran. Sensitive reads follow the same rule — data is returned only by a transaction
+that re-checked X under the lock. Tested with two connections in both orders (P5.7), not only "revoked ⇒ next
+request".
+
+### 7.6 Branch restriction (D7; P4 closure review (B) and (C))
+
+[Fact] A staff membership may be restricted to one branch (`branch_id`; `NULL` = all branches, T7); invitations carry
+the same field. No branch-scoped **resource** exists (`schema.prisma`, 21 models: no customer, collection or other
+branch-owned data). The P4 isolation matrix pins staff and agents to their own membership endpoints so that "any
+endpoint opening to staff or agents fails the matrix until its branch scope is decided and tested (P5)"
+(RESTRUCTURING_MAP, P4 closure review (B)). P5 opens profile, branch, role, member-list and invitation-list endpoints to
+staff (the audit read and every member and invitation write stay owner-only, D5′/D8′), so it must make that decision
+explicitly:
+
+- **Every `permission` endpoint declares a branch scope** in the registry, next to its permission (P5.3):
+  `merchant_wide` or `branch`. Every P5 endpoint is `merchant_wide`: the merchant's profile, its list of branches,
+  its roles, its members, its invitations and its audit log are business-level administration, not data of one
+  branch. A branch restriction does **not** narrow them, and P5 claims no branch isolation (D7). `branch` is reserved
+  for the first branch-owned resources (P7/P8); the router refuses to start on a `branch` endpoint without a resolver
+  for the resource's branch.
+- **The policy decision takes an optional resource branch** (P5.4): for a `branch` endpoint, a restricted staff member
+  is allowed only for resources of their branch; lists filter in the scoped repository query, never after fetching;
+  another branch's resource answers **404** (T15). A restriction to an **archived** branch reaches **no** branch-scoped
+  resource (fail closed, D7 / P4 closure (C)); `NULL` reaches all. Unit-tested now with synthetic resources, since no
+  real one exists.
+- **Delegation and branches — O7 resolved by D5′.** Only the owner assigns or invites, choosing one branch or all
+  (F1b), so no branch ceiling exists and none is built (R29). History: rev 10 proposed a branch ceiling for staff who
+  could delegate; D5′ removed staff delegation, and with it the question.
+- **Tests:** registry: every P5 endpoint declared `merchant_wide`, a `branch` declaration without a resolver refuses
+  startup; policy unit tests for restricted, unrestricted and archived-branch actors with synthetic resources (P5.4);
+  the matrix (P5.9) adds a branch-restricted staff member and a staff member restricted to an archived branch, who must
+  get exactly the results of an unrestricted staff member with the same permissions on every `merchant_wide`
+  endpoint.
+
+## 8. Audit design
+
+### 8.1 Event catalog
+
+A closed catalog of event identifiers, **held in the database** — table `audit.event_catalog` (identifier, outcome,
+class, writer pattern, summary allowlist with a maximum length per field), app `SELECT` only — and mirrored as a
+TypeScript union **for typing only**, compared with the table on every test run (as for permissions, §4 invariant 1).
+[Plan, P5.3a] A `BEFORE INSERT` trigger on `audit.audit_events` validates every row against it — an unknown
+(identifier, outcome) pair, a summary field outside the allowlist or over its length bound raises — so the behaviour
+table below holds **at run time for every writer**, SQL functions included, not only for TypeScript callers. Its
+function is `SECURITY DEFINER` with a pinned `search_path` and no app grant, so no writing role needs a grant on the
+catalog. Each catalog entry has a **retention override** column (`retention_override interval`, nullable). For every
+P5 pair it is `NULL`, meaning "the D9 retention": the purge and the append-only trigger compute an entry's retention
+at run time as `GREATEST(COALESCE(retention_override, audit.d9_retention()), audit.d9_retention())` (§8.6, R41, R42;
+rev 82: an override can only lengthen it), so `audit.d9_retention()` is
+the one runtime source for P5, not a value copied into rows. A later phase whose events need a different period
+(e.g. financial records in P6+) sets an override on its own entries by migration, instead of redesigning the purge;
+a catalog test fails if any P5 pair carries an override. **Catalog entries are never deleted** (rev 20): a pair that
+is no longer written is marked retired, so every stored event keeps an entry from which its retention is read; and an
+event whose pair has no entry at all — impossible after P5.3a's seed, defended anyway — uses `audit.d9_retention()`
+(the purge and the guard look the entry up with an outer join). Writer
+class and pattern stay enforced by the static writer guard and by `recordBestEffort`'s own class check. The **class** (atomic, best effort or sensitive
+read, §8.2) is declared per **(identifier, outcome)** pair — e.g. `auth.login`/`success` is atomic (a session is
+created) while `auth.login`/`failure` is best effort — together with a **summary allowlist** (field → type, bounded
+length) and, for atomic pairs, the **writer pattern** below. Existing identifiers are kept (e.g. `auth.login`, `merchant.member_assigned`,
+`platform.ownership_transferred`); new ones are added per package. Never stored: tokens, token hashes, passwords, OTPs,
+recovery codes, request bodies, exception dumps.
+
+**Validation is strict and never silently repairs an event.** An unknown identifier, a disallowed outcome, or a
+summary field outside the allowlist (or over its length bound) makes the event **invalid** — fields are rejected,
+not omitted.
+
+**One writer per class.** The class of an event is fixed by the catalog; each writer accepts only its own class, so
+a caller can never choose a weaker class:
+
+- **atomic** — pattern A: the definer function's own SQL insert; pattern B: `mutateAudited(tx, event, change)`, inside
+  the change's transaction;
+- **sensitive read** — **database-owned only** (R16): the designated read function checks authority under its locks,
+  inserts exactly one read event, and returns the rows, all in the request's one transaction. There is **no**
+  TypeScript writer for sensitive reads — the repository calls the read function and never writes a read event itself
+  (an earlier draft's `readAudited` wrapper is removed);
+- **best effort** — `recordBestEffort(event)`, in its own transaction.
+
+Behaviour is decided by **the entry point first**, then by the event — so an unknown identifier, whose class cannot
+be resolved, still has one deterministic outcome:
+
+| Situation | Atomic (`mutateAudited` / pattern-A SQL) | Sensitive read (the read function's SQL) | `recordBestEffort` |
+|---|---|---|---|
+| Unknown identifier | error ⇒ transaction rolls back ⇒ 500 | error ⇒ no data ⇒ 500 | **error thrown (500)** — an unknown identifier is never treated as best effort |
+| Known event of another class | error ⇒ rollback ⇒ 500 | error ⇒ no data ⇒ 500 | **error thrown (500)** — an atomic or sensitive-read event can never be downgraded |
+| Disallowed outcome or summary field | error ⇒ rollback ⇒ 500 | error ⇒ no data ⇒ 500 | not stored; response unchanged; `audit_validation_failure` signal (§9.4) |
+| Storage failure (insert fails) | rollback ⇒ 500 | no data ⇒ 500 | not stored; response unchanged; `audit_write_failure` signal (§9.4) |
+
+**`recordBestEffort` accepts only identifiers that the catalog lists as best effort.** Anything else — an unknown
+identifier (for example a misspelled atomic event) or a known atomic/sensitive-read event — is a programming error and
+fails the request loudly (500), in every entry point. Best-effort tolerance applies only to failures that depend on
+runtime data or infrastructure **for a known best-effort event**: a summary value out of bounds, a disallowed outcome,
+or a storage failure. A typo can therefore never turn a mandatory audit into a silent one.
+
+**Atomic auditing does not depend on the caller choosing the right function.** Exactly two writer patterns exist,
+and the catalog assigns each atomic pair to exactly one:
+
+- **Pattern A — database-owned:** a definer function performs the change and inserts the audit row itself, with the
+  actor derived **inside the function** from trusted, locked state — never from a caller-supplied actor (D11):
+  - **session-based** operations (tenancy and platform changes): actor identity, audience and membership from
+    `identity.validate_session` re-run inside the function;
+  - **capability-based** operations — `auth.invitation_accepted` (#14), written by `admit_invitation_locked` on both
+    paths: actor identity = the **locked invitation's `identity_id`** (P4 binds an invitation to its identity at issue,
+    and admission already refuses any other identity); on the setup path this must also equal the **consumed setup
+    token's identity**, which the function checks; actor audience = `NULL` (no session exists); actor membership = the
+    **membership just created**; merchant = the invitation's merchant; target = the invitation; summary `{ path:
+    'invitation_link' | 'account_setup', kind }`. The `p_identity_id` argument of `accept_invitation` is only
+    compared with the invitation, never written as the actor. The password check of the invitation-link path remains
+    in the API (T11), as in P4;
+  - **operator** operations (`bootstrap_super_admin` #15, the retention purge #38, its field clearing #40, report
+    requests #42, deliveries #41, losses #43, copies destroyed #44, exports discarded #45, reports confirmed #46,
+    handovers #47, request cancellations #48, abandoned handovers #49 and failed handovers #50, the containment switch #39): actor
+    `NULL`, as for the bootstrap today.
+
+  In every pattern-A function, `request_id`, `ip` and `user_agent` are passed in as **request context**: they are
+  recorded as given and never used for any decision (the API is their only source). Used for every tenancy and
+  platform change and for invitation acceptance.
+- **Pattern B — repository-owned:** one `db.transaction` performs the change through its definer call and inserts the
+  event through `mutateAudited(tx, event, change)` before commit. Used for identity flows, whose functions are
+  single-purpose P3 functions (§8.4).
+
+Guards against double or missing recording operate on the full tuple **(identifier, outcome, class, writer
+pattern)** — never on the identifier alone, because one identifier legitimately has different writers for different
+outcomes (e.g. `auth.signup`: success atomic via pattern B, failure best effort; `auth.invitation_accepted`: success
+atomic via pattern A, failure best effort; `merchant.member_assigned`: success atomic via pattern A, denied/failure
+best effort). Each writer site is resolved to the exact pair it writes — SQL inserts by their `action` **and**
+`outcome` literals, TypeScript call sites by their typed event argument — and is accepted only if that pair's class
+and pattern match the writer: `mutateAudited` only pattern-B atomic pairs; SQL inserts only pattern-A atomic pairs
+in their planned function, or sensitive-read pairs in their **designated read function**; `recordBestEffort` only
+best-effort pairs. A sensitive-read pair written from TypeScript, or from any SQL function other than its designated
+read function (§8.1, #33–#36), is rejected. The coverage
+guard below requires exactly one writer per atomic pair.
+
+**Writer-guard mutation tests (P5.3a):** (1) a best-effort `recordBestEffort` call for `auth.signup`/failure and for
+`merchant.member_assigned`/denied — identifiers whose success is atomic — is **accepted**; (2) an atomic success
+routed through the wrong writer (`auth.signup`/success via `recordBestEffort`; `merchant.member_assigned`/success
+written from TypeScript; `auth.password_change`/success written in SQL) is **rejected**; (3) an attempt to record an
+atomic or sensitive-read pair through `recordBestEffort` (a downgrade) is **rejected**, at build time by the types and
+at run time by the guard.
+
+**Event inventory — every (identifier, outcome) pair, by class.** [Fact] for the pairs the code writes at `5d8904b`
+(extracted from `apps/api/src/modules` and the SQL), [Plan] for pairs marked *new*. Agent sign-in, selection and
+refresh write the **same** identifiers as the web flows, distinguished by `actor_audience`; their coverage tests run
+once per audience.
+
+**Atomic pairs** (each with exactly one writer):
+
+| # | Identifier | Outcome | Pattern | Writer | Coverage test (file) |
+|---|---|---|---|---|---|
+| 1 | `auth.signup` | success | B | `AccountService.signup` around `signup_merchant_owner` (`app.merchant_id` set to the new merchant first) | accounts-api |
+| 2 | `auth.email_verify` | success | B | `AccountService.verifyEmail` around `verify_email` | accounts-api |
+| 3 | `auth.login` | success | B | `SessionService.login` around `create_session` (audiences: platform, merchant, agent) | sessions-api, agent-auth-api |
+| 4 | `auth.login_select` | success | B | `SessionService.selectMembership` around `take_selection` + `create_session` (merchant, agent) | login-selection-api, agent-auth-api |
+| 5 | `auth.refresh` | success | B | `SessionService.refresh` around `rotate_refresh_token` (web, agent) | sessions-api, agent-auth-api |
+| 6 | `auth.refresh_token_reuse` | denied | B | `SessionService.refresh` — the revocation inside `rotate_refresh_token` and this event commit together | sessions-api, agent-auth-api |
+| 7 | `auth.logout` | success | B | `SessionService.logout` around `revoke_session` | sessions-api |
+| 8 | `auth.password_change` | success | B | `PasswordService.change` around `change_password` | passwords-api |
+| 9 | `auth.password_reset` | success | B | `PasswordService.reset` around `reset_password` | passwords-api |
+| 10 | `auth.account_setup` | success | B | `PasswordService.completeSetup` around `complete_account_setup` | passwords-api, invitations-api |
+| 11 | `auth.mfa_enrollment_started` | success | B | `MfaService.beginEnrollment` around `begin_totp_enrollment` | mfa-api |
+| 12 | `auth.mfa_enrollment_confirmed` | success | B | `MfaService.confirmEnrollment` around `confirm_totp_enrollment` | mfa-api |
+| 13 | `auth.mfa_verify` | success | B | `MfaService.verifyChallenge` around `consume_mfa_challenge` (+ `consume_recovery_code` when used) + `create_session` | mfa-api |
+| 14 | `auth.invitation_accepted` | success | A | `admit_invitation_locked`, called by `accept_invitation` **and** `complete_account_setup` (the setup path writes none today — gap closed) | invitations-api, invitations (db) |
+| 15 | `platform.super_admin_bootstrapped` | success | A | `identity.bootstrap_super_admin` (existing, operator-only) | rate-limit-and-bootstrap (db) |
+| 16 | `merchant.profile_updated` | success | A | profile writer (P5.5) | merchant-settings-api |
+| 17 | `merchant.branch_created` | success | A | branch writer (P5.5) | merchant-settings-api |
+| 18 | `merchant.branch_updated` | success | A | branch writer (P5.5) | merchant-settings-api |
+| 19 | `merchant.role_created` | success | A | role writer (P5.5) | merchant-settings-api |
+| 20 | `merchant.role_updated` | success | A | role writer (P5.5) | merchant-settings-api |
+| 21 | `merchant.role_permissions_set` *new* | success | A | `set_role_permissions` | P5.6 tests |
+| 22 | `merchant.member_assigned` | success | A | `update_membership` | memberships-api, membership-management (db) |
+| 23 | `merchant.member_deactivated` | success | A | `update_membership` | memberships-api, membership-management (db) |
+| 24 | `merchant.member_reactivated` | success | A | `update_membership` | memberships-api, membership-management (db) |
+| 25 | `merchant.invitation_issued` | success | A | `issue_invitation` | invitations-api, invitations (db) |
+| 26 | `merchant.invitation_revoked` | success | A | `revoke_invitation` | invitations-api, invitations (db) |
+| 27 | `platform.merchant_deactivated` | success | A | `set_merchant_status` | merchant-lifecycle-api |
+| 28 | `platform.merchant_reactivated` | success | A | `set_merchant_status` | merchant-lifecycle-api |
+| 29 | `platform.ownership_transferred` | success | A | `transfer_ownership` | memberships-api, ownership-transfer (db) |
+| 30 | `platform.staff_created` *new* | success | A | P5.7 staff function | P5.7 tests |
+| 31 | `platform.staff_deactivated` *new* | success | A | P5.7 staff function | P5.7 tests |
+| 32 | `platform.grants_set` *new* | success | A | `set_platform_grants` | P5.7 tests |
+| 37 | `platform.staff_reactivated` *new* (O8(b), rev 12; numbered after the sensitive reads so existing numbers stay stable) | success | A | P5.7 staff function | P5.7 tests |
+| 38 | `platform.audit_purged` *new* (Part 2; D9, rev 12) | success | A | `audit.purge_expired_events` (operator only, §8.6) | P5.8 tests |
+| 39 | `platform.authorization_containment_set` *new* (R30, rev 13) | success | A | `util.set_authorization_containment` (operator only, §11.1) | P5.5 tests |
+| 40 | `platform.request_metadata_cleared` *new* (Part 2; R40, rev 16) | success | A | `audit.clear_expired_request_metadata` (operator only, §8.6) | P5.8 tests |
+| 41 | `platform.purge_report_delivered` *new* (Part 2; R45, rev 19) | success | A | `audit.record_report_delivery` (operator only, §8.6) | P5.8 tests |
+| 42 | `platform.purge_report_requested` *new* (Part 2; R45, rev 19) | success | A | `audit.request_purge_report` (operator only, §8.6) | P5.8 tests |
+| 43 | `platform.purge_report_lost` *new* (Part 2; R52, rev 21) | success | A | `audit.record_report_lost` (operator only, §8.6) | P5.8 tests |
+| 44 | `platform.purge_report_copy_destroyed` *new* (Part 2; O11, rev 71) | success | A | `audit.record_report_copy_destroyed` (operator only, §8.6) | P5.8 tests |
+| 45 | `platform.purge_export_discarded` *new* (Part 2; rev 71) | success | A | `audit.discard_purge_export` (operator only, §8.6) | P5.8 tests |
+| 46 | `platform.purge_report_confirmed` *new* (Part 2; rev 82) | success | A | `audit.confirm_purge_report` (operator only, §8.6) | P5.8 tests |
+| 47 | `platform.purge_report_handed_over` *new* (Part 2; O11, rev 82) | success | A | `audit.record_report_handover` (operator only, §8.6) | P5.8 tests |
+| 48 | `platform.purge_report_request_cancelled` *new* (Part 2; O21, rev 84) | success | A | `audit.cancel_purge_report_request` (operator only, §8.6) | P5.8 tests |
+| 49 | `platform.purge_report_handover_abandoned` *new* (Part 2; rev 85) | success | A | `audit.record_handover_abandoned` (operator only, §8.6) | P5.8 tests |
+| 50 | `platform.purge_report_handover_failed` *new* (Part 2; rev 89) | success | A | `audit.record_handover_failed` (operator only, §8.6) | P5.8 tests |
+
+**Sensitive-read pairs** (written before rows are returned, §8.2a rule 7):
+
+| # | Operation (endpoint) | Identifier | Outcome | Designated function — the only writer |
+|---|---|---|---|---|
+| 33 | merchant audit read (`GET /v1/merchant/audit-events`) | `merchant.audit_read` *new* | success | `audit.read_merchant_events` |
+| 34 | platform audit read (`GET /v1/platform/audit-events`) | `platform.audit_read` *new* | success | `audit.read_platform_events` |
+| 35 | platform merchant list (`GET /v1/platform/merchants`) | `platform.merchant_list_read` *new* | success | `tenancy.platform_list_merchants` |
+| 36 | platform merchant memberships (`GET /v1/platform/merchants/{merchantId}/members`) | `platform.merchant_members_read` *new* | success | `tenancy.platform_list_merchant_members` |
+
+**One operation, one function, one identifier (R18).** Each sensitive-read operation has exactly one designated
+function (working names above, fixed in P5.0) and its own event identifier, so the single-writer rule applies to
+sensitive reads exactly as to atomic pairs: the writer guard maps each sensitive-read pair to that one function and
+rejects the pair written anywhere else. Each designated function writes exactly one event per successful call, in the
+same transaction as the rows it returns (§8.2a rule 7).
+
+**Best-effort pairs** (written by `recordBestEffort` only):
+
+| Identifier | Outcomes |
+|---|---|
+| `auth.signup`, `auth.email_verify`, `auth.login`, `auth.login_select`, `auth.refresh`, `auth.password_change`, `auth.password_reset`, `auth.account_setup`, `auth.mfa_enrollment_confirmed`, `auth.mfa_verify`, `auth.invitation_accepted` | failure (each listed separately in the catalog) |
+| `auth.password_forgot`, `auth.verification_resend` | success **and** failure — requests that issue a link; they change no credential or authority, and the link's use is itself atomic (#2, #9, #10). Best effort by the **owner's decision O6** (§14, 2026-10-11), with its conditions |
+| `merchant.profile_updated`, `merchant.branch_created`, `merchant.branch_updated`, `merchant.role_created`, `merchant.role_updated`, `merchant.role_permissions_set` *new* | denied, failure |
+| `merchant.member_assigned`, `merchant.member_deactivated`, `merchant.member_reactivated`, `merchant.invitation_issued`, `merchant.invitation_revoked` | denied, failure |
+| `platform.merchant_deactivated`, `platform.merchant_reactivated`, `platform.ownership_transferred`, `platform.staff_created` *new*, `platform.staff_deactivated` *new*, `platform.staff_reactivated` *new*, `platform.grants_set` *new* | denied, failure |
+| `merchant.audit_read`, `platform.audit_read`, `platform.merchant_list_read`, `platform.merchant_members_read` *new* | denied |
+| `authz.denied` *new* — refusals by the router's policy middleware (§8.2a rule 6) | denied |
+
+The catalog holds exactly these pairs; each best-effort row above expands to one catalog entry per (identifier,
+outcome).
+
+**Coverage guard ([Plan], built in P5.3a; each later package adds its pairs).** The guard compares the catalog with the inventory above **in both directions**:
+a catalog pair missing from the inventory, or an inventory pair missing from the catalog, fails it; so does a pair
+whose class differs between the two. Every writer found in the code (each SQL `INSERT INTO audit.audit_events` literal
+and each `mutateAudited` / `recordBestEffort` call site) must map to an inventory pair of its class.
+Then, for every atomic pair, it fails unless (i) the inventory names exactly one writer for it and that writer exists
+(SQL literal or `mutateAudited` call site); and (ii) a test
+tagged with that pair asserts, for one real request, that exactly **one** row of that pair was written, with the
+expected actor identity/audience/membership, merchant, target type and target id, and the request's request id; and
+that, with a failure injected on that pair's insert, the change itself is absent afterwards. Failure is injected by a
+test-only `BEFORE INSERT` trigger on `audit.audit_events`, created by the table owner in the throwaway test database,
+that raises for one named `(action, outcome)` — it works identically for both patterns. A new atomic catalog entry
+therefore cannot be added without its writer and its co-commit and rollback test.
+
+Error logs carry the event identifier, request id and reason only — never summary values.
+
+### 8.2 Failure classes
+
+This table defines what each class **means**. It is not an event list: **§8.1's inventory is the exhaustive authority**
+for which (identifier, outcome) pair belongs to which class (atomic #1–#32 and #37–#50, sensitive read #33–#36, and every
+best-effort pair), and the coverage guard compares the catalog with that inventory alone. The examples below are
+illustrative.
+
+| Class | Typical events (illustrative — see §8.1) | Written | Audit failure ⇒ |
+|---|---|---|---|
+| **Atomic** | changes to roles, permissions, grants, memberships, invitations, merchant lifecycle and ownership, branches and the profile; identity security changes (sign-up, verification, sign-in success, refresh and reuse revocation, logout, password change/reset/setup, MFA enrolment and verification) | same transaction as the change | change rolls back; request fails 500 |
+| **Best effort** | every failure and denial outcome of the above; the link-issuing successes of forgot-password and resend-verification (O6); refusals by the policy middleware (`authz.denied`) | own transaction | original response preserved; a §9.4 signal with event id and request id (alerting wired in P15) |
+| **Sensitive read** | the four designated reads (§8.1 #33–#36) | before data is returned, same transaction as the read | read refused (500); no data returned |
+
+### 8.2a Execution contract for privileged operations (definer functions)
+
+[Fact] P4's definer functions already refuse by **returning** a structured outcome (`'forbidden'`, `'not_found'`,
+`'invalid_transition'`, … — e.g. `20261011000200_membership_management:65,73`, `20261012000100_invitations:198,265`)
+and raise exceptions only for malformed input (`…membership_management:52`). P5 keeps and formalizes that contract:
+
+1. **Order inside every privileged function:** acquire locks (§7.2) → re-check authority and every rule → **only
+   then** write. No write happens before the last check, so a refusal never leaves a partial change.
+2. **Authorization and rule refusals are returned, never raised.** The function returns its outcome row and has
+   written nothing; the transaction is still healthy. It does **not** write the denial event itself. **Exception
+   (rev 82):** the operator-only purge functions of §8.6 (Part 2) raise on refusal — no request path calls them, no
+   denial event is written for them, and raising is what stops an operator command at once.
+3. **Success (pattern A):** the function performs the change **and inserts its atomic audit row** (actor taken from
+   the validated session, D11) before returning `'ok'`; the caller commits. If that insert fails, the exception aborts
+   the transaction and everything rolls back ⇒ 500 (atomic class). Pattern B (identity flows) is rule 3 at
+   repository level: the change and `mutateAudited` share one transaction (§8.1).
+4. **Malformed input and unexpected errors raise** ⇒ the transaction rolls back ⇒ 500 (or 400 where the API validates
+   first, as today).
+5. **The API on a refusal** — only on a **recognized refusal outcome** returned by the function (its closed outcome
+   set), never on an exception: unexpected database or infrastructure errors stay operational errors (500, logged),
+   are not recorded as denials, and are not reported as 401/403. On a recognized refusal the API commits (or rolls back)
+   the now-empty transaction, then calls
+   `recordBestEffort(denial event)` in a **separate** transaction with the actor from the request's validated
+   `AuthContext` — including the actor's session merchant, so a refusal inside a business appears in that business's
+   activity record (§8.5) — then answers 401/403/404/409 as today. A failure of that best-effort insert emits the `audit_denial_write_failure` signal (§9.4);
+   the response is unchanged (§8.1 table). The denial event is never written in the aborted or the mutation's
+   transaction, so no mutation can be committed by recording a denial.
+6. **Early denials** (the router's policy middleware, before any database call) follow rule 5.
+7. **Sensitive reads** are database-owned (R16): one designated definer function per read, which in one transaction
+   locks (§7.2/§7.5), re-checks authority, inserts **exactly one** read event, then returns the rows. If the insert
+   fails, the function raises before returning ⇒ no data ⇒ 500. The repository only calls the function; it writes no
+   event of its own, so a read can be neither double-recorded nor recorded apart from the data it returned.
+
+For pattern-B operations (identity flows, §8.4) the same rules apply at repository level: one `db.transaction`
+contains the definer call and `mutateAudited`; a returned refusal ends that transaction without a write, and the
+denial is recorded afterwards by rule 5.
+
+**Tests (entry-point behaviour in P5.3a; each function's tests in the package that introduces it — P5.5, P5.6, P5.7,
+P5.8):** for each privileged function — success commits change + audit row; refusal returns its outcome
+with no row changed and no audit row in that transaction; injected failure of the success audit insert rolls back the
+change; injected failure of the denial's best-effort insert leaves the HTTP status unchanged; sensitive read with
+failing audit insert returns no data; **an injected unexpected database error (a connection failure, or an exception
+raised inside the function) yields 500 and writes no denial event**; a misspelled atomic identifier passed to any entry
+point fails the request and leaves no change committed.
+
+### 8.3 A7 — complete refusal-path inventory ([Fact], all become best effort)
+
+| File | Lines | Path |
+|---|---|---|
+| `modules/tenancy/merchant-settings.ts` | 163-171 | `ownerOrDenied` (profile, branch, role writes) |
+| `modules/tenancy/memberships.ts` | 97-105, 127 | owner check; refused member change |
+| `modules/tenancy/invitations.ts` | 111, 146, 183-199, 216 | refused issue; refused revoke; failed acceptance (`fail`); `ownerOrDenied` |
+| `modules/tenancy/merchant-lifecycle.ts` | 116, 181 | refused lifecycle change; refused transfer |
+| `modules/identity/sessions.ts` | 77-113, 271-296 | login `fail()` ×4; refresh `failed()` ×3 |
+| `modules/identity/password-flows.ts` | 58, 131, 154 | forgot (unknown/disabled); wrong current password; failed link |
+| `modules/identity/accounts.ts` | 51, 81, 110 | failed signup, verification, resend |
+| `modules/identity/mfa.ts` | 102, 125; 170 (shared helper) | failed MFA verification; the shared enrolment helper at 170 is split: failures go through `recordBestEffort`, successes through `mutateAudited` inside the enrolment transaction (§8.1 map) |
+
+[Plan] `AuditLog.recordBestEffort(event)` catches, logs and counts; every path above uses it. A test injects an
+insert failure per class and asserts the response status is unchanged.
+
+### 8.4 Atomic identity events (D10)
+
+[Plan] Every identity event in the §8.1 map is pattern B: the service opens one `db.transaction`, calls the definer
+function(s) with that transaction, and records the event with `mutateAudited` before commit. No identity function
+signature changes for this (each is a single statement that does not commit by itself). Per flow:
+
+- **signup, email verification, password change/reset, logout:** one function call + event.
+- **login, selection, agent login/select (success):** `create_session` + event; failures stay best effort.
+- **refresh:** `rotate_refresh_token` + `auth.refresh` (success) or `auth.refresh_token_reuse` (the revocation and its
+  event commit together).
+- **MFA enrolment:** the shared helper is split (§8.3); start and confirmation each commit with their event.
+- **MFA verification:** challenge consumption, recovery-code consumption (if used), `create_session` and the success
+  event in one transaction.
+- **account setup:** `complete_account_setup` is re-specified for the §7.2 footprint (unlocked lookup → merchants →
+  invitations → token → identity → roles → branches → `admit_invitation_locked` per invitation), all in one
+  transaction; admission accepts the identity whose first password is set in that same transaction, and writes
+  `auth.invitation_accepted` per membership (pattern A, inside the function); `auth.account_setup` is the pattern-B
+  event around the call — the one combination of the two patterns, permitted only through the nested-writer table of
+  §7.2 (R27) and tested there. Which invitations are admitted, and when, is unchanged (the P4.6 tests stay).
+
+### 8.5 Actor attribution (D11) and reads
+
+- Privileged operations (pattern A): on success the audit row is written **inside** the definer function (precedent:
+  `bootstrap_super_admin`), with actor identity, audience and membership taken from the validated session — the app
+  cannot supply them; capability-based pattern-A events (invitation acceptance) take the actor from the locked
+  invitation and setup token, as specified in §8.1. Identity flows (pattern B) take the actor from the identity the flow
+  has just verified (password, token or session). Denials follow §8.2a rule 5. The §8.1 inventory is the authoritative
+  list of which events use which pattern.
+- Merchant audit reads: through the designated definer function `audit.read_merchant_events` (#33), requiring
+  `merchant.audit.read` (owner only, D8′), with tenant isolation enforced **inside the function** as specified below
+  — not by RLS. **Decided (O3, F2):** the owner sees every event of their own business, **including refused
+  attempts**, and can **filter by person**; fields are the event's allowlisted summary plus, per D9, the IP address and
+  user agent (§8.6); never another business's events, credentials, tokens or request bodies. **Decided (CF5, owner,
+  2026-10-12):** events in the business's record that were performed by the AlphaKolect platform team (for example a
+  deactivation of the business) are shown **without** the platform actor's IP address and user agent: D9 lets a
+  business owner see these fields for their own business's people, not for the platform team. Tested in P5.8.
+- **Merchant-scoped definer reads never rely on RLS (R19).** [Fact] No table uses `FORCE ROW LEVEL SECURITY` and the
+  table owner (`alphakolect_migrator`) is exempt from RLS (RESTRUCTURING_MAP, P1 judgement calls); `SECURITY DEFINER`
+  functions run as that owner, so **inside them RLS filters nothing**. Every merchant-scoped definer read therefore:
+  1. derives the merchant **only** from the session, by re-running `identity.validate_session` inside the function —
+     it has no merchant parameter at all, and no caller-supplied id (event id, cursor, actor filter) can name a
+     merchant;
+  2. re-checks the actor's current permission under the §7.2 footprint locks;
+  3. applies an explicit `merchant_id = <session merchant>` predicate to **every** query on a tenant table, including
+     cursor-continuation queries;
+  4. leaves RLS enabled and the existing tenant-boundary protections untouched (RLS still guards every non-definer
+     path — it is the backstop, not the mechanism here);
+  5. writes its one read event and returns only the authorized rows in the same transaction (§8.2a rule 7).
+  The same rule already governs P4's definer functions (ADR-15 "Function and transaction contracts"); P5 extends it to
+  every new definer read, and the lock-order guard's parser adds a check: a query on a tenant table inside a definer
+  function without a `merchant_id` predicate bound to the session-derived merchant fails the guard (platform reads,
+  which are cross-tenant by design, are exempt by classification and are permission-gated and audited instead).
+- Platform audit reads: the designated definer function `audit.read_platform_events` (#34), checking
+  `platform.audit.read` under the §7.5 lock, applying the bounds and cursor rules below, and writing its own read
+  event in the same transaction. Tenant RLS is not relaxed. **[Decided, O4, 2026-10-17 — after the validation below]** at most
+  100 events per page and a required time window of at most 31 days — for **both** audit reads (R24); the platform read
+  filters by business, person and event identifier, each optional (§14).
+- **Pagination contract for both audit reads (R21).** It applies identically to `GET /v1/merchant/audit-events` (#33)
+  and `GET /v1/platform/audit-events` (#34) (R24). **The bounds — maximum page size and maximum window — are one
+  decision, O4, applied to both endpoints**; the 31-day window and 100-event page below are O4's, decided by the owner on
+  2026-10-17 on the validation's evidence (§14), and frozen with both contracts in the ADR-16 addendum. O3 decides only what the merchant read shows (events, fields, filters), never its bounds, so the two
+  decisions cannot set conflicting limits.
+  - **Order:** newest first, `ORDER BY occurred_at DESC, id DESC` — a total order: [Fact] `occurred_at` defaults to
+    `CURRENT_TIMESTAMP` (`20260927000100_baseline:133`), PostgreSQL's **transaction start time**, so every event
+    written in one transaction shares a timestamp; ties are routine, not an edge case, and the UUIDv7 `id` breaks them.
+  - **Window and filters come from the request, every time.** The time window (`from`, `to`; at most the O4 maximum, 31 days; `from` <
+    `to`) and filters (O4: the merchant read by actor only; the platform read by actor, merchant and event identifier, each optional) are
+    validated on **every** request and always appear in the query's `WHERE` clause. The cursor never substitutes for
+    them.
+  - **The cursor carries only a position** — `(occurred_at, id)` of the last row returned — plus a digest of the
+    normalized window and filters it was issued for. A cursor presented with a different window or filters (digest
+    mismatch), or positioned outside the requested window, is rejected (`400 INVALID_CURSOR`). Continuation uses the
+    strict tuple predicate `(occurred_at, id) < (cursor.occurred_at, cursor.id)` together with the window and filter
+    predicates, so a forged or tampered cursor can only move within the window the request itself authorizes.
+  - **Merchant reads** additionally carry the session-merchant predicate in every query (R19); a cursor never names a
+    merchant.
+- **Indexes — chosen by measured plans, not assumed.** [Fact] Existing: `(merchant_id, occurred_at)` and
+  `(action, occurred_at)` (`20260927000100_baseline:181,184`); neither ends in `id`, and nothing supports a global
+  or actor-filtered scan in `(occurred_at, id)` order. **Candidates to evaluate** (not a commitment to create all of
+  them): `(occurred_at, id)` for unfiltered platform pages — named `audit_events_occurred_at_id_idx`, the name Part 2's
+  migration also uses (§8.6), so whichever comes first creates it; `(actor_identity_id, occurred_at, id)` for actor filters;
+  `(merchant_id, occurred_at, id)` for merchant reads and merchant-filtered platform reads (which may supersede the
+  existing `(merchant_id, occurred_at)`); `(request_id)` only if a request-id filter is part of an approved contract.
+  **Validation (P5.8, before O4 is frozen):** a throwaway database seeded with a representative, skewed volume (order of
+  millions of events across thousands of merchants and actors, with many same-timestamp groups); `EXPLAIN (ANALYZE,
+  BUFFERS)` for each query shape — first page, continuation page, actor-filtered, merchant-filtered, empty window —
+  must show an index scan reading roughly one page of rows, not a sort over the window. The chosen indexes, the plans
+  and the dataset parameters are recorded with P5.8's evidence; an empty test database is never used to judge a plan.
+- Query-parameter validation is a prerequisite for every paginated read (currently refused by `validate.ts`). It is
+  built in **P5.3**, with the rest of the contract machinery, because P5.7 (platform lists) and P5.8 (audit reads) both
+  need it and run in parallel.
+
+### 8.6 D9 — IP and user agent
+
+Collection continues unchanged. **Decided by the owner (2026-10-11/12; decision log, §14):**
+
+- **Purpose:** investigating break-ins and suspicious activity, and settling disputes (D1).
+- **Who may see the IP address and user agent:** each business owner, for their own business's events (§8.5), and
+  the super admin; **platform staff never**, whatever their grants (F3). [Plan] The platform audit read returns these
+  two fields only to the super admin; for a platform staff member holding `platform.audit.read` the designated
+  function omits them. Tested both ways.
+- **Retention:** every audit entry — IP address and user agent included — is kept for **two years** and then
+  **deleted in full** (F4, confirmed by the owner as CF2a on 2026-10-12: "Yes, two years for everything"; the earlier one-year answer is
+  replaced). No audit entry is ever edited in place.
+- **Existing records:** the rule applies to records already stored (D5).
+- **The same details outside the activity record — decided (CF4, owner, 2026-10-12: "Yes, two years").** [Fact] Two other tables
+  hold them: `identity.sessions` (`created_ip`, `user_agent`, `20261003000100_identity_schema:48-49`) and
+  `identity.one_time_tokens` (`requested_ip`, `:74`). No endpoint exposes them, and P5 adds none, so no one sees them
+  through the system. Their rows are referenced by other rows (refresh tokens reference sessions), so they are not
+  deleted (L1); instead the purge **clears these fields** on sessions that ended (at the earliest of revocation,
+  absolute expiry and idle expiry — rev 80) more than two years ago and on links sent more than two years ago that are already used or expired —
+  the same two-year rule, with the exact conditions in the retention design below (R37).
+- **Application logs (rev 19).** [Fact] Every request is logged by `pino-http`, whose request serializer writes the
+  client's `remoteAddress`, `remotePort` and **all headers** — `user-agent` and any `x-forwarded-for` included
+  (`pino-std-serializers` `lib/req.js`) — and the redaction list (`apps/api/src/platform/logger.ts`, `REDACT_PATHS`)
+  removes credentials only. So today every log line carries the IP address and user agent, readable by whoever reads
+  the logs — which F3 forbids ("the AlphaKolect team cannot see this information"), and with no two-year limit.
+  A list of headers to remove can never be complete — a proxy or client can carry an address in any header (R49). So
+  [Plan, P5.8] the logs use an **allowlist**, not a redaction list, and **nothing a caller controls reaches a log line
+  unchecked** (R50):
+  - **request line:** the request id and the method; **completion line:** the contract **route** the request matched
+    (its template, parameters unfilled — `/v1/merchant/branches/{branchId}`; none for an unmatched request) and the
+    status code — **never the path as sent, no headers and no remote address at all** (`REDACT_PATHS` stays, as defence
+    in depth for credentials). Amended at the P5.8 hold-point review (§14), which found that a caller can put an
+    address or a user agent in a path (the first rule logged the path without its query string);
+  - **request id, generated by the server only.** [Fact] Today a caller-supplied `X-Request-ID` is accepted if it
+    matches `[A-Za-z0-9._-]{1,128}` (`apps/api/src/platform/http/request-id.ts:11`) — `203.0.113.42` passes — and is
+    then written to every log line and to the activity record's `request_id`. From P5.8 the id is always a
+    server-generated UUID and an incoming `X-Request-ID` is ignored (neither logged nor echoed). This is a deliberate
+    behaviour change: the two existing tests that assert a caller's id is echoed (`apps/api/test/http.test.ts:24-25`,
+    `apps/api/test/client-roundtrip.test.ts:51-53`) are changed to assert that it is ignored — a stricter assertion,
+    recorded as a deviation in the P5 record. Tracing across the proxy uses the id the server returns in its
+    `x-request-id` response header (P15 configures the proxy to log it);
+  - **database errors.** [Fact] Errors are logged whole (`apps/api/src/platform/http/error-handler.ts:27,33`). A
+    PostgreSQL error's `detail` can print a whole row ("Failing row contains (…)") — for a failed session insert, its
+    IP address and user agent — and its `message` and the first line of its stack can also carry input values. So a
+    database error is logged as structural fields only — SQLSTATE `code`, `severity`, `constraint`, `schema`,
+    `table`, `column`, `routine` — with a fixed message (`database error <code>`); its `message`, `detail`,
+    `where`, `hint`, query text and stack are dropped. Other errors keep their message and stack: [Fact] the IP
+    address and user agent reach code only as request context passed to SQL (`ctx.ip`, `ctx.userAgent`) and, for the
+    address, as a rate-limit key that is hashed before it reaches the database (`apps/api/src/modules/identity/rate-limits.ts:6`);
+    no thrown error includes them, so only a database error can echo them, and the tests below hold that line. The activity record keeps the IP address and
+  user agent under the D9 rules, and a log line is still matched to its activity entry by the request id. **Tests**
+  (the leak sweep, `apps/api/test/identity/no-secrets-sweep.test.ts`, extended): requests carrying a distinctive
+  address in `X-Forwarded-For` (with the configured trusted proxy), `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`,
+  `True-Client-IP` and an arbitrary custom header, and a distinctive `User-Agent`; a forged `X-Request-ID` holding an
+  address (ignored: the logged and returned id is a server UUID); a query string holding an address; an unknown path holding an address and a user agent, and a
+  known route whose parameter is an address (rev 66); an injected
+  database failure whose `detail` **and** `message` would contain a session's IP address and user agent — none of these
+  values appears in any captured request, response or error log line, nor in any stored `request_id`. Error tracking added later (Sentry, TARGET_ARCHITECTURE §28; P15) must send
+  no IP address or user agent either; recorded here as an obligation of P15.
+- **Direct database reads of the activity record (rev 20).** [Fact] P1 grants `alphakolect_app` `SELECT` on
+  `audit.audit_events` with a tenant read policy, and `alphakolect_readonly` `SELECT` on every audit table with a
+  policy over **all** rows (`20260927000200_privileges:36,39`, `20260927000400_row_level_security:72,77`) — so the
+  reporting role can read every IP address and user agent, which F3 forbids, and either role can read activity rows
+  without any read event, bypassing the sensitive-read design (§8.2a rule 7). [Fact] No app code reads the table: the
+  writer only inserts, without `RETURNING` (`apps/api/src/modules/audit/audit-log.ts:43`). [Plan, P5.8, in the
+  migration that adds the audit reads] **the app loses `SELECT`** on `audit.audit_events` and its read policy is
+  dropped (`INSERT` and its policy stay), so every read goes through the designated functions #33 and #34; **the
+  reporting role** keeps `SELECT` on every column **except** `ip` and `user_agent` (table-level `SELECT` replaced by
+  column grants) and is granted nothing on any table P5 adds. Tests: as `alphakolect_app`, a `SELECT` on
+  `audit.audit_events` fails with `insufficient_privilege` and every journey that writes events still works; as
+  `alphakolect_readonly`, selecting `ip` or `user_agent` fails and other columns succeed. [Assumption, confirmed at the
+  start of P5.8] test files that read the table (`apps/api/test/identity/*-api.test.ts` among them) do so through
+  the owner connection; any that use the app connection move to it.
+- **Copy before deletion (Part 2):** the owner may ask for a copy of the entries about to be deleted — one copy per
+  request; the entries in it are deleted only after his written receipt (O20), every other entry on its normal day; he
+  may cancel a request in writing and is reminded after 7 days (O21); see the retention design below. It is
+  handed over as a report (a file) and **the system keeps no copy** (F4, confirmed by the owner as CF2b on 2026-10-12:
+  "A copy of the entries about to be deleted may be sent as a report, but the system will not keep a copy"). The copy holds personal data: the written D9 policy states who may hold it, where it is kept and when it is
+  destroyed, and the operator command writes it only to the path the operator names, never into the repository or
+  onto the server.
+
+**Retention design (Part 2, §12) ([Plan], P5.8) — the one controlled exception to append-only. Consolidated in
+revision 84** from revisions 20–83 and the four critic rounds of 2026-10-18 (§14), and corrected in revisions 85–90 for the
+fifth to tenth, on the owner's decisions D9, CF2b,
+CF4, O10, O11, O20 and O21. [Fact] `audit.audit_events` is append-only for every role (grant and trigger,
+`20260927000300:142-147`).
+
+**The owner's rules this design implements.** Every activity entry is kept two years and then deleted in full,
+existing entries included (D9, CF2a). The owner may ask for a copy of the entries due for deletion, and the system keeps
+no copy (CF2b). The copy is handed to him in person; the operator destroys their own copy as soon as he confirms
+receipt in writing, and he keeps his as long as he decides (O11). **The entries in a copy are deleted only after his
+written receipt (O20); every other entry is deleted on its normal day (O21 S1); one copy per request (S2); he may
+cancel a request in writing, and is reminded when a copy has waited 7 days for his receipt (S3).** The IP address and
+user agent kept with sign-ins and links are cleared two years after the sign-in ended or the link was sent (CF4).
+Backups are kept 35 days (O10, P15).
+
+**The retention (R41, R42).** "Two years" is calendar years — `timestamptz − interval '2 years'`, the owner's words,
+not 730 days — defined once, as `audit.d9_retention()` returning `interval '2 years'` (`STABLE`: never folded into a
+constant when a statement is planned; a redefinition takes effect through plan invalidation). An event's retention
+is `GREATEST(COALESCE(retention_override, audit.d9_retention()), audit.d9_retention())` for its catalog entry: an
+override (none in P5; a later phase may add one) can only **lengthen** the two years. A row is **eligible as of**
+`p_as_of` when `occurred_at < p_as_of − <its retention>`; comparisons are strict, and every function computing a
+cutoff pins `SET TimeZone = 'UTC'` beside its `search_path`, so year arithmetic does not depend on the session (on 29
+February 2028 the cutoff is 28 February 2026). `p_as_of` is never later than the transaction's `now()`, so an operator
+can make the eligible set smaller, never shorten the retention.
+
+**Who runs it, and the trust boundary.** [Fact] Roles are cluster-level and created before migrations
+(`packages/db/sql/bootstrap/roles.sql`), and the migrator is `NOCREATEROLE`; a separate purger role would need the
+migrator as a member and would add no boundary (R46). So every purge function is `SECURITY DEFINER`, **owned by
+`alphakolect_migrator`**, with a pinned `search_path` and `TimeZone`, executable by the migrator only — **never** by
+`alphakolect_app` or `alphakolect_readonly` — and called by an operator command through the migrator connection. The
+app has no `DELETE` on the table and no `EXECUTE` on any purge function, so no request path can reach the exception.
+The guard below protects against **defects**; the migrator itself is trusted, as everywhere in the P1 role model
+(§9.1). The operator-only purge functions **raise** on refusal (§8.2a rule 2's exception): no request path calls them,
+and raising stops an operator command at once.
+
+**1. The audit table's own guard.** [Fact] The append-only triggers on `audit.audit_events` call
+`util.reject_modification()`, the **same** function that protects the ledger (`journal_entries`, `journal_lines`,
+`20260927000300:119-146`); that function is **not changed**. On `audit.audit_events` only, the two triggers are replaced
+— dropped and recreated in **one** migration transaction, so the table is never unguarded — by triggers calling
+`audit.audit_events_guard()` (runs as the caller; pinned `search_path` and `TimeZone`), which refuses every `UPDATE`
+and `TRUNCATE`, and refuses a `DELETE` unless **all** of: (a) the transaction-local setting `audit.purge_run_id` names
+the run holding the **live** reservation (set by `purge_expired_events` with `set_config(…, true)` after taking the
+reservation, so it ends with the transaction); (b) the row is eligible under its retention as of the transaction's
+`now()`; (c) the row is **not held** by an active report (below); and (d) the run named is a **plain** run and no
+request is open without an active report (rev 85: the guard, not only the purge function, refuses a deletion while a
+copy is awaited). It reads, without locks, the setting, the
+reservation row, the purge tables and the catalog, and calls only `STABLE` functions returning constants; so even a
+defect in a purge function, or a faulty migration, cannot delete a younger row, a held row, or outside a purge run.
+
+**2. The tables (audit schema, migrator-owned, nothing granted to the app; no data of the businesses' people — notes
+are the operator's own words, and the runbook says to keep personal data out of them).**
+- `audit.purge_reservation` — **exactly one row** (`id boolean PRIMARY KEY DEFAULT true CHECK (id)`, inserted by its
+  migration, never deleted): `run_id`, `p_as_of`, `reserved_at`, `renewed_at`. It reserves a run across its
+  transactions; no advisory lock (they fail the lock-order guard).
+- `audit.purge_runs` — one row per run, never deleted: `run_id`, `kind` (`plain` | `export`), `p_as_of`,
+  `reserved_at`, `taken_over_run`, **`scan_after_occurred_at`, `scan_after_id`** (the run's read position, kept by the
+  database — rev 85), `exhausted_at`, `rows_deleted`, `released_at`, `completed`.
+- `audit.purge_run_pages` (`run_id`, `page_no`, `row_count`, `digest`, `processed_at`) and `audit.purge_run_events`
+  (`run_id`, `page_no`, `ordinal`, `event_id`; indexed on `event_id`) — **the manifest**: exactly what
+  `purge_candidates` handed out, page by page, in order. UUIDs, counts and digests — no personal data. A plain run's
+  manifest is removed when the run is released — `release_purge_run` first records `rows_deleted` from it — or, if the
+  run died, by the next `reserve_purge_run`, which records the dead run's `rows_deleted` first (rev 87); a discarded export's, at its discard; a report's, when the report stops
+  being active. No foreign key links the manifest tables (each deletion removes a run's events and pages together), so
+  L1 holds (revs 85–86).
+- `audit.purge_report_requests` — `id`, `requested_at`, `note`, `state` (`open` | `satisfied` | `cancelled`),
+  `closed_at`, `close_note`; **at most one open request** (a partial unique index on `((true)) WHERE state = 'open'`).
+- `audit.purge_exports` — one row per export run that began: `run_id` (unique), `directory`, `writer_host_id`,
+  `writer_lock_key`, `started_at`, `artifact_recorded_at`, `outcome` (`NULL` | `confirmed` | `discarded`),
+  `ended_at`, `note`, `lost`; the outcome moves once, never back; never deleted.
+- `audit.purge_reports` — one per export run (`UNIQUE (run_id)`): `id`, `request_id`, `run_id`, `p_as_of`,
+  `confirmed_at`, `row_count`, `page_count`, `manifest_digest`, `file_sha256`, `file_location`,
+  `delivered_handover_id`, `delivered_at`, `receipt_reference`, `delivery_note`,
+  `withdrawn_at`, `lost_at`, `loss_note`, `copy_destroyed_at`, `destroy_mode`, `destroy_note`, `lost_host`. **A report is active**
+  — its rows **held** — from its confirmation until it is delivered, withdrawn or lost; then its manifest is removed
+  in that same transaction. `CHECK`s: at most one of `delivered_at`, `withdrawn_at`, `lost_at`; a delivery names its
+  recorded attempt (`delivered_handover_id`, a composite foreign key with the report's id to
+  `purge_report_handovers (id, report_id)`, and the function checks the attempt is `recorded` — rev 87); `copy_destroyed_at` needs a delivery or a withdrawal (a lost report's
+  files are destroyed as it is recorded lost).
+- `audit.purge_report_handovers` — **one row per handover attempt** (rev 86), never deleted: `id`, `report_id`,
+  `started_at`, `medium` (volume label and serial — a sanity check, not an identity: a FAT serial is a 32-bit value set
+  when the stick is formatted — and the path), `written_at`, `write_diskseq`, `verify_diskseq`, `eject_attested`, `outcome` (`NULL` |
+  `recorded` | `abandoned` | `superseded`), `ended_at`, `medium_sha256`, `note`, `fate_attested_at`, `fate_note`. **At most one live attempt per
+  report** — unended, or recorded and not superseded — by a partial unique index on `report_id` `WHERE outcome IS NULL
+  OR outcome = 'recorded'` (rev 87). So a replacement stick needs the recorded attempt **superseded** first, and the
+  delivery names the one live recorded attempt. Every attempt but the delivered one ends abandoned or superseded **and
+  carries the operator's attested fate of its stick** (`fate_attested_at`, `fate_note`) — wiped, destroyed, with the
+  owner, or lost (a lost stick holding a copy is an incident in `docs/security/`); an attempt the command abandoned
+  itself has an outcome but no fate until the operator attests one (rev 88). **At most one active report per request** (a
+  partial unique index on `request_id` where none of the three is set). Never deleted.
+
+**3. The canonical text, pages and the report file.** One helper, `audit.event_canonical_text(audit.audit_events)` —
+`to_jsonb(row)::text` with `TimeZone` pinned to `UTC` — gives every row's text. A page's bytes are its rows' texts,
+**each followed by one `\n`**, in `(occurred_at, id)` order, UTF-8; a page digest is the SHA-256 of those bytes; the
+**manifest digest** is the SHA-256 of the page digests (hex, each followed by `\n`) in page order; the report file is
+its pages' bytes concatenated in page order — nothing before, between or after; the file has no page delimiters, so
+page boundaries come from the manifest's row counts. **No page is ever empty.**
+
+**4. The kind of run, decided by `reserve_purge_run`.** If a request is **open** and has no active report, the run is
+an **export run**: it makes the copy and deletes **nothing** — so no entry due when a copy is asked for can be deleted
+before it is in the copy. Otherwise it is a **plain run**: it deletes the eligible rows **that no active report
+holds**. A delivered report holds nothing, so its rows — already eligible — are deleted by the next plain run, after
+the owner's receipt (O20); every other row follows the two-year rule on its normal day (O21 S1). A report lost before
+delivery holds nothing either, but its request stays open with no active report, so the next run is an export run
+that makes a new copy of what is due then — the same rows, none of them deleted, and any that became eligible since.
+
+**5. The core functions.**
+- `audit.purge_candidates(p_run_id, p_as_of, p_page_no, p_limit)` — **takes no cursor (rev 85): the read position is
+  the run's own, kept by the database** (`scan_after_*`), so no caller can skip rows or repeat them — reads, without
+  locking, eligible rows after that position in `(occurred_at, id)` order — in a plain run only
+  those no active report holds — through the `(occurred_at, id)` index, with the sargable bound `occurred_at < p_as_of −
+  audit.d9_retention()` beside the per-row retention test. It examines at most `20 × p_limit` rows per call, so every
+  call is bounded, and **moves the run's position past every row it examined** — held, not eligible or returned — even
+  when it finds no row, so a block of held rows larger than one call's ceiling is crossed in several calls and the rows
+  after it are reached. It returns up to `p_limit` rows (each with its id and canonical text) and the page digest, and
+  records them as page `p_page_no` of this run's manifest; a call that finds no row records no page and says whether
+  the scan has **reached the bound** (the manifest **exhausted**) or should simply be called again. **Idempotent per
+  page:** a repeated page number of a recorded, unprocessed page returns it as recorded without moving the position; a
+  repeat of a page already processed is refused (its rows are gone); a number other than the next is refused; so a lost
+  response and a retry never add or skip a page. After an unknown outcome of `purge_expired_events`, the command
+  re-reads the page's `processed_at` and moves on to the next page rather than retrying (rev 87). Allowed in a plain run, and in an export run only after the export recorded its file (step 6.3) and until its
+  report is confirmed or the export discarded. It writes no event and touches no audit row.
+- `audit.purge_expired_events(p_run_id, p_as_of, p_page_no)` — **deletes by identity, never by predicate (R38), and
+  only a page of this plain run's own manifest**, taking the ids from the manifest, never from the caller. Under the
+  reservation row it refuses the page — deleting nothing — if a request is open with no active report (a copy must be
+  made first), if the page is already processed, or if an id no longer exists; it locks the manifest page's row first (category 0, before
+  the audit rows), then deletes, by id, the page's rows that are still eligible and not held, raises unless the number
+  deleted equals that count, marks the page processed under the lock it already holds, and writes #38. Audit rows are immutable, so the ids name exactly the rows that were read. An eligible row that
+  commits **after** its page was read — `occurred_at` is its transaction's **start**, so a long transaction can commit
+  an old event late — is in no page and is left for a later run.
+- `audit.clear_expired_request_metadata(p_as_of, p_limit)` — **independent of runs and reservations** (CF4 never waits
+  on an export, a report or a stuck run): one transaction, at most `p_limit` rows, **tokens first, then sessions**
+  (categories 5 then 10), each row selected `FOR NO KEY UPDATE SKIP LOCKED` and updated by id; it returns how many it
+  cleared and writes #40 with the counts. With `cutoff = p_as_of − audit.d9_retention()`:
+  `identity.one_time_tokens.requested_ip` set to `NULL` where `requested_ip IS NOT NULL`, `created_at < cutoff`, and
+  the token is consumed or expired (`expires_at <= p_as_of`); `identity.sessions.created_ip` and `user_agent` set to
+  `NULL` where one is not null and the session **ended** before the cutoff — **a session ends at the earliest of** its
+  revocation, its absolute expiry and its idle expiry (the latest `expires_at` of its refresh tokens, read without a
+  lock): `LEAST(COALESCE(revoked_at, 'infinity'), absolute_expires_at, COALESCE(<latest refresh expiry>,
+  'infinity')) < cutoff`. [Fact] Revocation stamps `revoked_at = now()` on every unrevoked session, expired ones
+  included (`20261003000200:124`, `20261003000300:159,171`), so `revoked_at` alone would keep an expired session's
+  details too long. No other column or table is touched; a row is cleared once, so a second call clears none. Two
+  calls at once skip each other's rows. The command calls it until it clears nothing, on **every** invocation.
+
+**6. The operator command, `audit:purge`, and its failure semantics (R36).**
+1. **The lock.** Every purge command — the run, export recovery, handover, delivery, destruction, recording a loss —
+   first acquires one **kernel-held lock**, before any reservation or file access, and holds it to its **last database
+   transition or file operation, whichever is later** (the marker's removal included — rev 86); if it is taken, the
+   command refuses having done nothing. **The exceptions, all read-only and before the lock is bound (rev 86):** the
+   queries that need a child process — the machine id, the SID, the directory's access list (`icacls`), the drive's
+   type and the medium's volume label — and the path checks (a git work tree, a OneDrive folder). `--lost` records are
+   accepted without the lock (the machine is gone). Node has no file-locking call, and lock
+   libraries judge staleness by age, so the lock is a **listening endpoint the operating system frees when its process
+   ends, however it ends**: on Windows a named pipe `\\.\pipe\alphakolect-purge-<SID>` (the account's security
+   identifier; Node's pipe server claims the first instance, so a second `listen` fails with `EADDRINUSE`); on Linux an
+   abstract-namespace socket `\0alphakolect-purge-<uid>` (never a file). Any connection to it is closed at once; the
+   command spawns no child process **while it holds the lock** (the SID and `MachineGuid` are read before it binds).
+   Other platforms are refused, and so is a detected container (`/.dockerenv`, a container cgroup — best effort; the
+   runbook requires a persistent machine, never cloned while a report exists). `writer_host_id` is the machine id
+   (`/etc/machine-id`; Windows `MachineGuid`), and a missing or empty one refuses the commands. A name squatted by
+   another program, or kept by a connected client, makes the commands refuse — fail closed; the runbook says how to find
+   it. One OS account runs every purge command (the lock names the account), in the machine's own network namespace (an
+   abstract socket is private to its namespace — no `PrivateNetwork` service, no `ip netns`; the runbook). [Fact] Probed 2026-10-18, Node 24: on
+   Windows and on Linux (`node:24-slim`) a second `listen` fails with `EADDRINUSE`, a connection to the holder changes
+   nothing, and killing the holder frees the name at once; no file is created on Linux.
+2. **The connection.** One dedicated client for the whole command, never the app's pool (`apps/api/src/platform/db.ts`:
+   ten connections, a 10-second `statement_timeout`): `statement_timeout` 5 minutes (longer than the worst bounded
+   page, shorter than the lease), `idle_in_transaction_session_timeout` 1 minute, TCP keepalive on, so a hung command
+   cannot hold the lock or a transaction indefinitely. Heartbeats go only between its own transactions.
+3. **Reserve** — `reserve_purge_run(p_as_of)`: takes the reservation row `FOR NO KEY UPDATE NOWAIT` and refuses
+   (`purge_run_active`) while a **live** reservation exists — `renewed_at` within `audit.purge_lease()` (15 minutes),
+   judged with `clock_timestamp()` — or (`export_unresolved`) while an export is neither confirmed nor discarded and
+   its run is not live. Otherwise it writes a new `run_id`, decides the kind (§4), records the run and any takeover in
+   `audit.purge_runs`, and returns `run_id`, the kind and the run's `p_as_of` — for an export run the reservation transaction's
+   `now()` (rev 86: never later than any later call's `now()`; were the server's clock to step back, a later call would only be
+   refused — it fails safe), whatever the operator passed, so a copy covers what is due when it is made. An export run without `--dir`
+   releases at once and says so — loudly: an open request without a copy stops all deletion until the copy is made, so
+   the listing flags it with its age and a scheduled run (P12) must alert on it. Every later call that takes `run_id`
+   also takes `p_as_of` and is refused unless it equals the run's recorded one.
+4. **A plain run:** page by page, `purge_candidates` then `purge_expired_events`, until the manifest is exhausted;
+   each page its own transaction and its own #38.
+5. **Clearing:** `clear_expired_request_metadata` in batches until zero — on every invocation, whatever happened before.
+6. **An export run — the copy.** The operator names a **directory**: never in the repository (a git work tree is
+   refused) or on the server; a local folder only their account can read, on a disk with full-disk encryption, on a file
+   system with hard links, **not synced or backed up**. **What is checked, and how (rev 85):** hard links by a probe —
+   the command links a probe file in the directory and refuses if the file system cannot (FAT, exFAT); on POSIX the
+   directory's mode must give no access to group or others; on Windows, before the lock is bound, the command reads the
+   directory's access list (`icacls`) and refuses one that grants read access to anyone but the operator's account,
+   `SYSTEM` and `Administrators`; folders Windows syncs to OneDrive are refused (a check, not a guarantee); a network
+   drive is refused (Windows: the drive's type, read before the lock, with UNC paths and `subst` drives resolved to
+   their target first; POSIX: the file system's type — NFS, SMB/CIFS)
+   (rev 86). Full-disk encryption, the absence of other sync or backup tools, and of Windows Volume Shadow Copies or
+   System Restore points on that drive (each would keep a destroyed report) cannot be checked portably: they are
+   runbook rules, attested in the delivery and destruction notes. In order:
+   1. `begin_purge_export(run_id, directory, writer_host_id, writer_lock_key)` records the export **before any file
+      exists**;
+   2. the command creates the run's **marker**, `alphakolect-purge-run-<run_id>.marker` (run id and machine id; no
+      personal data), exclusively. The marker proves later that a directory **is** this run's directory on this
+      volume: an unmounted volume, a remapped drive or another machine shows no marker and reads as **directory
+      unavailable**, never as "missing". It is removed only after the outcome it proves is recorded;
+   3. the report's name is fixed by the run — `<name>` = `alphakolect-purge-report-<run_id>.jsonl` — and **the name is
+      the proof of ownership**: unique to the run, recorded in the database, outside the report's bytes; no timestamp
+      or file number is relied on. The command creates `<name>.partial` **exclusively** (refused if `<name>` or
+      `<name>.partial` exists — only a file deliberately planted under the run's name could cause it), owner-only (mode
+      `0600`; elsewhere the folder's permissions), and calls `record_export_artifact(run_id)`;
+   4. **page by page**, `purge_candidates` and the page appended to `<name>.partial` — the report is streamed, never held
+      whole in memory — until the manifest is exhausted; if it holds no row, the export is discarded as `empty` (step
+      6.7) and the request stays open;
+   5. it flushes the file, **reads it back**, recomputes from the file's own bytes, split at the manifest's page sizes,
+      every page digest, the manifest digest and the row count, and the file's SHA-256; then renames `<name>.partial` to
+      `<name>` **without overwriting** — Node's `rename` replaces on POSIX, so a hard `link` (refused if `<name>`
+      exists) then an `unlink` (a stop between leaves both names on one file, removed by name by any cleanup) — and
+      flushes the directory; where a directory cannot be flushed (Windows), it says so in its output and the
+      confirmation's note, and reads `<name>` back after the rename;
+   6. `confirm_purge_report(run_id, row count, page count, manifest digest, file SHA-256, file location)` — the values
+      computed **from the file** — is refused unless the run holds its live reservation, its manifest is **exhausted**,
+      the count, page count and manifest digest **equal the database's manifest**, the location is the recorded
+      directory and `<name>`, and the export recorded its file and is unresolved; it inserts the report for the open
+      request, marks the export confirmed and writes #46, in one transaction. From then the report is **active** and
+      its rows are held. The command prints the report id, path, SHA-256 and count;
+   7. **a failure deletes nothing anywhere** — an export run deletes no row. Before any cleanup the command re-reads
+      the export's state (an unknown confirmation outcome that did commit leaves the report and its file alone);
+      otherwise it removes **only files it created** (`<name>.partial` if its exclusive create succeeded, `<name>` if its
+      own link succeeded), flushes the directory, checks they are gone, calls `discard_purge_export` (#45) and only then
+      removes the marker. A file already at either name is never removed.
+7. **Release** — `release_purge_run(run_id, completed)`, always attempted; it frees the row if it still holds this run
+   and records the outcome. A process that dies leaves the reservation to expire.
+
+**7. The reservation's rules, function by function.** Every purge function takes the reservation row `FOR NO KEY UPDATE
+NOWAIT` first and judges liveness with `clock_timestamp()` **after** taking it — never with the transaction's `now()`,
+which a transaction begun just before its lease expired would still see as live:
+- **this run's live reservation** is required by `purge_candidates`, `purge_expired_events`, `begin_purge_export`,
+  `record_export_artifact`, `confirm_purge_report` and `renew_purge_run`; each renews `renewed_at` when its work is
+  done, with `clock_timestamp()`, so the lease counts from the end of the work; `release_purge_run` frees the row only
+  if it still holds this run;
+- **no live reservation** is required by `request_purge_report` and `cancel_purge_report_request` (an open request
+  changes the next run's kind, so it is never recorded under a running run — and `purge_expired_events` re-checks it
+  anyway);
+- **the export's own live run, or no live run of it**: `discard_purge_export(run_id, note, p_lost)` is accepted for the
+  run's own export while that run holds its live reservation, and for an export whose run holds no live reservation
+  (recovery, an attestation, `--lost`); it is refused for a confirmed or discarded export, and while another live run
+  holds the reservation;
+- **no reservation condition** for the report functions — `begin_report_handover`, `record_handover_written`,
+  `record_report_handover`, `record_handover_failed`, `record_handover_abandoned`, `record_report_delivery`, `record_report_copy_destroyed`, `record_report_lost` — which take the row only to serialize
+  with runs; they are refused while a page transaction holds it (`lock_not_available`) and the operator retries. A
+  report delivered between a plain run's pages only releases rows, which is always safe; a report lost between its
+  pages leaves a request awaiting its copy, so the run's next page is refused and the run stops (rev 86) — safe, and the
+  next run makes the copy; a cancellation needs no live run, so it never happens mid-run.
+
+**8. Recovering an export.** An unresolved export blocks every new run (`export_unresolved`; clearing is unaffected)
+and is listed. The next command resolves it first, **holding the lock**:
+- **automatically**, on the recorded machine (`writer_host_id` equal to its own) with the lock bound at the recorded
+  `writer_lock_key` — so no process of the old run is alive there — and the marker present: if the export recorded its
+  file, it deletes `<name>.partial` and `<name>` if present, flushes the directory, checks both are gone, records the
+  discard (#45), then removes the marker. A file of any other name is never touched;
+- **by attestation** (`audit:purge-export-discarded --run <id> --attest <note>`), on the recorded machine holding the
+  lock, when there is no proof — the export recorded no file, or the marker is not there: the operator inspects the
+  directory, removes only this run's files, and records what was done;
+- **as lost** (`--lost <note>`), when the machine or the volume is gone for good: accepted without the lock, the note
+  records that the owner was told, and the incident (a lost machine or volume that may hold a partial report) is
+  recorded in `docs/security/`.
+Nothing was deleted by an export run, so no entry is ever lost: a later run exports again.
+
+**9. From the copy to the owner (O11, O20, O21).**
+- **Handover** — `audit:purge-report-handover --report <id> --to <medium directory>`, in the owner's presence, on the
+  writing machine with the marker present. It refuses a target on the same volume as the report's directory (the medium
+  must be a separate one). **Two steps, because a read straight after a write is served from the
+  operating system's memory, not from the stick (rev 86).** First, `begin_report_handover(p_report_id, p_medium)` opens
+  an attempt in `audit.purge_report_handovers` with **the medium** (its volume label and serial number, read before the
+  lock, and the path) — refused unless the report is active and no attempt of it is live (rev 88); the command creates
+  `<name>` on the medium **exclusively** (`open` with `wx`; no hard link, so an ordinary FAT or exFAT stick works),
+  copies the report into it, flushes, calls `record_handover_written(p_attempt_id, p_diskseq)` and tells the operator
+  to **eject the medium safely and insert it again**. Then `audit:purge-report-handover --report <id> --verify --to <medium
+  directory>`, a new process, asks the operator **interactively** to confirm the eject by typing a fixed phrase with the
+  attempt's id ("ejected <id>") and the stick's label (revs 89–90: never a flag on the command line, which would become a
+  rubber stamp; `begin_report_handover` refuses a medium with an empty or default label, such as `NO NAME`), checks the volume's serial against the
+  attempt's, opens the file afresh, hashes it, and calls `record_report_handover(p_attempt_id, p_medium_sha256,
+  p_eject_attested, p_diskseq)`. **A serial mismatch, an eject not confirmed, and a disk sequence unchanged or
+  unreadable are refusals that change nothing** (rev 89) — the stick may be another one, or not yet ejected; the
+  operator unplugs it physically (the runbook: a USB stick, never a card in a reader that stays attached) and runs the
+  verification again. **The database refuses it**
+  unless the write was recorded, the attempt is unended, the hash equals the confirmed one, the report is still active,
+  **the eject is attested** (recorded as `eject_attested`) and, where the write recorded a disk sequence, the
+  verification's is **not null and differs** (revs 88–89: a null never passes). **What this proves, honestly:** a read straight after a write is served from the
+  operating system's memory; after a real eject the volume is dismounted and its cached pages dropped, so the read
+  comes from the stick. Node has no practical uncached read, and a mount's number is reused by Linux, so the eject is
+  the operator's **attestation** on every platform; on Linux 5.15 and later the disk's `diskseq`
+  (`/sys/class/block/<disk>/diskseq`, found from the mount's device numbers; a per-boot counter that grows on every
+  attach and is never reused) is recorded at the write and must have changed at the verification — a real check where
+  the kernel offers it. The verification proves the stick's bytes as far as the eject is true. It records the attempt
+  and writes #47. **Only a hash mismatch, or a file on the stick that is unreadable or
+  truncated, is a failure** (rev 90); a refusal for anything else — a lock taken by a running page
+  (`lock_not_available`), a lost connection, an unconfirmed eject, a serial or disk-sequence mismatch — changes nothing,
+  and the operator runs the verification again. **On a failure the database decides first** (rev 90): the command calls
+  `record_handover_failed(p_attempt_id, p_reason)` — the command's own record, a twentieth function, which locks the
+  attempt and is refused unless it is unended and its write recorded; it sets the outcome `abandoned` with **no fate**
+  and writes its own event, #50 `platform.purge_report_handover_failed`, so each pair keeps one writer. **Only after that
+  call succeeds** — or, after a lost response, a re-read shows the attempt abandoned by it — does the command delete what
+  it wrote on the stick; on any other answer (the attempt recorded, by a commit that landed late) it leaves the stick
+  alone and prints the attempt's state. So no path wipes a stick whose attempt is recorded. The stick **must be wiped or
+  destroyed** (deleting a file leaves its bytes on a FAT stick), and the listing flags the attempt until the operator
+  attests its fate. A counterfeit or failing stick is
+  therefore caught before the owner takes it, as far as the attested eject is true. The command prints the attempt's number, the stick's label and the SHA-256, which the
+  owner's written "received" quotes (the runbook's form). **An attempt that stopped** (a killed process, a medium never
+  verified) is listed as unended, and **a recorded attempt that is not to be delivered** (the owner says the stick is
+  faulty; a replacement is made) is listed as live; either is ended with `audit:purge-report-handover-abandoned
+  --attempt <id> --note <what became of the stick>` — `record_handover_abandoned(p_attempt_id, p_note)`, the
+  operator's attestation, which sets `abandoned` (unended) or `superseded` (recorded) — keeping `ended_at` as it was for
+  a recorded attempt, the verification's time (the superseding's time is `fate_attested_at`) — attests the stick's fate and writes #49.
+  The same call attests the fate of an attempt `record_handover_failed` abandoned (setting only the fate; rev 89). It is accepted whatever the report's state,
+  **except for the delivered attempt**, which is refused (rev 88), and refused for an attempt whose fate is already
+  attested. **A live
+  attempt other than the delivered one blocks** another attempt, the delivery, a withdrawal, a cancellation and a loss
+  of the report (the partial unique index and the functions).
+- **Delivery** — once the owner's written receipt exists: `audit:purge-report-delivered --report <id> --attempt <id> --receipt
+  <reference>` — the attempt the receipt quotes; "the attempt's number" is its `id` throughout — calls `record_report_delivery(p_report_id, p_attempt_id, p_receipt_reference, p_note)`, refused unless that attempt is the
+  report's live recorded attempt, no other attempt of it is unended, and a receipt reference is given; the owner's
+  receipt quotes the attempt's number and the stick's label as well as the hash's first 16 characters (the runbook's
+  form), so it names the stick, not only the report. In one transaction it sets `delivered_at`, **satisfies the request** (one copy per
+  request, O21 S2), removes the report's manifest — its rows are no longer held — and writes #41. **What it proves
+  (R48):** the handover's hash proves the medium the owner took is the confirmed report, unaltered, as far as the
+  attested eject is true; the delivery is the
+  operator's attestation that his written receipt exists. From then the owner holds the only copy, his responsibility
+  (O11).
+- **The operator's copy is destroyed straight away** (O11): the same command, on the writing machine with the marker,
+  deletes `<name>` and any `<name>.partial` in the directory — **whatever their content**: the run's name is the
+  proof, and an altered file is still personal data — flushes, checks they are gone, calls
+  `record_report_copy_destroyed(p_report_id, p_note)` (#44; the note attests no other copy was kept) — refused while
+  any attempt of the report other than the delivered one has no attested fate (rev 89: an unaccounted stick is another
+  copy) — then removes the marker. A copy that cannot be destroyed this way is recorded **by attestation** (`--attest <note>`, on the writing
+  machine holding the lock: the marker missing, or a retry after a stop between the deletion and the record) or **as
+  lost** (`--lost <note>`, the machine or volume gone: an incident in `docs/security/`); `record_report_copy_destroyed`
+  and `record_report_lost` take the mode (`automatic` | `attested` | `lost`, recorded in `destroy_mode` and
+  `lost_host`). A delivered or withdrawn report is listed until its copy is recorded destroyed.
+- **Reminders** (O21 S3) — `audit:purge-reports` flags every report whose live recorded attempt was verified 7 days or
+  more ago without a delivery ("remind the owner"), every report confirmed 7 days or more with no live recorded attempt
+  ("hand it over"), and every attempt written 7 days or more without its verification (revs 87–88); the operator
+  reminds the owner in writing (the runbook). Nothing is deleted on a reminder: the rows stay held until his receipt
+  or his cancellation.
+- **Cancellation** (O21 S3) — on the owner's written instruction, `audit:purge-request-cancel --request <id> --note
+  <reference>` calls `cancel_purge_report_request(p_request_id, p_note)`: the request is `cancelled`; an active report
+  of it is **withdrawn** in the same transaction — its manifest removed, its rows no longer held, so they follow the
+  two-year rule — and #48 is written. A withdrawn report's operator copy is destroyed as above (listed until it is); a cancellation is refused while an
+  attempt is live (rev 87) — a recorded stick already with the owner is first recorded superseded, "with the owner".
+  A copy already handed over is the owner's.
+- **A report lost before delivery** — the file missing or altered, or the medium never reaching the owner:
+  `record_report_lost(p_report_id, p_note, p_mode)` (#43), refused once the report is delivered or withdrawn, while
+  an attempt of it is live (rev 87), and while an attempt of it has no attested fate (rev 90: an unaccounted stick is
+  another copy). The command first
+  deletes the run's files (on the writing machine with the marker; otherwise by `--attest` or `--lost`, as above),
+  records the loss, then removes the marker. The report's manifest is removed and the request stays open with no active
+  report, so the next run is an export run that makes a new copy of what is due then — the same rows, none of which was
+  deleted, and any that became eligible since.
+
+**10. The listing, `audit:purge-reports`.** Straight from the database, without the lock (state can be read while a
+command runs): an open request with no active report ("the next run makes the copy" — flagged with its age: until the copy is made,
+nothing is deleted), unresolved exports, active
+reports with their state and age and the reminder flags, unended handover attempts, live recorded attempts awaiting
+delivery, attempts without an attested stick fate ("wipe or account for the stick"), and reports whose operator copy is
+not recorded destroyed (rev 88). With `--check-files` it takes the lock and, on the writing machine, checks
+each active report's file — present and matching, **missing**, **altered**, or **directory unavailable** (no marker)
+— and lists markers left behind after their outcome was recorded, to remove.
+
+**11. Events** (all pattern A, actor `NULL`, operator-written, each with fixed scalar summary fields in the catalog's
+allowlist): #38 `platform.audit_purged` — per deleted page: `p_as_of`, `run_id`, `page_no`, `rows_deleted`,
+`page_digest`; #40 `platform.request_metadata_cleared` — per clearing batch: `p_as_of`, `sessions_cleared`,
+`tokens_cleared`; #42 `platform.purge_report_requested`; #46 `platform.purge_report_confirmed` (report id, run id,
+count, SHA-256); #47 `platform.purge_report_handed_over`; #41 `platform.purge_report_delivered`; #44
+`platform.purge_report_copy_destroyed`; #43 `platform.purge_report_lost`; #45 `platform.purge_export_discarded`; #48
+`platform.purge_report_request_cancelled`; #49 `platform.purge_report_handover_abandoned` (rev 85); #50
+`platform.purge_report_handover_failed` (rev 89). One writer per pair, as the coverage guard requires.
+
+**12. Locks — inside the global order, and never waiting (R40).** Category **0**: the reservation row, `NOWAIT`, then
+the purge's own tables (`purge_runs`, `purge_run_pages`, `purge_run_events`, `purge_exports`, `purge_reports`,
+`purge_report_requests`, `purge_report_handovers`), written only by purge functions after it — a page's manifest row is locked before its audit
+rows and marked processed after them under that same lock (L5) (the guard's map gains them, with a rule that they
+follow the reservation row, and a mutation test). Category **11**: `audit.audit_events` rows, deleted by id — nothing
+else locks them (request paths only insert, no foreign key references the table, the guard refuses every other
+`UPDATE` and `DELETE`, and the reservation excludes a second run), so these deletes cannot wait; a mutation test fails
+the guard on an audit-row `DELETE` in any other function. Categories **5 then 10** for the clearing, `SKIP LOCKED`.
+[Fact] Request paths never lock an eligible token (`20261003000200:80-89`, `20261004000200:43-45`), but they **can**
+lock an eligible session — revocations update `… WHERE revoked_at IS NULL`, which includes expired sessions
+(`20261003000200:124`, `20261003000300:159,171`, `20261011000200:111`, `20261011000300:94`) — and such a row is
+skipped and cleared by a later call. A transaction that never waits cannot be part of a deadlock; a request may wait
+briefly for a purge holding a row, a one-way wait. The guard checks every purge function against its planned footprint
+like any operation, and verifies that no other function locks, updates or deletes `audit.audit_events` rows and that no
+foreign key references the table.
+
+**13. The index.** The Part 2 migration creates the `(occurred_at, id)` index on `audit.audit_events` if it does not
+exist, named `audit_events_occurred_at_id_idx` — the name the audit reads of P5.8 use too (§8.5), so whichever migration
+comes first creates it and the other finds it (both use `CREATE INDEX IF NOT EXISTS`, and `schema.prisma` declares it, so
+the drift test agrees — rev 86) — and the purge's
+scans use it with the sargable bound. With long overrides (a later phase), rows past two years but within their
+override are examined by each call; the per-call ceiling (20 × `p_limit`) keeps every call bounded, and such a phase
+adds a narrower index if it needs one.
+
+**Never lost to a deletion, and what this guarantees.** While a request is open with no active report, nothing is
+deleted (the kind of run, and `purge_expired_events`' re-check under the reservation row with `clock_timestamp()`).
+While a report is active, its rows are held — by `purge_candidates`, by `purge_expired_events` and by the table's guard.
+Its rows are deleted only after its delivery, which needs the medium's verified handover (as far as the attested eject
+is true) and the owner's written receipt. Every other row is deleted on its normal day. Until a job runner exists (P12) the command is run by hand; the
+D9 written policy states how often.
+
+**A constraint on a future path.** The planned anonymisation of BR-11.3 (`20260927000300:116-118`) would update audit
+rows; it must leave alone every row an active report holds, or the ids would no longer name what the owner was given.
+
+Tests: **retention** — rows younger than their retention always survive, whatever `p_as_of`; at the cutoff a row is not
+eligible and one microsecond earlier it is (deletion, the guard's check, session and token clearing alike); `p_as_of` on
+29 February 2028 gives 28 February 2026; the same results under two session time zones; redefining
+`audit.d9_retention()` in the throwaway database moves every cutoff on the next call; a scratch entry with a **longer**
+override uses it and one with a **shorter** override is ignored; the catalog test fails if a P5 pair has an override; a
+`p_as_of` later than `now()` is refused everywhere; **privileges** — the app and readonly roles cannot execute any purge
+function or helper, or delete from the table, or touch the purge tables (`insufficient_privilege`); **the guard** — an
+`UPDATE` or `TRUNCATE` refused for every role, the owner included; a `DELETE` refused outside a live purge run, for a
+row not yet eligible, for a held row, in an export run, and while a request awaits its copy, even by the table's
+owner; the ledger's `util.reject_modification()` unchanged
+(compared with the P1 migration text) and still refusing journal changes; **canonical text** — the same row gives the
+same text and digests under two time zones; a report file's bytes are exactly its pages' bytes; **kinds of run** — with
+a request open and no active report, a run exports and deletes nothing — not one row, whatever happens; with an active
+report, a plain run deletes eligible rows except the held ones; after the delivery the next plain run deletes the
+report's rows; after a loss the next run exports again from the same rows; after a cancellation the withdrawn report's
+rows are deleted by the next plain run; **the request race (round 4)** — a plain run whose page transaction began just
+before its lease expired, a request recorded meanwhile by a second connection: the page is refused and deletes nothing
+(two connections, a test-only gate); **pages** — the read position kept by the database: no cursor can be passed, a call finding no row still moves it, a
+held block larger than 20 × `p_limit` is crossed and the eligible unheld rows after it are deleted in the same run;
+idempotent page numbers (a repeat of an unprocessed page returns it as recorded without moving the position, a repeat
+of a processed page and an out-of-order number are refused); plain manifests removed at release (with `rows_deleted`
+recorded first) and a dead run's by the next reservation, a discarded export's at its discard, a lost or delivered
+report's at once; a call with another `p_as_of` than the run's is refused; a page never empty; an exhausted manifest only when the bound is reached; a call bounded at
+20 × `p_limit` rows examined returns a short page that is not the end; `purge_expired_events` refuses a page already
+processed, a page whose id is gone, and any page while a request awaits its copy, takes ids only from the manifest, and
+deletes only eligible, unheld rows; a failure injected on #38 rolls the page back; **late commit (R38)** — an eligible
+event committed after its page was read and while the page is deleted (a test-only `BEFORE DELETE` gate) is left and
+deleted by a later run; **reservation (R43)** — a second run while one is live gets `purge_run_active`, or
+`lock_not_available` while a page transaction holds the row, and changes nothing; a dead run's reservation expires (a
+short test lease) and a new run takes over, recorded in `audit.purge_runs` even if it then fails; the old run, resumed,
+is refused; renewal counts from the end of a long page's work; `request_purge_report` and `cancel_purge_report_request`
+are refused while a run is live; **clearing** — at most `p_limit` rows a call, the command stops at zero, a second run
+clears none, sessions revoked long after they expired are cleared two years after they **expired**, idle-expired
+sessions likewise, active sessions and still-valid tokens never, other columns and rows untouched, a failure injected
+on #40 rolls the batch back; a revocation racing the clearing on an eligible session, 50 times in both orders: never
+`40P01`, the clearing never waits, the revocation completes; clearing runs while an export is unresolved and while a run
+is live; two clearing calls at once skip each other's rows and clear each row once; **the lock** — with real processes: a paused holder makes a second command refuse with nothing done; killing it
+frees the lock at once; a squatted name refuses every command; a connection to the endpoint changes nothing; an
+unsupported platform, a detected container, a missing machine id refuse; no child process runs while the lock is held
+(the test watches the process's children); the lock is held until the marker's removal; a network drive is refused; **the connection** — a heartbeat never meets
+its own page transaction; an idle transaction is ended after a minute; **the export** — a git work tree, an unsupported
+file system and a OneDrive folder are refused; an unwritable directory, a full disk, a read-back mismatch, a refused
+heartbeat, a kill mid-write and a kill between the link and the confirmation each delete no row and end, once the
+failing command has finished or the next command has taken the lock, with neither `<name>.partial`, `<name>` nor the
+marker present and the export discarded (#45); an unknown confirmation outcome that committed leaves the report
+untouched; a file planted under either run name makes the create refuse and stays byte for byte; a stop between the
+link and the unlink leaves both names, removed by name; every other file in the directory is untouched; the
+confirmation refuses a file with a page written twice, a page skipped, another page count, a manifest not exhausted, a
+location other than the recorded one, and an export without its file or already discarded; an empty export is
+discarded `empty`, leaving no file and the request open; the export run's `p_as_of` is the reservation's time; an export run without `--dir` releases at once and the listing
+flags the waiting request; the index is created if absent and found if present; `--check-files` reports present,
+**missing**, **altered** and **directory unavailable** as each case is staged, and lists a marker left behind; the hard-link probe refuses a FAT or
+exFAT directory; on POSIX a directory open to group or others, and on Windows one whose access list grants read to
+another account, is refused; the
+file is owner-only; a failure injected on #45 or #46 leaves the export unresolved or the report unconfirmed; **recovery
+and attestation** — the automatic path on the recorded machine with the marker, the attested path without proof, and
+`--lost` without the lock only when the run is not live; `discard_purge_export` accepted for the run's own live export
+and for a dead run's, refused for a live other run, a confirmed or a discarded export; with the volume unmounted or the
+drive remapped, every file step says **directory unavailable** and records nothing; the marker is removed only after the
+outcome is recorded — a failure injected on #44 or #45 leaves it and the retried command finishes; **handover and
+delivery** — a medium on the report's own volume is refused; the handover succeeds onto a FAT or exFAT medium; the
+verification runs in a new process; `record_report_handover` is refused without the eject attested, and, where the
+write recorded a disk sequence, with an unchanged or a null one (staged sysfs values); a serial mismatch, an unconfirmed
+eject and an unchanged sequence change nothing and leave the attempt unended; a response lost after
+`record_report_handover` committed (injected) leaves the stick untouched and the attempt recorded; a record committed
+after the command's re-read (injected) makes `record_handover_failed` refuse and the stick stays untouched;
+`lock_not_available` during the verification changes nothing; a medium with an empty or default label is refused;
+`record_report_lost` is refused while an attempt has no attested fate; an attempt abandoned
+by `record_handover_failed` has no fate until the operator's later call sets only the fate; another volume's serial is a
+refusal that changes nothing; a medium whose bytes were changed after the write is caught (a test stage alters the
+file between the two steps); `record_report_handover` is refused before `record_handover_written`; a truncated copy is refused, removed from the medium and the attempt recorded abandoned; an attempt killed
+midway is listed as unended and ended only by `record_handover_abandoned` (#49), which another attempt, a withdrawal,
+a loss and a cancellation each require first; a replacement after a recorded attempt is refused until that attempt is
+superseded with its note; two attempts — abandoned then recorded, and recorded, superseded, then a replacement recorded —
+are kept as rows, and the delivery names the live recorded one; the delivery, a withdrawal, a cancellation and a loss
+are refused while another attempt is live; `record_handover_abandoned` is refused for the delivered attempt and for
+an attempt whose fate is attested, and accepted after the delivery to attest an earlier attempt's fate; an automatically
+abandoned attempt is listed until its fate is attested; the delivery is refused for an attempt other than the live
+recorded one, including one the receipt names wrongly; a report confirmed 7 days with no live recorded attempt, and an
+attempt written 7 days without verification, are flagged; handover functions are refused for
+a report that is not active; a delivery without a handover or a receipt reference is refused; the delivery satisfies the request, removes the
+manifest and releases the rows in one transaction; the operator's copy is deleted whatever its content, recorded (#44),
+then the marker removed; off the writing machine or without the marker only `--attest` or `--lost` records it;
+`record_report_copy_destroyed` before a delivery or a withdrawal, or twice, or while another attempt of the report has
+no attested fate, is refused; **reminders and cancellation**
+— reports handed over or confirmed 7 days or more without the next step are flagged; a cancellation withdraws the active
+report, releases its rows and writes #48, and its copy must then be destroyed; **loss** — refused once delivered or
+withdrawn; the files deleted before the record and the marker after; the request stays open and the next run exports;
+**states** — every `CHECK` and partial unique index refuses its violation (two terminal states, a delivery without a
+handover, a second live handover attempt, a destroyed copy without a delivery or withdrawal, a second open request, a second active report, a second row
+in a one-row table); **the listing** reads the state while another command holds the lock; **guards** — the lock-order and
+writer guards classify every purge function and the three helpers; the mutation tests for category 11 and for the purge
+tables fail it. **P5 still cannot close without the owner's approved written policy** (§13 item 9).
+
+## 9. Conventions, commands and gates
+
+### 9.1 Migrations
+
+[Fact] Directory names `YYYYMMDDNNNNNN_snake_case` (date of authoring + `000100`, `000200`, … within the day), one
+`migration.sql` each, raw SQL, `SECURITY DEFINER` + `SET search_path = pg_catalog, pg_temp` + `REVOKE ALL … FROM
+PUBLIC` + `GRANT EXECUTE … TO alphakolect_app`; `CREATE OR REPLACE` when a signature is unchanged (grants kept),
+`DROP` + `CREATE` + re-grant when it changes; `schema.prisma` updated in the same commit (drift test). Names below are working titles; timestamps are assigned
+when each migration is written.
+
+**Execution grants — the convention and its exceptions (R31).** `GRANT EXECUTE … TO alphakolect_app` applies only to
+functions a request path calls. **No app grant** for: operator and maintenance functions
+(`identity.bootstrap_super_admin`; the twenty purge functions, Part 2: `audit.reserve_purge_run`,
+`audit.renew_purge_run`, `audit.release_purge_run`, `audit.purge_candidates`, `audit.purge_expired_events`,
+`audit.clear_expired_request_metadata`, `audit.request_purge_report`, `audit.cancel_purge_report_request`,
+`audit.begin_purge_export`, `audit.record_export_artifact`, `audit.discard_purge_export`, `audit.confirm_purge_report`,
+`audit.begin_report_handover`, `audit.record_handover_written`, `audit.record_report_handover`,
+`audit.record_handover_failed`, `audit.record_handover_abandoned`,
+`audit.record_report_delivery`,
+`audit.record_report_copy_destroyed`, `audit.record_report_lost`,
+`audit.d9_retention`,
+`audit.purge_lease`, `audit.event_canonical_text`, `util.set_authorization_containment`); the
+`…_locked` inner functions (L6); trigger functions. **Execute-grant inventory test (P5.1, extended by every package):**
+every function in the `identity`, `tenancy`, `audit` and `util` schemas is listed with its intended grantees; any
+function missing from the list, or with a grant that differs from it, fails the test; and for each function without an
+app grant, a call as `alphakolect_app` fails with `insufficient_privilege`. **Purge ownership and privileges (Part 2; rev 20; replaces the R39 purger table).** The purge functions are owned by
+`alphakolect_migrator` (§8.6 item 1) and run through the operator's migrator connection, so they need no grant
+beyond ownership — id defaults (`util.uuid_v7()`), the `identity` schema and the report tables included (R46).
+What is enumerated and tested is what **others** may not do: `alphakolect_app` and `alphakolect_readonly` have no
+`EXECUTE` on any purge function, no `DELETE` on `audit.audit_events`, and no privilege on the reservation, report and manifest
+tables. **Tests:** the purge runs end to end as the function owner through the migrator connection (export, deletion,
+field clearing, report confirmation, handover, delivery and the copy's destruction, a cancellation, a report lost before
+delivery, a discarded export, an abandoned and a failed handover, events #38 and #40–#50); each of the app and readonly roles is
+refused every purge function and every write to those tables with `insufficient_privilege`.
+
+### 9.2 Guards that must keep passing
+
+`tenant-schema-guard.test.ts` (catalog: RLS, `(merchant_id, id)`, paired FKs), `row-level-security.test.ts`,
+`privileges.test.ts`, `migrations.test.ts` (from zero + no drift), `tenant-scope-guard.test.ts`,
+`isolation-matrix.test.ts`, `route-parity.test.ts`, `tenant-boundary.test.ts`, `selection-exposure.test.ts`,
+`no-secrets-sweep.test.ts`.
+
+### 9.3 Gate per package (local)
+
+`pnpm format:check` · `pnpm lint` · `pnpm typecheck` · `pnpm build` · `pnpm --filter @alphakolect/contracts
+openapi:check` · `pnpm test` · `pnpm test:concurrency` (from P5.6; see below) · CI-mode oasdiff 1.32.1 against
+`origin/main` (0 errors) · gitleaks staged scan per
+commit and full history at closure. Results are recorded with the commit they ran on; local runs are never reported
+as CI. **Test budget ([Assumption], confirmed at the start of P5.5).** P4 hit out-of-memory failures in test setup
+(RESTRUCTURING_MAP, P4.8 incident), and P5 adds many two-connection suites repeated 50 times. If they do not fit
+`pnpm test` within the machine's memory and a reasonable time, they move to a separate script (`test:concurrency`)
+that is **part of the gate** for every package that touches locking — never skipped, never run with fewer repetitions
+without a recorded decision — and the change is noted in the package's evidence. **Confirmed 2026-10-13 at the start
+of P5.5** — measurements and the decision under P5.5 ("Test budget"). **Applied at the P5.6 gate (2026-10-14):**
+`packages/db` passed five minutes (307 s), so the two-connection suites (`test/lock-races.test.ts`, 50 staged runs per
+race) run in `pnpm test:concurrency`, which every gate and CI run (P5.6, "Test budget applied").
+
+### 9.4 Signals — what "metric" and "counted" mean in P5
+
+[Fact] The API has no metrics library or exporter today; its observability is structured pino logs with redaction
+(`apps/api/src/platform/logger.ts`), and metrics and alerting are planned with deployment (TARGET_ARCHITECTURE §28;
+RESTRUCTURING_MAP P15). So wherever this plan says a failure is **counted** or emits a **metric**, P5 delivers a
+**signal**: one structured log line at `error` level with a stable `signal` field, the event identifier where there
+is one, and the request id — never summary values, tokens or personal data. The signals are a closed list:
+`authorization_resolution_failure` (§4 invariant 7), `audit_write_failure` (a best-effort insert failed),
+`audit_validation_failure` (a best-effort event refused by the catalog), and `audit_denial_write_failure` (§8.2a
+rule 5). Tests assert the exact line for each (P5.3a, P5.4). Alerting on them is wired when the metrics stack is
+built (P15); P5 does not add a metrics library.
+
+## 10. Work packages
+
+Dependencies: P5.0 → P5.1 → (P5.2 ∥ P5.3 ∥ P5.3a) → P5.4 → P5.5 → P5.6 → (P5.7 ∥ P5.8) → P5.9 → P5.10. P5.7 and
+P5.8 run in parallel only after the resolver, registry and audit interfaces are frozen.
+
+**Why the audit foundation (P5.3a) comes before P5.4 (placement, rev 10).** Everything that writes or checks audit
+events after it depends on it: the policy middleware (P5.4) records its refusals with `recordBestEffort` (§8.2a rule
+6) and replaces the `ownerOrDenied` helpers whose `await audit.record` is the A7 defect; the privileged functions of
+P5.5–P5.7 write pattern-A pairs that must already be in the catalog; and the lock-order guard of P5.5 admits only
+`mutateAudited` and `recordBestEffort` as TypeScript audit writers (§7.2 transaction classes), so the P3 identity
+flows must already be pattern B when it is switched on. P5.3a has no dependency on P5.1–P5.3 (the event catalog is
+independent of the permission catalog); it is listed with them so it is complete before P5.4. P5.8 keeps the audit
+**reads** and the members and invitations list pagination (O9).
+
+### P5.0 — Decisions freeze and ADR-16
+
+- **Work:** write ADR-16 into `TARGET_ARCHITECTURE.md` (append; ADR-15 unchanged): the catalog (§6), classes and
+  route map (§5), resolution and write-time re-check (§7), owner-only delegation (D5′), platform grants and the staff
+  lifecycle (§7.4), audit classes and the nested-writer table (§8, §7.2), the D9 decisions (§8.6 up to "Retention
+  design"), the containment switch and incident procedure (§11.1), and the **decision log** (§14, R26) — **Part 1
+  only** (§12). The retention design (Part 2) is **not** written into ADR-16 at P5.0: it is added as an ADR-16
+  addendum once the reviewer approves Part 2, before P5.8 step (a). Amend `RESTRUCTURING_MAP.md`: P5 exit criteria (§13); move "agents only record collections for assigned
+  customers" into the P7/P8 rows verbatim (D1). Freeze the contracts of the new operations (§5), **including their
+  error responses**: [Fact] error codes are free-form strings matching `^[A-Z][A-Z0-9_]*$`
+  (`packages/contracts/src/primitives.ts:52`), documented per response, so each new code is fixed in its contract —
+  `INVALID_CURSOR` (400, every paginated read), `EMAIL_IN_USE` (409, platform staff creation, O8(a)), and the existing
+  `FORBIDDEN` (403), `NOT_FOUND` (404), `WRONG_AUDIENCE` and `UNAUTHENTICATED` where they apply. **CSRF:** [Fact]
+  `authenticate()` applies the double-submit check to every cookie-carrying state change
+  (`apps/api/src/platform/http/authenticate.ts:139-140`), so every new `PUT`/`POST` endpoint inherits it; the
+  route-parity test asserts it for each new operation.
+- **Checks:** every one of the 44 operations is classified; no P7/P8 resource assumed; every **[Open]** item has an
+  owner; **O7 resolved** (by D5′, §7.6); **O8 decided**
+  (platform staff onboarding, §7.4) before the platform staff contracts are frozen; O10–O12 (privacy questions) are
+  needed only by P5.8 step (e) and do not block P5.0; **O9 decided** (members and
+  invitations pagination) so that P5.8's scope is fixed; **O3 decided** (owner-only, D8′; R28). **Neither audit-read contract is
+  frozen in P5.0** (R24): their shared bounds are O4, which depends on a query-plan validation (§8.5) that needs
+  representative data, so both are frozen together in P5.8 step 3. P5.8 cannot implement an audit-read endpoint whose
+  contract is not frozen, and step 3 cannot happen while O3 or O4 is open.
+- **Done when:** the owner has signed and dated the forms and returned the confirmation form (R33) — **done
+  2026-10-12** (CF1–CF5, Mayowa Edward Fadahunsi); the ADR-16
+  decision log (§14, R26) has a complete entry for O3, O7, O8 and O9, for D9, for CF3–CF5 and for the confirmation of the
+  agreed positions, each with its true decision-maker (O4 is recorded at P5.8 step 2, D9 before P5.10); every row of §14 that these
+  affect cites its entry; and the reviewer and the owner approve ADR-16 **as written for Part 1**, each approval
+  recorded with name and date (the Part 2 addendum gets its own approval before P5.8 step (a)). Editing the documents
+  does not complete P5.0. **Done 2026-10-12:** the owner approved ADR-16 for Part 1 (`d4ac17e`; follow-up `130fbda`)
+  and the independent reviewer approved it as written, scope confirmed for §3.5 in full (lines 259–499 at `fac08e7`;
+  §14). **P5.0 is complete.**
+
+### P5.1 — Catalog and protected grant storage
+
+- **Migrations:** `…_permission_catalog` (catalog table, seed §6, no app grant — read through functions, B1); `…_role_permissions`
+  (`(merchant_id, role_id, permission)` PK, composite FK to `tenancy.roles (merchant_id, id)`, FK to the catalog plus
+  CHECK/trigger allowing only `scope = 'merchant' AND grantable AND status = 'active'`, RLS, **no app write grant**);
+  `…_platform_membership_grants` (`(platform_membership_id, permission)` PK, FK to `identity.platform_memberships(id)`,
+  only grantable platform permissions, no
+  app grant). **Storage only: no function that writes grants exists after P5.1.** The writers arrive with their
+  authorization foundation — `tenancy.set_role_permissions` in P5.6, `identity.set_platform_grants` in P5.7.
+- **Migration names:** migrations apply in name order, and `20261013000100_audience_checked_refresh` (P4.7) is named
+  ahead of its commit date. So P5's first migration must sort after it (for example `20261013000200_permission_catalog`),
+  never before it with today's date: on a fresh database it would run earlier than on an existing one. No existing
+  migration is renamed (critic review TA-26).
+- **Seed:** catalog rows only. **No grant rows.**
+- **Tests:** seed = contracts union; platform permission refused for a role; cross-merchant role refused; reserved
+  permission refused (constraints exercised as the table owner, since nothing else can write); the app role cannot
+  INSERT/UPDATE/DELETE either grant table; **no function granted to the app can write either table** (catalog check over
+  every function with EXECUTE for `alphakolect_app`); the **execute-grant inventory test** of §9.1 (R31), started here
+  and extended by every later package; catalog guard covers `role_permissions` automatically;
+  from-zero migration and no drift.
+- **Done when:** the database alone defines and protects permissions; no existing access changes.
+- **Built 2026-10-12; gate approved 2026-10-12** (§14: "P5.1: approved to close, based on the evidence you've
+  reported"; the eight judgement calls accepted, items 5, 6 and 8 subject to the checks answered below). **Gate
+  follow-up `dfaf579`:** effective privileges are now asserted, not only ACL entries — app and readonly belong to no
+  role; `has_table_privilege`/`has_any_column_privilege` find nothing for either on the three tables; the app cannot
+  disable the protection triggers or the RLS (not the owner); every function's effective `EXECUTE` matches the
+  inventory (both mutation-checked). Answers to the review: the catalog rules are PostgreSQL triggers and CHECKs that
+  fire for every role, the owner included, and only the owner — the migrator, through a reviewed migration — could
+  disable them; RLS is defence in depth only, the refusal comes from the absent privileges; the inventory separates
+  request-path functions (app) from inner, operator and trigger functions (owner only), and the no-writer list names
+  the P5.6/P5.7 writers when they land rather than banning all writers; a retired identifier stays in the catalog for
+  ever (no delete), so it can never be reused; `aa7d8cf` changes only `\n` to `\r?\n` in the T14 regex. **Original
+  evidence:** Commits `aa7d8cf` (unrelated test fix, below), `a129f3a`
+  (migrations `20261013000200_permission_catalog`, `20261013000300_role_permissions`,
+  `20261013000400_platform_membership_grants`; Prisma models; storage tests), `fc6fa8b` (execute-grant inventory),
+  `acd73d7` (contracts `PERMISSIONS` and the API test against the catalog). **Gate (§9.3), local, on the tree of
+  `acd73d7`:** `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 61,
+  db 369, api 395, all passing; oasdiff 1.32.1 against `origin/main` (`5d8904b`): no changes (no endpoint or spec
+  change); gitleaks staged scan clean on every commit (full history at closure). Not CI. **Mutation checks**
+  (sabotaged, shown to fail, restored byte-identical): grant rule ignoring `grantable` (9 tests fail); app and readonly
+  granted SELECT on the three tables (3); grant and catalog triggers dropped (17); an extra app grant plus a hidden
+  function writing `role_permissions` (3). **No existing access changed:** the migrations only add objects, and the
+  inventory confirms every earlier function keeps its grants. **Judgement calls for the reviewer:**
+  (1) the catalog lives in `identity` — the plan names no schema; both grant tables reference it, and tenancy already
+  depends on identity, so no identity → tenancy dependency is created;
+  (2) the catalog is protected beyond §6 — identifier, scope and grantable never change, no delete or truncate, and
+  `retired` is final, so retired grant rows can never come back to life; CHECKs also require the first identifier
+  segment to equal the scope and limit identifiers to 100 characters;
+  (3) `alphakolect_readonly` gets no access to the three tables (the plan is silent; default-deny), so reporting
+  cannot see role permissions until a grant is decided;
+  (4) `created_at` on all three tables;
+  (5) `tenancy.role_permissions` carries RLS and an app `SELECT` policy although the app holds no privilege — the
+  tenant guards require it, and any later grant is tenant-scoped from the start (the RLS guard lists it as a tenant
+  table without app access);
+  (6) the inventory covers every module schema (the two `ledger` functions included), not only the four of §9.1, and
+  the no-writer check covers every function, not only app-executable ones, because an inner function can be reached
+  through a granted one;
+  (7) `PERMISSIONS` is compared with the catalog's **active** identifiers, so a retired permission leaves the
+  contracts when it is retired;
+  (8) `aa7d8cf` fixes a pre-existing, local-only failure unrelated to P5.1: the T14 tenant-scope guard's regex missed
+  CRLF line endings on this Windows checkout (CI checks out LF); the guard still fails when a function skips
+  `scopeOf(tx)` (sabotage-checked). **Not in P5.1, unchanged:** no function writes a grant table; the B1 read
+  functions and the revocation of direct `SELECT` stay in P5.5; Part 2 is not approved.
+
+### P5.2 — Resolver and write-time contract
+
+- **Migrations:** `…_session_authority` (resolver, §7.1); `…_assert_authority` (re-check with §7.2 locks).
+- **Code:** `identity/repository.ts`, `platform/http/authenticate.ts` (permissions on `AuthContext`),
+  `platform/tenant.ts` (`TenantContext.permissions`; `requireOwner` kept until P5.4).
+- **Tests:** owner = all merchant permissions; super admin = all platform; staff = role set; archived role ⇒ none;
+  deactivated membership/merchant ⇒ 401; platform staff = grants only; one grant does not leak to another membership
+  of the same identity; revoke ⇒ next request; two-connection race between `assert_authority` followed by a write and the revocations that
+  exist at this point (membership deactivation; role archive), in both orders, behaves per §7.2; forged session
+  ids refused.
+- **Done when:** resolution is current, complete and isolated.
+- **Built 2026-10-12; gate approved 2026-10-12** (§14: "P5.2 is approved to close based on the evidence reported";
+  the eight judgement calls accepted, 2, 3, 6 and 7 with conditions answered here). **Gate follow-up `3baa6bf`:** the
+  resolver's identifiers are checked at the API boundary (condition of call 7): `knownPermissions` keeps the ones this
+  version knows and drops any other — possible only between a catalog migration and its release; it can only remove
+  access, and throwing would make every owner's request fail in that window (owners hold every merchant permission).
+  **Every revocation path that exists today conflicts with the re-check's authority locks** (calls 2 and 3), [Fact]:
+  member deactivation and role or branch reassignment (`update_membership`) lock the target membership `FOR UPDATE`;
+  role archive and rename are an `UPDATE` of the role row (`FOR NO KEY UPDATE`); merchant deactivation
+  (`set_merchant_status`) and ownership transfer lock the merchant `FOR UPDATE` — each conflicts with the `FOR SHARE`
+  the re-check holds on that row. The revocations still to come take the planned conflicting locks: role permission
+  edits the role `FOR NO KEY UPDATE` (P5.6), platform grant changes and staff deactivation the target platform
+  membership `FOR NO KEY UPDATE` (P5.7). Ending a session (logout, password change) changes no permission and takes no
+  authority lock: a write that passed its re-check while the session was valid stands. **Other answers:** the owner and
+  super admin hold only their own scope (a permission of the other scope is `forbidden`, tested); agents and
+  MFA-enrolment sessions hold nothing, and an enrolment session reaches only endpoints declaring
+  `sessionScope: 'mfa_enrollment'` (`403 MFA_ENROLLMENT_REQUIRED` otherwise, P3) — P5.3 classifies them `self` or
+  `capability`, never `permission`; a missing or ended session is 401 / `unauthenticated`, never a valid session with no
+  permissions; the role and branch state stay in the database layer — responses are built field by field and never
+  spread `AuthContext`; the containment switch is **not operational** until P5.5. **Obligations carried to P5.5**
+  (already its contract, §7.2): every privileged function takes its whole footprint, calls the re-check and writes in
+  **one** transaction; its own two-connection races against each revocation path (tests (a)–(k)) — the P5.2 races do
+  not stand in for them; the lock-order guard keeps the order deterministic. **Original evidence:** Commits `a68cece` (migrations
+  `20261013000500_session_authority` — `identity.permissions_of`, the one permission rule, and the resolver
+  `identity.session_authority` — and `20261013000600_assert_authority`; 22 database tests; inventory) and `daa95d6`
+  (the API: `authenticate()` calls the resolver instead of `validate_session`, one round trip; `AuthContext.permissions`
+  and `TenantContext.permissions`, frozen; nothing reads them yet — P5.4; `requireOwner` unchanged). **Every listed
+  test:** owner = all merchant permissions; super admin = all platform; staff = role set; archived role ⇒ none;
+  deactivated membership or merchant, ended or forged session ⇒ no row (401); platform staff = grants only; no grant
+  leaks to another membership, of the same identity or another person; a removed grant or archived role applies to the
+  next call and the next request (no cache); the re-check followed by a write against membership deactivation and role
+  archive, each in three orders (revocation committed first ⇒ refused, nothing written; re-check first ⇒ the revocation
+  waits until the write commits; revocation in progress ⇒ the writer waits, then is refused). Also: retired
+  permissions resolved for no one; a reserved grant row that bypassed the trigger is still never resolved; agents and
+  MFA-enrolment sessions hold nothing; a branch restriction narrows nothing (§7.6); the re-check raises on an unknown
+  identifier and never waits. **Gate (§9.3), local, on the tree of `daa95d6`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass; `pnpm test` — contracts 61, db 400, api 396, all passing; oasdiff 1.32.1 against
+  `origin/main`: no changes; gitleaks clean per commit. Not CI. **Mutation checks** (restored byte-identical): role
+  status ignored, enrolment scope ignored, reserved filter removed, a re-check that waits, a re-check without locks —
+  each fails the tests. **Judgement calls for the reviewer:**
+  (1) `assert_authority` is a **nested** function (L6): it does not acquire the authority locks, it re-asserts them
+  `NOWAIT` and requires its caller to hold its whole footprint first (§7.2 "after acquiring its locks"; the one sorted
+  acquisition per category, L5) — so it is owner-only and P5.5's functions call it; the races therefore emulate that
+  caller on the owner connection, since no privileged function uses it before P5.5;
+  (2) it re-asserts every authority row `FOR SHARE` — the weakest mode that still conflicts with every revocation's
+  lock — so it never upgrades a lock the caller took `FOR SHARE` (sensitive reads hold the actor's row `FOR SHARE`);
+  the caller's `FOR NO KEY UPDATE` on the actor's membership in writes is unaffected;
+  (3) it reads the staff actor's role from the membership row it has just locked, so the role cannot change between
+  the lookup and the lock;
+  (4) outcomes: `unauthenticated` when the session no longer validates (401), `forbidden` when it validates without
+  the permission or the permission is of the other scope (403), `ok`; an unknown identifier raises `22023`;
+  (5) the resolver applies `grantable` and `active` itself, in addition to the storage trigger (defence in depth);
+  (6) the resolver also returns role and branch state; the API keeps only the permissions for now;
+  (7) the API types the database's identifiers as the contracts' `Permission` without filtering — the
+  contracts-versus-catalog test is the guard;
+  (8) the containment switch (§11.1) is not read yet; it is built, and added to `permissions_of`, in P5.5.
+
+### P5.3 — Registry authorization metadata
+
+- **Code:** `packages/contracts/src/registry.ts` (`authorization` field: class + permission/capability), all endpoint
+  files, OpenAPI extension `x-authorization` (additive), `apps/api/src/platform/http/routes.ts` (refuse startup on
+  missing/invalid declaration) — each `permission` endpoint also declares its branch scope (§7.6); **query-parameter validation** in `apps/api/src/platform/http/validate.ts` (contracts
+  may now declare `query`; values are validated from the contract like bodies and path parameters, unknown parameters
+  refused), the prerequisite for the paginated reads of P5.7 and P5.8.
+- **Tests:** every operation declares exactly one valid class; unknown permission refused; route-parity asserts the
+  authorization middleware is mounted for every `permission` endpoint and only there; no route public by omission;
+  query parameters: valid values reach the handler typed, invalid or unknown ones are refused with 400 before any
+  handler or database call, and a contract without `query` still receives none; oasdiff non-breaking.
+- **Done when:** declarations are complete and machine-checked.
+- **Built 2026-10-12; gate approved 2026-10-12** (§14: "P5.3 approved to close"; all eight judgement calls
+  accepted — call 1 on the condition that P5.4 adds the authorization-middleware parity assertion when it mounts the
+  real middleware, now in P5.4's tests). The reviewer re-ran the focused tests (authorization declarations, request
+  validation, route parity: 36 passed) and relied on the reported full gate; CI has not run. **Original evidence:** Commits `8adec6f` (the required `authorization` field in
+  the registry; the 44 declarations of the frozen route map, every permission endpoint `merchant_wide`; the additive
+  OpenAPI extension `x-authorization`; the router's startup refusal) and `277d389` (query-parameter validation, the
+  validator mounted in front of every endpoint). No migration; nothing is enforced from the declarations yet (P5.4).
+  **Tests:** the 44 declarations equal the frozen map; twelve kinds of invalid declaration are each named and refused;
+  `buildV1Router` itself refuses an invalid entry of the real registry; `x-authorization` equals every contract's
+  declaration; query parameters: typed values and defaults reach the handler, six invalid cases (out of range, wrong
+  type, outside the enum, repeated, empty, unknown) are refused with 400 before the handler, an unknown parameter is
+  named without its value, a contract without `query` receives none; route parity expects the validator on every
+  endpoint. **Gate (§9.3), local, on the tree of `277d389`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 400, api 420, all passing; oasdiff 1.32.1 against `origin/main`:
+  no breaking changes (the spec only gains `x-authorization`, no line removed); gitleaks clean per commit; the first
+  commit was tested on its own (typecheck, lint, contracts 62, api 412). Not CI. **Mutation checks** (restored
+  byte-identical): the router's startup check removed; one endpoint reclassified; the unknown-parameter check removed;
+  an undeclared query passed through; the audience-versus-permission check removed — each fails the tests.
+  **Judgement calls for the reviewer:**
+  (1) **the route-parity assertion for the authorization middleware moves to P5.4.** This package's test list asks
+  that route parity assert "the authorization middleware is mounted for every `permission` endpoint and only there",
+  but that middleware (`authorize`) and its mounting are P5.4's code (§10 P5.4: "router mounts it from the
+  registry"). Mounting an enforcing middleware now would pre-empt the handlers' audited owner checks before P5.3a and
+  P5.4's equivalence oracle; mounting a placeholder would be fail-open by construction. P5.3 delivers the declarations
+  and the startup refusal; P5.4 mounts the middleware and adds that parity assertion;
+  (2) the validator now runs in front of **every** endpoint (a uniform rule), not only those with a body or path
+  parameters;
+  (3) "refused with 400 before any handler or database call": for secured endpoints authentication — one database
+  call, the resolver — still runs before validation, by design (an unauthenticated caller learns nothing from
+  validation errors); validation precedes every handler and every handler's database call;
+  (4) for a contract **without** `query`, parameters in the URL are dropped (the handler receives none), not refused —
+  refusing would break clients that send, for example, cache-busting parameters to today's endpoints; a contract
+  **with** `query` refuses unknown ones;
+  (5) the startup check is stricter than listed: public and capability endpoints must have the public audience and no
+  session; self and permission endpoints must have a session and a non-public audience; a permission must belong to
+  the endpoint's audience; a permission endpoint never admits an MFA-enrolment session; no field foreign to the class;
+  (6) platform permission endpoints declare `merchant_wide` (read: "not narrowed by a branch restriction"), as every
+  permission endpoint must declare a branch scope (§7.6);
+  (7) a `branch` scope is refused at startup throughout P5, since no resolver for a resource's branch exists until
+  branch-owned resources (P7/P8);
+  (8) capability endpoints keep the public audience and no `security`: the capability (credentials, token or
+  challenge) is checked by the handler, as in P3.
+
+### P5.3a — Audit foundation (moved ahead of P5.4 in rev 10)
+
+- **Migration:** `…_event_catalog` — the table `audit.event_catalog` (app `SELECT` only), seeded with **every pair
+  written at this point** and each one's summary fields as written today ([Fact] inventory of §8.1, template-built
+  identifiers included), and the validation trigger on `audit.audit_events`.
+- **Work:** the event catalog with per-pair class, writer pattern and summary allowlist, its TypeScript mirror and
+  the validation trigger (§8.1); `recordBestEffort` and the conversion of every A7 refusal path (§8.3); `mutateAudited` and the pattern-B
+  conversion of every identity flow (§8.4) — except `complete_account_setup`'s re-specification, which needs the
+  §7.2 footprint and `admit_invitation_locked` and is done in P5.5; the coverage and writer guards (§8.1).
+- **Transitional writers, enumerated.** At this point the tenancy and platform pairs that §8.1 assigns to pattern A
+  (#14 on the invitation-link path, #16–#20, #22–#29) are still written by P4's code — `recordWithin(tx)` in the same
+  transaction as the definer call or direct write ([Fact] already atomic, §2; e.g. `merchant-settings.ts:79,114,140`,
+  `memberships.ts:112`, `invitations.ts:94,142`, `merchant-lifecycle.ts:104,163`) — because their pattern-A functions arrive in P5.5.
+  [Fact] The branch and role identifiers are built from a template (`merchant.${item}_created` / `_updated`,
+  `merchant-settings.ts:109,133`), so the list names those call sites with the four identifiers they can produce; a
+  template-built identifier anywhere else fails the writer guard. The coverage guard
+  accepts exactly these pairs from exactly those call sites through a **closed transitional list** in the guard; P5.5
+  empties the list and deletes it, and from then on the guard fails if it exists. No other pair may use it. New pairs
+  (#21, #30–#43, `authz.denied`) are added to the catalog by the package that introduces their writer, together with
+  that writer and its tests.
+- **Tests:** every row of the §8.1 entry-point table for each entry point (unknown identifier, known event of another
+  class — atomic and sensitive-read events through `recordBestEffort` — invalid outcome, disallowed and over-length
+  summary field, storage failure), asserting the stored rows, the §9.4 signal line and the HTTP status of the request in hand;
+  per atomic identity pair the co-commit and injected-rollback test of the coverage guard; the A7 paths keep their
+  status when the best-effort insert fails; the writer-guard mutation tests (§8.1); the coverage guard in both
+  directions over the pairs that exist at this point; secrets never stored (leak sweep); P4 member/invitation atomicity
+  still holds; **the validation trigger rejects nothing legitimate** — every P1–P4 journey (the existing API suites)
+  runs with the trigger in place and no validation error, and a raw insert of an unknown pair, an unknown summary field
+  and an over-long value are each refused, as the app role and as the table owner; the TypeScript mirror equals the
+  table.
+- **Done when:** every audit writer in the code is one of the three entry points (or on the transitional list), and
+  every identity security change commits with its event.
+- **Built 2026-10-13; gate approved 2026-10-13** (§14: "P5.3a approved to close"; all 14 judgement calls accepted; the
+  account-setup invitation event stays with P5.5 and the sensitive-read behaviour tests with the first such events in
+  P5.7/P5.8; the unused retention override approves nothing of Part 2). The reviewer re-ran the focused suites serially —
+  141 API tests and 19 database catalog tests passed. **Observation carried to P5.5's test-budget confirmation (§9.3):**
+  the reviewer's first, parallel run of the same API files hit three 30-second timeouts and a dropped database
+  connection (resource contention, not an assertion); the configured four-worker local runs passed. P5.5 confirms the
+  budget at its start, as §9.3 requires, and moves database-heavy suites to a separate gate script if they do not fit.
+  **Original evidence:** Commits `4068baf` (migration
+  `20261013000700_event_catalog`: `audit.event_catalog`, 66 pairs, the validation trigger; database tests; older tests
+  and fixtures use real pairs), `f2a2133` (the three entry points, the TypeScript mirror, §9.4 signals, the tenancy
+  writers), `12ff1ad` (every identity flow pattern B; `record()` removed), `7f655c7` (one allowlist tightened),
+  `0957b1c` (the writer and coverage guards, the per-pair and refusal-path tests). **Tests, each listed item:** every
+  row of the §8.1 behaviour table for each entry point with stored rows, exact signal lines and the request's status
+  (`test/audit/audit-log.test.ts`, 25); per atomic pair — all 28 that exist, sign-in in four forms and selection and
+  refresh for both audiences — one real request stores exactly one row with its actor, business, target and request
+  id and the change commits with it, and with that pair's insert failing the request fails and the change is absent
+  (`coverage.test.ts`, 64, and the operator bootstrap in `packages/db`); every refusal path and O6 success keeps its
+  status when its best-effort insert fails, stores nothing and logs its signal (`refusal-paths.test.ts`, 25); the
+  writer-guard mutation tests (1)–(3), the run-time and build-time (`@ts-expect-error`) halves of (3) included; the
+  coverage guard in both directions and exactly one named writer per atomic pair (`guards.test.ts`); the leak sweep and
+  P4's member and invitation atomicity tests unchanged and passing; the trigger rejects nothing legitimate — the whole
+  API suite runs with it and logs no signal — and refuses an unknown pair, a disallowed or wrong-typed field, a
+  disallowed null and an over-long value, as the app and as the owner (`packages/db/test/event-catalog.test.ts`); the
+  mirror equals the table. **Gate (§9.3), local, on the tree of `0957b1c`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 424, api 546, all passing; the OpenAPI spec is unchanged
+  since `277d389` (its oasdiff against `origin/main`: no breaking changes); gitleaks clean per commit. Not CI.
+  **Guards proven by sabotage** (restored byte-identical): an atomic success routed through `recordBestEffort`, a
+  second writer of an atomic pair, an identifier cast into a literal type (caught after the guard was extended — see
+  call 10), and a pair dropped from the coverage table — each fails. **Judgement calls for the reviewer:**
+  (1) **finding:** the invitation-link success (#14) was **not** atomic in P4 — it was written in a separate transaction
+  after the admission (`invitations.ts`), although this package's transitional list recorded it as already atomic. It
+  now commits with the admission (`recordWithin`, transitional until P5.5), and the T14 tenant-scope guard lists
+  `invitations.ts` as one more place that sets `app.merchant_id`, with the reason (a capability flow without a tenant
+  session, writing in the business just joined);
+  (2) the catalog holds exactly the 66 pairs written today — not the plan's whole inventory: the other pairs (for
+  example `merchant.profile_updated`/failure, #21, #30–#43, `authz.denied`, the sensitive reads) arrive with their
+  writers, as §10 P5.3a says;
+  (3) the `retention_override` column exists (§8.1 is Part 1) and is NULL for every pair, tested; nothing reads it, and
+  no `audit.d9_retention()` exists — that is Part 2;
+  (4) `mutateAudited(tx, event)` takes the change's transaction; the change itself runs in the same `db.transaction`
+  body just before it (one call per flow), rather than as a callback argument;
+  (5) `mutateAudited` scopes a tenant event to its business itself (it sets `app.merchant_id` when the transaction has
+  none and refuses one scoped to another business), so the identity services never set the tenant;
+  (6) a summary rule is `string` (with a character bound), `integer` or `boolean`, optionally nullable; strings are
+  bounded by what is written today (reason codes 64, names 120, the deactivation reason 500, ids 36);
+  (7) the trigger reports every refusal as `check_violation` named `audit_event_catalog`, so `recordBestEffort` can tell
+  a validation failure from a storage failure; a disallowed outcome of a best-effort identifier is caught before any
+  round trip (reason `outcome_not_in_catalog`); signal reasons are SQLSTATE codes, never messages;
+  (8) failures are injected by a test-only trigger keyed to one request id, because the API test files share one
+  database and run in parallel; from P5.8, when request ids become server-generated, the key must change (noted for
+  P5.8); the operator bootstrap's injection runs inside a rolled-back transaction (the database tests run one file at
+  a time);
+  (9) the sensitive-read rows of the behaviour table cannot be tested yet — no sensitive-read pair exists until P5.7
+  and P5.8, which add them with their functions;
+  (10) the writer guard resolves pairs through the compiler, so a cast could lie: the guard also refuses any type
+  assertion of an audit identifier or outcome into a literal type anywhere in the source, and any assertion other than
+  `as const` inside an audit call's argument (added after the cast sabotage passed the first version);
+  (11) MFA verification uses the TOTP step or recovery code inside the transaction, so a failed event leaves a recovery
+  code unused; the attempt counter stays outside (it must count failures);
+  (12) a reset or setup now hashes the new password before checking the token's format (before, only for a
+  well-formed token): the same cost either way, no change in answers;
+  (13) older tests and fixtures used made-up actions; they now use real pairs, and P1's audit `CHECK`s are still proven
+  beneath the trigger (owner, trigger off, rolled back);
+  (14) `complete_account_setup`'s event (#10) now commits with it; #14 on the setup path is still not written — the
+  gap §8.1 assigns to P5.5's `admit_invitation_locked`.
+
+### P5.4 — Policy middleware; replace `requireOwner`
+
+- **Code:** new `apps/api/src/platform/authorization.ts` (decision type, `authorize`); router mounts it from the
+  registry; the 13 `requireOwner` call sites and both `ownerOrDenied` helpers are removed in favour of the declared
+  permission; the decision takes an optional resource branch (§7.6, unit-tested with synthetic resources);
+  `GET /v1/merchant/membership` returns effective permissions. Refusals by the middleware are recorded
+  as `authz.denied` through `recordBestEffort` (P5.3a; §8.2a rule 6); the catalog gains that pair here.
+- **Equivalence oracle:** with owners holding all merchant permissions and no staff grants, the P4 isolation matrix
+  must produce identical results before and after.
+- **Tests:** P4 matrix unchanged; source guard: no `kind === 'owner'` / `requireOwner` outside the authorization
+  module; denial responses unchanged; **route parity asserts the authorization middleware is mounted for every
+  `permission` endpoint and only there** (moved from P5.3 with the middleware it checks — reviewer's condition at the
+  P5.3 gate, 2026-10-12).
+- **Done when:** the API enforces declarations with zero behaviour change for existing actors.
+- **Built 2026-10-13; gate approved 2026-10-13** (§14: "P5.4 approved to close"; judgement calls 1–12 accepted — call
+  11, the API-only check on profile, branch and role writes until P5.5, accepted as an acknowledged boundary, **not** as
+  approval to treat those writes as database-protected today; the intermittent invitation-revoke failure is not
+  blocking and stays with P5.5's test-budget check, §9.3). **Call 13 — condition carried to P5.6:** the source guard
+  catches today's direct comparisons and membership tests but not an indirect lookup (for example a table keyed by
+  kind); it must be strengthened before P5.6 makes staff grants possible (see P5.6). The reviewer re-ran the policy,
+  P4 isolation-matrix and route-parity suites serially — 115 passed — on a clean worktree; the full local gate was not
+  re-run by the reviewer; CI has not run. **Original evidence:** Commits `b260f3f` (migration
+  `20261013000800_authz_denied_event`: the best-effort pair `authz.denied`/denied, summary `operation` (64) and
+  `permission` (100); the mirror and the coverage inventory), `a39b2c7` (`CurrentMembership.permissions`, sorted),
+  `0ca5ae3` (`apps/api/src/platform/authorization.ts` — `decide` and `authorize`; the router mounts `authorize` on
+  every `permission` endpoint, after validation; `authenticate()` carries the restricting branch's state and signals a
+  resolver failure; tests), `1643c7a` (the interim owner checks removed; the source guard). **Tests, each listed
+  item:** the P4 isolation matrix passes unchanged — and fails when the middleware is not mounted (sabotage 1), so it is
+  a working oracle; the source guard parses every `apps/api/src` file except the policy module and refuses
+  `requireOwner`, `ownerOrDenied`, and any comparison, `case` or `includes`/`has`/`indexOf` test on `'owner'` or
+  `'super_admin'`, with a mutation test per form and type and data uses left alone; **denial responses unchanged:**
+  for each of the 21 permission endpoints, staff (merchant) or platform support (platform) receive P4's exact body —
+  status, code, message, request id — nothing changes, and exactly one `authz.denied` row is stored (actor, the
+  actor's business or none for a platform actor, no target, the operation and the permission); the owner and the
+  super admin pass the middleware on all 21; validation still answers first (400 before any refusal); route parity
+  asserts `authorizeRequest` on every permission endpoint and only there, with a count control; `decide` unit tests
+  with synthetic branch resources (§7.6); the middleware with synthetic endpoints — refused at build time on a
+  non-permission endpoint, the exact `recordBestEffort` call, and 500 with the signal and no denial when no session
+  reached it, when a branch endpoint has no resolver, and when the audit call itself throws; through the real app, an
+  injected resolver failure (§4 invariant 7) answers 500 `INTERNAL_ERROR`, logs one signal line holding only the signal
+  and the request id, stores no row and changes nothing; the membership endpoints return the owner's whole merchant
+  set, sorted, and `[]` for staff without grants and for agents. The per-action denial assertions in four API test
+  files and in `refusal-paths.test.ts` now expect `authz.denied`; the database's own refusals stay tested — the
+  `owner_protected` member refusal through the API (A7 case) and the lifecycle refusal with the middleware bypassed
+  (new). **Gate (§9.3), local, on the tree of `1643c7a`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 424, api 583, all passing; oasdiff against `origin/main`
+  (`5d8904b`): no breaking changes (its changelog: the required `permissions` property added to both membership
+  responses); gitleaks clean per commit. Each intermediate commit was checked on its own tree (`0ca5ae3`: typecheck,
+  lint, format and the whole API suite, 581); the final tree is byte-identical to the gated one. Not CI.
+  **Intermittent failure, not reproduced:** once, in `b260f3f`'s check of `test/audit` (four files in parallel), the A7
+  case `merchant.invitation_revoked/failure` failed — code from P5.3a, unchanged by P5.4; the error was not captured.
+  It passed on the immediate re-run and in two further runs of `test/audit`, the whole API suite on `0ca5ae3`'s tree and three whole-suite runs on the final tree (583 each). Carried, with the reviewer's P5.3a observation, to P5.5's
+  test-budget confirmation (§9.3). **Protections proven by sabotage** (restored byte-identical): (1) the middleware not
+  mounted — route parity, the denial oracle and the P4 isolation matrix fail (35 tests); (2) the middleware before
+  validation — route parity and the validation-first test fail; (3) `if (tenant.kind !== 'owner')` put back in a
+  service — the source guard fails; (4) the resolver failure not signalled — the resolution test fails. **Judgement
+  calls for the reviewer:**
+  (1) `authorize` runs **after** input validation: P4 validated before its in-service owner checks, so mounting after
+  keeps every answer identical (a refused caller with an invalid body still gets 400); validation reveals only the
+  contract's shape, which is published;
+  (2) P4's refusal messages are kept exactly — the middleware maps each permission to P4's text ("Only the business
+  owner can do this" for merchant permissions; the two platform messages). When P5.6 lets staff hold grantable
+  permissions, "only the business owner" becomes inaccurate for those; that user-facing wording is the owner's call
+  then (noted for P5.6);
+  (3) every refusal is now recorded, reads included (§8.1, §8.2a rule 6) — P4 recorded only refused changes. More rows,
+  no response change;
+  (4) `authz.denied` names the operation and the permission, never a target: the middleware runs before the resource
+  is resolved, so a path id is a client-supplied value that may not exist or may belong to another business. P4's
+  member and invitation denial rows carried the target id;
+  (5) the per-action denied pairs the helpers wrote (the profile, branch and role `denied` pairs, and `not_owner` on
+  member and invitation actions) are no longer written by the API; their catalog entries stay (never deleted). The
+  services still write the `denied` outcomes the database functions return (`forbidden`, `owner_protected`); for
+  `forbidden` the middleware now refuses first, so those are reachable only if the two disagree — the defence-in-depth
+  path, tested by bypass for the lifecycle; P5.5 aligns the functions;
+  (6) `GET /v1/agent/membership` shares the `CurrentMembership` schema, so it gains `permissions` too — always `[]`
+  (agents hold nothing), consistent with the `Session.permissions` rule for agents (P5.7). The plan named only the
+  merchant endpoint;
+  (7) the field is `string[]`, not an enum of the catalog (as `Role.permissions`), so a new catalog identifier never
+  changes the response schema;
+  (8) the branch decision (unit-tested only — the router still refuses branch endpoints, §7.6): a restriction to an
+  archived branch reaches nothing branch-scoped, its own branch included (404); a resource of no branch is not the
+  restricted member's (404); an unknown branch state counts as not active; merchant-wide endpoints ignore restrictions;
+  (9) the resolution signal covers the per-request resolver call in `authenticate()` and any error inside the decision.
+  Its line holds only the signal and the request id; the error itself is logged by the existing error handler's
+  "Unhandled error" line, as for every 500;
+  (10) `authenticate()` takes `AuthDeps & { logger }`; `createApp` passes its logger, so `AppDeps.auth`, the server
+  wiring and the test support are unchanged;
+  (11) until P5.5 the app writes branches, roles and the profile directly, with no database re-check, so for those the
+  middleware is the only authority check — exactly as `requireOwner` was in P4. Member, invitation and platform
+  writes keep their database re-check;
+  (12) **correction:** this package's "13 `requireOwner` call sites" — at `3add9ea` there were 9 `requireOwner` calls (2
+  inside the helpers) and 5 `ownerOrDenied` calls, guarding 12 service operations that serve 18 endpoints. All are
+  removed, and `requireOwner` itself. `1643c7a`'s message repeats the "13"; this is the correct count;
+  (13) the source guard refuses comparisons and membership tests on the literals; it would not catch, for example, a
+  lookup table keyed by kind. The reviewer may want it widened.
+
+### P5.5 — Database functions aligned (and direct writes moved)
+
+- **Migrations:** `CREATE OR REPLACE` of `list_members`, `update_membership`, `issue_invitation`,
+  `revoke_invitation` (owner-only per D5′, §7.3, under the §7.2 locks), `set_merchant_status`, `transfer_ownership`
+  (reserved platform permissions); **one enforcement migration** that creates the definer writers for branches, roles
+  and merchant profile **and revokes the app's direct write grants on them in the same transaction** (§7.2); the app
+  switches to the writers in the same commit; `bootstrap_super_admin` replaced to keep the account separation (§7.4).
+  **Owner decision B1 (2026-10-12):** the same migration creates the read functions `tenancy.read_profile`,
+  `list_branches`, `list_roles`, `list_permission_catalog` and `list_invitations` (session in, merchant from the
+  session, permission checked, explicit merchant predicate, no locks) and **revokes the app's direct `SELECT`** on
+  `tenancy.merchants`, `tenancy.branches`, `tenancy.roles`, `tenancy.invitations` and the permission catalog; the
+  repository switches to them in the same commit (ADR-16 §3.5). Tests: each refuses a session without the permission;
+  a direct `SELECT` of each table as `alphakolect_app` fails with `insufficient_privilege`; the mixed-version test
+  covers the previous version's direct reads.
+  Privileged functions write their audit rows themselves (§8.5). The
+  **containment switch** of §11.1 (table, operator function, event #39) and its reads in the resolver and every
+  re-check, and its operator command `admin:containment` (`apps/api/scripts/`, migrator connection, as
+  `admin:bootstrap`) — before P5.6 makes the first grant possible.
+- **Tests:** direct calls with/without authority; every member and invitation write by a staff member refused, even
+  for a staff member holding every grantable permission (fixture), and seeding `members.manage` or `invitations.manage`
+  into a role refused by the grant table's CHECK (reserved); owner untouchable; archived role refused; forged actor fields impossible (no parameter exists); rollback
+  when the in-function audit insert fails; concurrency per §7.2; grants and pinned `search_path` guard (inventory test
+  over every definer); **mixed-version test** — the previous commit's direct-write repository code fails with
+  `insufficient_privilege` against the migrated database, for every former direct write; **lock-order guard** (§7.2)
+  green for every planned footprint, with its baseline control, its five mutation self-tests and its three
+  fail-closed self-tests (`EXECUTE`, unqualified call, unclassified reachable function); two-connection tests (a),
+  (b), (d) and (f)–(j) of §7.2, 50 runs each, no `40P01` ((c) and (k) need the role-permission writer and run in
+  P5.6; (e) needs platform grants and reads and runs in P5.7); the §8.2a contract tests; **invitation-acceptance attribution** on both paths —
+  the `auth.invitation_accepted` row names the invitation's identity, `NULL` audience, the new membership, the
+  invitation's merchant and the invitation, and a call to `accept_invitation` with a different `p_identity_id` is
+  refused and writes nothing; the **containment tests of §11.1**; the **account-separation tests of §7.4** (CF3 and the bootstrap change); the **nested-writer tests of §7.2 (R27)** for account setup with zero, one and two
+  invitations, including the rollback cases and the two guard self-tests. The sensitive-read tests (R16, R18, R19) run where the read functions are built — P5.7
+  (#35, #36) and P5.8 (#33, #34).
+- **Order inside P5.5 (implementability).** Each step is its own commit(s) with the local gate green:
+  (1) the lock helpers and the lock-order guard, the guard first in **report mode** (R34): every check runs; a finding
+  that is an entry of the baseline reconciliation table is reported and tolerated, **any other finding fails at once**
+  (so no new violation can enter), and a tolerated entry that no longer occurs fails too until it is deleted from the
+  tolerated list in the same commit (so the list only shrinks);
+  (2) conversion of the existing functions to their footprints (`FOR NO KEY UPDATE`, the reordered
+  `set_merchant_status`, `issue_invitation`, `complete_account_setup`), with test (h) recorded before and after;
+  (3) authority from the resolver in the member, invitation, lifecycle and transfer functions (owner-only per D5′,
+  reserved platform permissions) and the SQL authority guard; (4) the enforcement migration (writers created, direct
+  grants revoked) with the app switch and the mixed-version test in the same commit; (5) the account-setup
+  re-specification with the nested-writer table (R27), the account-separation check in admission and the replaced
+  `bootstrap_super_admin` (CF3, §7.4); (6) the
+  containment switch (§11.1); (7) the transitional-writer gate (R32). **Enforcing mode** is entered when, and only
+  when, the tolerated list is empty and every planned-footprint entry owned by P5.5 exists and conforms; the tolerance
+  mechanism is then deleted from the guard (as the transitional list is, R32), and a test fails if it reappears. P5.5
+  cannot close in report mode.
+- **Test budget (§9.3), confirmed 2026-10-13 before any P5.5 code — measured locally, not CI.** *Machine:* 7.7 GB
+  RAM, 12 logical CPUs; Postgres 16 in Docker (`max_connections` 100). *Time:* a probe (a temporary copy of the P5.2
+  two-connection suite, deleted, never committed) ran the "re-checked first" race 50 times for each of its two
+  revocations — 100 races, fixtures included, in 14.1 s (about 141 ms each). P5.5's eight suites × 50 runs ≈ 400
+  races ≈ 56 s; with P5.6's (c), (k) and P5.7's (e), about 550 races ≈ 78 s. They run in `packages/db`, whose files
+  run one at a time. The whole gate's `pnpm test` took 109 s wall on a quiet machine (db 47 s, API 47 s); earlier runs
+  the same day under other load took db 142 s and API 97 s. *Memory:* sampled every ~2 s through a full `pnpm test`:
+  the test processes peaked at 916 MB working set; free physical memory fell to 327 MB (average 679 MB); the commit
+  charge was already 94% of its limit before the run (other workloads on the machine) and peaked at 98%. The
+  two-connection suites add connections and time to the single `packages/db` worker, not Node memory; the memory
+  load is the API suite's four workers (argon2, 19 MiB per hash), which P5.5 does not change. *The observed
+  contention, explained:* the reviewer's first, parallel P5.3a run (database activity 00:07–00:08 UTC, inside the
+  review window between `a50831e` at 23:26 UTC and `3add9ea` at 00:27 UTC) coincides with Postgres terminating an
+  API-pool connection for **idle-in-transaction timeout** at 00:08:09 UTC — the pool sets 10 s
+  (`apps/api/src/platform/db.ts`), so a test process stalled at least 10 s inside a transaction. The application is
+  not the cause: a scan of all 31 transaction openers in `apps/api/src` (`db.transaction`, `withTenant`) finds no
+  call inside one that takes a second pool connection (pool, `identity.*` outside `.within(tx)`,
+  `recordBestEffort`, limiter, mailer, a nested transaction), and no test holds a transaction open. A stall of that
+  length on a machine at 94–98% commit is memory pressure — as in P4's incident (`apps/api/vitest.config.ts`). The
+  serial re-runs (00:09–00:11 UTC) passed. The one A7 failure seen at P5.4 (not reproduced in seven later runs) left no
+  idle-in-transaction termination in the log; its cause is not established. *Decision (§9.3):* the two-connection suites stay in
+  `pnpm test` (`packages/db`), 50 runs each, never fewer without a recorded decision — no `test:concurrency` split
+  is needed now. Gate runs on this machine are made one at a time, never alongside another test run. Every failure is
+  reported; one that is only a timeout or a terminated connection is also re-run serially, and both results are
+  recorded. The 10 s idle-in-transaction timeout is a production safeguard and stays. The budget is checked again
+  when P5.6 and P5.7 add their suites; if `packages/db` passes five minutes, or a gate run fails for memory, the
+  suites move to `test:concurrency`, which is then part of the gate.
+- **Progress — step 1 built 2026-10-13 (the P5.5 gate is not reached; local, not CI).** Commits `afe7499` (the seven
+  lock helpers), `73d3e89` (the SQL guard in report mode, the 5d8904b fixture, the baseline control and the self-tests),
+  `708730e` (approved writes per function, R22), `f6c5ecc` (the repository-transaction classes, R17, R22, R27). **What
+  the guard is:** the SQL side (`packages/db/test/support/lock-analysis.ts`, `lock-plan.ts`, `lock-order-guard.test.ts`)
+  reads every function of the four schemas from the catalog and computes its waiting footprint recursively (calls,
+  triggers); every function has a class (operation with a planned token sequence, identity flow, other identity
+  function, helper, `…_locked`, nested check, reader, trigger, standalone, retired) and declared approved writes; the
+  repository side (`apps/api/test/support/transaction-classes.ts`, `test/locks/transaction-classes.test.ts`) follows
+  every `db.transaction` / `withTenant` body through the compiler and classifies it T1–T5. **Fixture provenance:** the
+  45 functions of a database built from 5d8904b's 21 migrations alone, verified identical to the same functions at
+  HEAD. **Report mode holds:** the live functions report exactly the 25 baseline entries (every P5 function and helper
+  conforms); 9 transactions are tolerated (settings writes: step 4; member, invitation, lifecycle and transfer flows on
+  `recordWithin`: steps 3, 7) and one nested-writer entry (`admit_invitation_locked`: step 5); the other 22
+  transactions classify (T2 identity flows, T3 reads, T5 the best-effort insert). **Gate on the tree of `f6c5ecc`:**
+  `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 475, api 597,
+  all passing, 108 s wall; the spec is unchanged since `a39b2c7`. **Proven by sabotage** (restored byte-identical): a
+  helper switched to `FOR UPDATE` and one reversed; a tolerated SQL entry removed, a non-occurring one added, a
+  baseline entry removed; a direct write slipped into the real password-change transaction, a tolerated transaction
+  removed, a classified one tolerated — each fails. **Judgement calls for the gate review:**
+  (1) **finding — `verify_email` locks out of order:** it activates the owner's pending merchant (category 2) after the
+  token (5) and the identity (6). Today `set_merchant_status` also goes 6 → 2, so nothing deadlocks; once step 2
+  reorders it to the planned 2 → 6, email verification and merchant deactivation would deadlock. Proposed footprint
+  (§7.2 table, marked proposed): lock the identity's pending owned merchants first, then the token, then the
+  identity — behaviour unchanged. Step 2 implements it unless the review decides otherwise;
+  (2) **finding — two L3 violations** the plan's table did not list: `issue_invitation` locks and writes after its
+  contested identity insert, and `complete_account_setup` locks the next invitation's merchant after the first
+  membership insert; both are already corrected by their planned footprints. The reconciliation table is amended to
+  the 25 entries the guard reports;
+  (3) **seven helpers, not four**, each sorting its ids itself (above);
+  (4) **analysis bounds, stated in the analyser:** order is textual (every branch counts; a loop body counts twice); a
+  write to a table whose rows the function already holds `FOR NO KEY UPDATE` is a write to held rows (table-level —
+  the two-connection tests are the adversarial evidence that the rows written are the rows held); a direct locking
+  statement must pin one row by its key, otherwise it is a multi-row acquisition that needs a helper; a unique key is
+  contested unless one of its columns holds fresh values (a uuid_v7 id or a hash), and the contested keys of the tables
+  written in scope are asserted as a list; the authority lock is the acquisition whose ids come from the membership
+  read from `validate_session` or `session_authority`;
+  (5) **approved writes (R22) are declared per function** and checked through every nested call and trigger, so the
+  transaction classifier can refuse a definer that reaches an unapproved write;
+  (6) the guard's SQL side lives in `packages/db` (the database tests run one file at a time, so its self-tests install
+  scratch functions and tables); the transaction side lives in `apps/api` (it needs the compiler and the API source)
+  and imports the analysis through `@alphakolect/db/lock-analysis` and `/lock-plan`; its scratch definers are analysed
+  as definitions and never installed, because the API's test database is shared by parallel files and the P5.3a
+  writer guard scans every schema;
+  (7) T4 has nothing to classify before P5.7; the classifier recognises the other four classes;
+  (8) the plan's `list_members`-style lock-free readers are classified as readers and verified to lock and write
+  nothing anywhere in their footprint.
+- **Progress — step 2 built 2026-10-13 (local, not CI).** Commit `8cdf7c6`, migration `20261013001000_lock_order`: every
+  `FOR UPDATE` is `FOR NO KEY UPDATE` (L1); `set_merchant_status`, `transfer_ownership`, `issue_invitation`,
+  `verify_email` (the step 1 finding, as proposed), `complete_account_setup` and `accept_invitation` take their
+  footprints in the category order with every multi-row category in one helper call and contested inserts last;
+  admission is `tenancy.admit_invitation_locked` (L6: NOWAIT re-assertions only; `admit_invitation` dropped). Authority
+  is unchanged (step 3). **The guard:** no L1, order or L3 finding remains; `complete_account_setup` and `verify_email`
+  meet their footprints; the tolerated list is down to six footprints (the actor's lock in five operations, step 3;
+  `bootstrap_super_admin`, step 5); `BASELINE_CLASSES` keeps the baseline control on the P4 definitions and the rows
+  they were reconciled under. **Two-connection tests** (`packages/db/test/lock-races.test.ts`, staged with a third
+  connection holding one row): (h) deadlocked on run 1 against P4, none in 50 runs after; email verification against a
+  merchant deactivation, 50 runs, no deadlock, the deactivation always wins. **Gate on `8cdf7c6`:** `format:check`,
+  `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 477, api 597, all passing (every
+  existing account-setup, invitation, lifecycle, transfer, membership and session test unchanged), 121 s wall.
+  **Sabotage** (restored byte-identical): admission with a waiting lock fails L6 and, through both callers, order, L3
+  and footprint; `verify_email` consuming the token before its merchant lock fails the order. **Judgement calls:**
+  (1) `issue_invitation` inserts a new invitee's identity last (L3); if another transaction created that email between
+  the lookup and the insert, it reads the identity without a lock (a lock may not follow a contested insert) and
+  re-checks membership — the answer is unchanged; (2) `complete_account_setup` admits the invitations pending at its
+  lookup; one issued in the instant between lookup and lock stays pending (its link still works); (3) `verify_email`
+  activates only the businesses it locked, re-checking ownership under the lock; (4) the test helpers end each racing
+  transaction as soon as its statement settles — the first versions waited on both statements before ending either, a
+  client-side wait the database cannot see, and hung.
+- **Progress — step 3 built 2026-10-13 (local, not CI).** Commits `88eff08` (the SQL authority guard, in report mode),
+  `50bcdc8` (migration `20261013001100_authority` and the API switch), `843c102` and `1302ec8` (the races; the second
+  fixes a type error the first was committed with — the commit helper checked secrets, not types; code commits now go
+  through a helper that refuses unless typecheck and lint pass). **Authority from the resolver:** `update_membership`,
+  `issue_invitation`, `revoke_invitation` (`merchant.members.manage` / `merchant.invitations.manage`, reserved to
+  the owner, D5′), `set_merchant_status` and `transfer_ownership` (the reserved platform permissions) take their whole
+  footprint — the actor's row at its category's turn, in the same sorted acquisition as their targets — then ask
+  `tenancy.assert_authority`, then check every rule in P4's order (`forbidden` still first), then write;
+  `list_members` checks `merchant.members.read` in the resolver's set. **Pattern A:** each success inserts its atomic
+  row in the same transaction, the actor from the session (no actor parameter exists), the request context recorded as
+  given (new trailing parameters, NULL by default for direct callers); eight pairs left the transitional list (six
+  remain: the settings writes, step 4; `auth.invitation_accepted`, step 5). **The guards:** every planned footprint
+  of the five is met (tolerated: `bootstrap_super_admin` only, step 5); the SQL authority guard tolerates nothing —
+  its exact list holds 22 data rules (eligibility, the bootstrap, owner lookups, the one-owner invariant, the invited
+  kind, owner protection, transfer's demotion and promotion; the platform sign-in literal until P5.7); five
+  transactions classify T1. **Tests:** `privileged-functions.test.ts` (16): each success writes exactly one row with the
+  session's actor and the request context; a staff member holding every grantable permission is refused member and
+  invitation writes and platform support is refused lifecycle and transfer, with nothing changed and no row; `forbidden`
+  before `not_found`; owner protection; reserved permissions cannot be granted; the actor's own row is held — a blocker
+  makes the call wait until a lock timeout (the test checks the message: a NOWAIT failure shares SQLSTATE 55P03, and
+  `assert_authority` would raise one at once if a function forgot the actor's lock); the parameter lists. Two-connection
+  races (`lock-races.test.ts`, 50 staged runs each, no deadlock): (b) two owner sessions on two members, both orders;
+  (a)/(d) transfer against the former owner's member change — the change first, both succeed; the transfer first, the
+  change is refused by its re-check; (f) deactivation against transfer, and against invitation issue — an issue after the
+  deactivation is refused; (g) account setup against deactivation — admitted only when setup ran first; (j)
+  acceptance, revocation and re-issue — exactly one of acceptance and withdrawal takes effect. (b)'s staff-write half
+  and (i) need step 4's writers. **Gate on `50bcdc8`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 62, db 496, api 597, all passing (the API coverage tests confirm each
+  moved pair still commits with its change and rolls back with it, with the same actor, business, target and request
+  id), 124 s wall. **Sabotage:** the actor removed from `update_membership`'s lock fails the runtime test (a NOWAIT
+  failure, not a lock timeout) and the guard (`3:NKU` where `A3:NKU` is planned). **Judgement calls:** (1) the request
+  context parameters default to NULL, so direct callers (database tests, operators) need not pass them; the API always
+  does; (2) a staff caller of an owner-only function — impossible through the API, whose policy middleware refuses first —
+  has its role re-asserted by `assert_authority` with NOWAIT: an error, never a wait, if a role edit holds it at that
+  instant; (3) `update_membership` locks a target only if it is a member of the caller's business (an unlocked lookup
+  first), so no request locks another business's row; (4) the lifecycle service no longer sets `app.merchant_id` (it
+  wrote the audit row through RLS; the function now does, as table owner) and left the T14 setter list.
+- **Progress — step 4 built 2026-10-13 (local, not CI).** Commits `bb53c29` (the repository-transaction
+  classifier counts privileged operations per statement: a statement folded from a constant map runs one of its values,
+  so a branch-or-role write is one operation, not two), `b555f1f` (migration `20261013001200_enforcement` and the
+  API switch), `2591c5d` (the enforcement and mixed-version tests), `95214bf` (races (b) staff half and (i)).
+  **The boundary, one migration in one transaction:** five writers — `update_profile`
+  (`merchant.profile.update`), `create_branch` and `update_branch` (`merchant.branches.manage`), `create_role` and
+  `update_role` (`merchant.roles.manage`, not grantable) — on the plan's footprint row (the merchant S, the profile
+  writer NKU; the actor NKU; the actor's role and the edited role in one sorted call; the edited branch NKU; the contested
+  insert last), each asking `tenancy.assert_authority` and then writing its own pattern-A row with the actor from the
+  session; six lock-free read functions — the five of B1 and `read_own_membership` (judgement 1); `EXECUTE` on the
+  eleven to the app; then `REVOKE ALL` on `tenancy.merchants`, `branches`, `roles` and `invitations` from the app,
+  column privileges included (the permission catalog has had no app grant since P5.1; the reporting role is unchanged).
+  The repository reaches those four tables only through the functions; `recordWithin` left the settings service, and
+  the transitional list holds `auth.invitation_accepted` only (step 7). **The guards:** all five planned footprints
+  met; the contested keys gain the two one-active-name indexes (the label now marks an expression column); the
+  settings transactions classify T1, leaving `InvitationService.accept` as the only tolerated transaction; the writer
+  inventory names the SQL writers. **Tests:** `enforcement.test.ts` (35) — no table or column privilege on the four
+  tables and a direct read or write refused in any tenant context; each reader returns only the session's business and
+  needs its own permission (a staff member reads exactly what the role grants; agent, unknown and revoked sessions read
+  nothing); each owner write records one row with the session's actor and the request context (the user agent cut to
+  512); a staff member without the permission is refused every write with nothing changed and no row, one granted
+  `merchant.branches.manage` writes branches as themselves, and roles stay the owner's even for a role holding every
+  grantable permission; `forbidden` before `not_found`; the named unique violation; the acting member's row, a staff
+  actor's role, the business row, the edited branch and role each held (a lock timeout, not a NOWAIT failure); no actor
+  parameter. `mixed-version.test.ts` (23) — the previous version's 11 statements over the four tables
+  (`fixtures/repository-sql-4319177.json`, extracted from `4319177` with constants folded) each fail with
+  `insufficient_privilege` as the app with the tenant set as that version set it, and succeed as the table owner with
+  the same values (the control: the refusal is the privilege alone). The rollback of each settings change when its
+  in-function audit insert fails is proved end to end by the API coverage tests (`failAuditInsert`). Existing tests
+  that relied on the app's direct access now assert its absence: the four tables join `tenancy.role_permissions` on
+  the row-level-security test's no-app-access list, the table rules (names, archiving) run as the table owner, P5.2's
+  role-archive race archives through `update_role`, the API repository test uses real sessions. Races (b) staff half
+  (a staff branch write against the owner deactivating that member: the write made when it ran first, refused by its
+  re-check when the deactivation did) and (i) (account setup admitting two invitations of two businesses against a
+  member operation in one and an archive of the invited role in the other: admitted there only if setup reached the
+  role first): 50 staged runs each, no deadlock. **Gate on `95214bf`:** `format:check`, `lint`, `typecheck`,
+  `build`, `openapi:check` pass (`openapi/v1.json` unchanged); `pnpm test` — contracts 62, db 551, api 598, all
+  passing; 390 s wall, against 124 s at step 3, with the machine under memory pressure (0.5 GB of 7.7 GB free; db
+  196 s, API 157 s of which 94 s collecting files) — the db suite's own addition is about 21 s of races and 10 s of new
+  tests. `bb53c29` alone was checked against the previous schema and code (the classifier suite, 15 passing).
+  **Sabotage:** seven migration mutations — `create_branch` without the actor lock (also failing the lock-order
+  guard), asking the read permission, `list_branches` without its permission check, `list_invitations` without the
+  business predicate, `update_role` writing another action, the revocation left out, only branches revoked — and one
+  race mutation (`update_branch` without the actor lock) each fail their tests. **Judgement calls:** (1)
+  `read_own_membership` is a self read without a permission: `GET /v1/merchant/membership`, its agent twin and the
+  business name in invitation emails read the caller's own business, which P4 let every member read; it is not among
+  B1's five, and is added because those reads lose `SELECT` on merchants; (2) a reader returns no rows, not an error,
+  without the permission — the middleware decided first, so this happens only when a permission is withdrawn between the
+  two checks: an empty list (as `list_members` since P4.5), a 404 for one item, P4's 401 for the profile; (3) a
+  settings write refused by the database alone is answered 403 with the middleware's message and recorded best effort
+  as that write's denial (`{reason: 'forbidden'}`); `not_found` is a 404 without an event, as in P4; (4)
+  `list_invitations` stays unpaginated, as in P4 (O9); (5) the writers find the edited branch or role with an unlocked
+  lookup restricted to the caller's business before locking it, so no request locks another business's row (as
+  step 3 (3)); (6) P4's "cannot switch row security off" test for branches and roles was removed — without a privilege
+  the app's query fails before row security applies; the catalog guard still requires RLS and an app policy on those
+  tables for any later grant.
+- **Progress — step 5 built 2026-10-14 (local, not CI).** Commits `383e749` (migration
+  `20261014000100_account_setup` and the API change), `efee310` (the nested-writer tests, R27), `6dc4a70` (admission
+  and account-separation tests), `d025f0e` (the admission-against-bootstrap race). **Admission records #14:**
+  `admit_invitation_locked` inserts one `auth.invitation_accepted` per membership it creates, on both paths, with the
+  capability-based actor of §8.1 — the invitation's identity (on the setup path the consumed token's identity, since
+  setup admits only that identity's invitations and admission refuses any other), no audience, the membership just
+  created, the invitation's business, the invitation as target, summary `{path, kind}` (the catalog's allowlist for the
+  pair, `{}` since P5.3a, gains the two fields) — and the request context as given (new trailing parameters of
+  `accept_invitation` and `complete_account_setup`, NULL by default; admission gains the path). The setup path's gap
+  is closed; the link path's row left the API. **Accounts apart both ways (CF3):** admission refuses an identity with
+  any platform membership (any role, any status) on both paths with the generic refusal; `bootstrap_super_admin` (same
+  signature) locks an existing identity `FOR NO KEY UPDATE` and refuses one with any merchant membership; the migration
+  refuses to run over an identity already in both audiences. **The transitional writer is gone:** its last pair moved
+  into the database, so `recordWithin` was removed from `AuditLog` and `TRANSITIONAL_PAIRS` deleted in the same commit
+  (judgement 1); the writer guard still finds the name and rejects any call. **The guards:** `TOLERATED`,
+  `TRANSACTIONS_TOLERATED` and `NESTED_WRITERS_TOLERATED` are empty — the bootstrap's footprint (`6:NKU`, `+6`,
+  `+1`) is met, acceptance classifies T1, and account setup reaches its one nested writer; the inventory names
+  `admit_invitation_locked` as #14's writer. **Tests:** `nested-writers.test.ts` (API, 5) — setup with no pending
+  invitation (#10 alone), one, and two of two businesses (one #14 per membership, each with the §8.1 actor); the second
+  #14 failing rolls back the password, the verification, both memberships, the first #14 and #10 (and the same link then
+  succeeds); #10 failing rolls back both #14 rows and both memberships (the R27 guard self-tests exist since step 1).
+  `admission.test.ts` (db, 16) — #14 on both paths with every field; another identity refused with nothing written; #14
+  failing to store rolls the admission back; the issue answer for a platform account equals any existing account's; a
+  super admin, a support member and a deactivated platform member refused by link with nothing written; a bootstrapped
+  super admin finishing setup through a business's invitation not admitted; the bootstrap refusing a business account
+  (also with a deactivated membership) and creating nothing, still taking a passwordless identity in no audience; the
+  migration's guard; no actor parameter. Race (§7.4): admission against the bootstrap of the same email, 50 staged runs
+  in both orders — the identity ends in exactly one audience, the one that reached it first; no deadlock. Changed:
+  the bootstrap CLI test's "existing password" case now uses an account in no audience, and a business account is
+  refused (23514) — the CLI already prints such database refusals. **Gate on `d025f0e`:** `format:check`, `lint`,
+  `typecheck`, `build`, `openapi:check` pass (`openapi/v1.json` unchanged); `pnpm test` — contracts 62, db 568,
+  api 600, all passing; 236 s wall. **Sabotage:** admission without the platform check (fails four admission tests
+  and the race), the bootstrap without the business check (two tests and the race), the bootstrap without its identity
+  lock (the lock-order guard and the race), admission recording the wrong target (the attribution test). **Judgement
+  calls:** (1) `recordWithin` and the transitional list were deleted in step 5, not step 7 — step 5 removed their last
+  user, and an empty list leaves a method whose argument type is `never`; step 7 now adds the R32 gate's tests (step
+  4's record said the pair would leave in step 7; it left in step 5); (2) the refusal of a platform account reuses the
+  outcome `identity_ineligible` — the link path's answer is the same generic error either way, and its best-effort
+  failure row records that reason; (3) the migration carries today's date (`20261014…`); (4) the bootstrap of a business
+  owner's email, which P3 allowed, is now refused — the owner's CF3 decision ("keep them apart both ways"), not a new
+  rule.
+- **Progress — step 6 built 2026-10-14 (local, not CI).** Commits `d740d77` (migration `20261014000200_containment`)
+  and `a897faa` (the operator command). `util.authorization_containment` holds one row (`id boolean`, the one-row key
+  of §8.6) with `merchant_grants_suspended` and `platform_grants_suspended`; no app or reporting grant.
+  `util.set_authorization_containment(merchant, platform, reason)` — operator-only — locks the row, sets both flags
+  (each required; a reason of 1–500 characters) and records #39 `platform.authorization_containment_set` in the same
+  transaction (no actor; summary: both flags and the reason; the catalog gains the pair). `identity.permissions_of`
+  (same signature) reads the flags without a lock: while one is set, every grant row of that kind counts for nothing,
+  in the per-request resolver and in every write-time re-check; the owner's and the super admin's fixed sets are
+  unaffected; a missing row counts as suspended (fail closed). `admin:containment` (`apps/api/scripts/containment.ts`,
+  logic in `apps/api/src/platform/containment.ts`, migrator connection, as `admin:bootstrap`): `--status`, or
+  `--merchant on|off --platform on|off --reason "…"` — both flags always given, so lifting one never lifts the other.
+  **Tests:** `containment.test.ts` (db, 9) — the app can neither call the switch nor read or write the table, the
+  reporting role has nothing; one row; a reason and both flags required; with the merchant flag, staff lose every
+  granted permission on the next request while the owner and platform staff keep theirs, the re-check agrees, lifting
+  restores; the platform flag likewise for platform staff and the super admin; **a write already waiting for its
+  re-check when the flag is set is refused and writes nothing**; a missing row fails closed; #39 commits with the change
+  and an injected failure of its insert leaves the flags unchanged (the coverage guard's two tests). The CLI core (API,
+  3, in rolled-back transactions — the API test database is shared by four workers): read, set with a reason (recorded),
+  a blank reason refused with its safe message, the API role refused. Smoke-run by hand against a throwaway migrated
+  database: status, set, status, two refused usages, lift, status. **Sabotage:** the resolver ignoring either flag, a
+  missing row counted as not suspended, the switch recording the wrong flag — each fails. **Judgement calls:** (1) the
+  plan gives the containment row a footprint (the one row, NKU) but no category; it is placed in category 0, beside the
+  purge reservation — operator-only one-row tables that no request path locks — so the guard (which fails closed on a
+  table without a category) checks it as `0:NKU`; (2) #39's actor audience is NULL as well as its identity (an
+  operator has no session; the bootstrap's older row keeps `platform`); (3) **a defect found and fixed outside the
+  package** (`9d408bf`): pnpm passes the `--` separator through to a script, so `admin:bootstrap -- --email …` — the
+  documented invocation since P3 — failed in `parseArgs`; the smoke run of `admin:containment` showed it, it was
+  reproduced in isolation (the bootstrap itself was not run), and both scripts now drop one leading `--`.
+- **Progress — step 7 and enforcing mode, 2026-10-14 (local, not CI).** `89deb89`: the transitional-writer gate (R32),
+  each item a test — (1) the catalog exports no transitional list and no source names one; (2) no `recordWithin` call
+  in `apps/api/src` (through the compiler and in the text) and no such method on `AuditLog`; (3) for each of the 14
+  pairs the list held (`FORMER_TRANSITIONAL_PAIRS`, as at `3add9ea`) a re-added `recordWithin` call fails the
+  writer guard and makes the coverage guard count two writers; (4) each of the 14 has exactly one designated pattern-A
+  writer, its database function, and its co-commit and injected-rollback tests in `coverage.test.ts`; (5) the full
+  gate. Sabotage: a `recordWithin` method put back on `AuditLog` fails (2). `0278b38`: **enforcing mode** — the
+  tolerated lists (`TOLERATED`, `TRANSACTIONS_TOLERATED`, `NESTED_WRITERS_TOLERATED`, `AUTHORITY_TOLERATED`) were
+  all empty and every P5.5 planned footprint exists and is met, so they are deleted: the SQL guard fails on any finding,
+  the authority guard compares with the data rules alone, every repository transaction must classify and every
+  nested-writer entry be reachable; a test fails if the plan data exports a tolerated list again (sabotage: adding one
+  back fails it). The baseline control stays (it is the reconciliation record, not tolerance). Two tests the P5.5 list
+  asked for and the steps had not written: `351c827` — **every `SECURITY DEFINER` function pins
+  `search_path = pg_catalog, pg_temp`** (the "pinned search_path guard"; all already did; sabotage: a temporary
+  migration adding an unpinned definer fails it); `74bf1ca` — **the settings writers' §8.2a refusal contract at the
+  service**: a refusal by the database alone (the tenant context claims the permission, the session's role holds none)
+  is 403 with nothing changed and one best-effort denial with the actor and `{reason: 'forbidden'}`; with that insert
+  failing, the same 403 and one `audit_denial_write_failure` signal; another business's item 404 with no event; an
+  exception inside the function is not a refusal — an operational error, nothing changed, no denial.
+- **Built 2026-10-14; gate approved 2026-10-14** (§14: "Verdict: P5.5 approved to close"; the seven recorded decisions
+  accepted; the `admin:bootstrap` fix accepted, its missing parsing regression test noted as non-blocking; focused
+  suites re-run serially by the reviewer — 80 database and 76 API tests passed; the full gate not re-run; CI has not run;
+  P5.6 stays behind its source-guard precondition and the project lead's go). **Gate on `74bf1ca`** (local, not CI; one run at a time):
+  `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 62, db 580, api 642,
+  all passing, 394 s wall with 0.8 GB of 7.7 GB free (db 311 s, of which 144 s running tests; API 65 s); oasdiff 1.32.1
+  against `origin/main` (`5d8904b`): 0 errors, 0 warnings, 2 info — the `permissions` field P5.4 added to the two
+  membership responses; `openapi/v1.json` has not changed during P5.5. gitleaks staged scan before every commit, nothing
+  found. **Test budget (§9.3):** the two-connection suites are 11 tests × 50 staged runs = 550 runs in 86 s (the
+  estimate was 400 runs ≈ 56 s; P5.5 added (b)'s staff half, (i) and the §7.4 race to the eight planned suites); wall
+  times this package ranged 236–394 s with the machine under memory pressure — the decision stands (suites in
+  `pnpm test`, 50 runs each), to be re-checked at P5.6 as recorded. **Done when (this section):** no hard-coded owner or
+  super-admin authority outside the resolver — the SQL authority guard holds 22 data rules and nothing else, in
+  enforcing mode; API and database agree — the P4 isolation matrix and route parity pass unchanged with the database
+  now deciding every permission-gated read and write a second time; R32 holds, each item a test. **Open for the
+  reviewer:** (a) the step-by-step judgement calls recorded above (steps 3–6); (b) step 5 deleted `recordWithin` and
+  step 7 holds the R32 tests — the plan's order put both in step 7; (c) two items the P5.5 list named were missing
+  until the gate and were added there (`351c827`, `74bf1ca`); (d) the `admin:bootstrap` argument fix (`9d408bf`)
+  is outside the package; (e) the P5.6 hard gate is unchanged — the broader source guard and its mutation tests come
+  first, and no grant writer exists.
+- **Test fixtures for staff authority.** No function can grant a staff or platform-staff permission before P5.6/P5.7
+  (§11), so the P5.5 tests that need a staff member holding a permission (a staff branch write racing the owner,
+  revoke-vs-write) seed `role_permissions` rows **as the table owner in the throwaway test database**, exactly as the
+  P5.1 constraint tests do. Fixtures never use an app-reachable path, and P5.6 repeats those tests with grants set
+  through `set_role_permissions`.
+- **Guard scope grows with the packages.** The lock-order guard checks every planned-footprint entry whose function
+  exists; each entry names the package that introduces it (P5.6: `set_role_permissions`; P5.7: platform staff, grants
+  and the two platform reads; P5.8: the two audit reads). An entry whose package is complete and whose function is
+  missing fails the guard, so no entry can be silently dropped.
+- **SQL authority guard — what it forbids and what it allows, enumerated.** It forbids **actor authority** decided by
+  a literal: a test of the calling session's membership kind or platform role (today `v.kind = 'owner'` in
+  `list_members`, `update_membership`, `issue_invitation`, `revoke_invitation` and `pm.role = 'super_admin'` joined
+  to the session in `set_merchant_status`, `transfer_ownership` — [Fact] `20261011000200:31,62`,
+  `20261012000100:195,262`, `20261009000100:104`, `20261011000300:40`); outside the resolver, authority comes only
+  from the resolver's permission set. It allows, by an explicit list in the guard, the **data rules** that name a kind
+  or role of a *target* or of stored rows, which are not authority: owner protection (`v_target.kind = 'owner'`,
+  `20261011000200:76`); the one-owner invariant (`20261011000100`); transfer's demotion and promotion
+  (`20261011000300:54,58,98`); sign-up creating the owner (`20261003000200:36`); audience eligibility by kind
+  (`mm.kind IN ('owner','staff')` / `'agent'`); and `identity.bootstrap_super_admin` (creates the super admin,
+  `20261003000500:51,62`). **Until P5.7** it also allows the platform sign-in eligibility literal
+  `pm.role = 'super_admin'` in `identity.eligible_memberships` (`20261009000200:57`), which P5.7 replaces; from P5.7
+  that entry is removed and the guard fails if the literal remains. Any literal not on the list fails the guard.
+- **Done when:** no hard-coded `owner`/`super_admin` authority remains outside the resolver (SQL guard), and API and
+  database agree in the matrix; and **the transitional-writer gate (R32)** holds, each item shown by a test, not by a
+  statement: (1) the guard's transitional list is empty and deleted; (2) no `recordWithin` call remains in
+  `apps/api/src` and the method is removed from `AuditLog` (source guard); (3) a mutation that re-adds a
+  `recordWithin` call for a former transitional pair fails the writer and coverage guards; (4) every pair that was on
+  the list has exactly one designated pattern-A writer, with its co-commit and injected-rollback test green; (5) the full
+  gate passes after the removal.
+
+### P5.6 — Role permission management
+
+- **Migration:** `tenancy.set_role_permissions(session, role, permissions[])` — footprint per §7.2 (merchant S →
+  owner NKU → role NKU → grant rows), owner authority re-checked under the locks, catalog scope/grantability validated,
+  `merchant.role_permissions_set` written in the function (pattern A).
+- **Contracts/code:** `GET /v1/merchant/permissions`, `PUT /v1/merchant/roles/{roleId}/permissions` (owner), role
+  responses include their permission set; archived roles keep their set (inert, D6).
+- **Tests:** owner sets permissions; staff with any permission set cannot (reserved); unknown/platform/reserved
+  permission refused by the database — including `members.manage`, `invitations.manage` and `audit.read` (reserved,
+  D5′, D8′); concurrent edit vs assignment per §7.2 — two-connection tests **(c)** and **(k)**, 50 runs each, no
+  `40P01`; the P5.5 staff-authority tests repeated with grants set through `set_role_permissions` instead of fixtures; cross-tenant role ids ⇒ 404; every change audited atomically with old/new permission lists
+  (allowlisted).
+- **Precondition (reviewer's condition at the P5.4 gate, 2026-10-13):** before the first staff grant is possible, the
+  P5.4 source guard (`apps/api/test/authorization-policy.test.ts`) is strengthened so that an authority decision by
+  membership kind or platform role cannot hide in an indirect form — a lookup table or map keyed by kind or role, a
+  helper that returns one, or a comparison through a variable — with a mutation test for each form it adds.
+  **Hard gate (project lead, 2026-10-13, §14):** staff grants cannot be enabled until the broader guard and its
+  mutation tests pass — P5.6's first commit is the strengthened guard, no grant writer (`set_role_permissions`) or
+  its endpoint lands before it, and the P5.6 gate checks that order. Not required before P5.5.
+- **Found before the start (2026-10-14) — open until decided; none is decided by this record.**
+  (1) **List-valued audit summaries.** #21 must record the old and new permission lists (above), and P5.7's #31 the
+  identifiers removed (§7.4), but the summary rules of the event catalog — the database trigger
+  (`audit.validate_event`), the TypeScript mirror and the writer guard (P5.3a) — allow only strings, integers and
+  booleans, so a list is refused at insert. Options: (a) a bounded list-of-strings rule (at most *n* items, each at most
+  *m* characters), added to the trigger, the mirror and the guard by P5.6's migration, with tests; (b) each list stored
+  as one comma-separated string under the existing string rule. Recommended: (a), which keeps the summary structured and
+  bounded. It changes a P5.3a mechanism, so it needs the reviewer's agreement before the commit that writes #21.
+  **Decided by the project lead (2026-10-14, §14): option (a), built in P5.6; the reviewer judges it at the P5.6 gate.**
+  (2) **Permission descriptions.** ADR-16's frozen `PermissionCatalog` items carry a `description`; nothing defines
+  it — `identity.permission_catalog` has no such column, and step 4's `tenancy.list_permission_catalog` returns the
+  identifier and grantability only. Proposed: a `description` column on the catalog, seeded by P5.6's migration (the
+  catalog stays the only authority) and returned by the reader. The wording is shown to business owners when they grant
+  access, so it is the owner's (O13): `docs/business/P5_OWNER_REMAINING_QUESTIONS.md` A1. **Decided 2026-10-14:** the
+  suggested line for each merchant permission, unchanged.
+  (3) **`Role.permissions` on every role response** (frozen, ADR-16): step 4's role reader and writers return no
+  permissions, so P5.6 replaces `tenancy.list_roles` (a new result column) and the role responses read the set after a
+  write — expected, recorded here so it is not a surprise at the gate.
+  (4) **The strengthened source guard (the precondition) — intended design.** Type-aware, through the compiler's
+  checker: the caller's membership kind or platform role (from `AuthContext`, `TenantContext` or a value of their kind
+  or role type) may not appear outside the policy module in a comparison, `switch`, lookup key (`map[kind]`,
+  `.get`/`.has`/`.includes`), or as the result of a helper used in one; an explicit, justified allowlist — today one
+  line, `platform/tenant.ts:43`, which checks that a merchant context's kind is a merchant kind (a validation, not a
+  grant); a mutation test for each form. No guard of this kind is complete; it catches the listed forms and fails closed
+  on a value it cannot type.
+- **Gate reviewed 2026-10-14 — not approved yet** (§14): the list rule, the source guard and the grant writer are
+  accepted; two items are to be resolved before closure: (1) the refusal message for a grantable permission, decided
+  by the owner (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, prepared 2026-10-14), with owner-only wording kept only
+  for reserved permissions, the authorization response and its tests updated; (2) the test-budget rule applied — the
+  database package passed five minutes (307 s at this gate), so the two-connection suites move to `test:concurrency`,
+  mandatory in the gate, still 50 runs each, with the split and its timings recorded.
+- **Test budget applied (the reviewer's item 2, 2026-10-14), `4e284ac`.** The rule of §9.3 was met — `packages/db`
+  took 307 s at the gate, past five minutes — so the two-connection suites moved to their own command, mandatory in
+  the gate: `pnpm test:concurrency` (root, and `packages/db` with `vitest.concurrency.config.ts`), run by CI right after
+  `pnpm test`. One list in `vitest.base.ts` (`test/lock-races.test.ts`: 13 races, 50 staged runs each) feeds both
+  configurations, so a suite is in exactly one run; `test-split.test.ts` checks the listed suites exist, `RUNS` is still
+  50, and the command is wired into the root scripts and CI. No repetition was reduced. **Timings** (local, one run at a
+  time, 0.5–0.8 GB free of 7.7 GB): `pnpm test` — db 604 tests in 116 s (from 307 s), contracts 64, API 690 passing,
+  347 s wall, but the run exited 1 on two Vitest worker RPC timeouts ("Timeout calling onTaskUpdate", no test failed);
+  `pnpm test:concurrency` — 13 tests, the races 139 s, 177 s wall. As §9.3 requires for a timeout, the API suite was
+  re-run on its own: a first re-run stalled for about two hours — two tests in parallel workers each took about 7,320 s — after which 15 tests failed on expired sessions (401) and timeouts and 119 were skipped; the database container stayed healthy and Windows recorded neither a clock jump nor a sleep, so its cause is not established; a second re-run passed — API 690 tests, 161 s wall, no errors.
+- **Refusal wording (the reviewer's item 1; the owner's answers O18), `616cff1`, `850a4b1`.** One table in
+  `authorization.ts`, `REFUSAL_MESSAGE`, typed over every permission, gives each refusal its message: a grantable
+  merchant permission — "You don’t have permission to do this. Ask the business owner if you need it."; a grantable
+  platform permission — "You don’t have permission to do this. Ask a super admin if you need it." (in place a package
+  before P5.7 adds its first endpoint, since the wording follows the catalog's grantable flag); a reserved one keeps
+  P4's message. The policy middleware and every database refusal of a permission (the settings writers, members,
+  invitations, the lifecycle) read it through `refusalMessage()`; the settings writers' database refusal now names the
+  permission each write needs — before, it said "owner only" for the profile and branches as well. The contract's 403
+  descriptions follow (12 endpoints of a grantable permission, 5 of a reserved one; descriptions only, no shape
+  changed). **Tests:** the denial oracle spells out the owner's four messages and picks one by the catalog's grantable
+  flag, read from the database, never from the code, and checks both kinds are covered; each database refusal in
+  `settings-refusals.test.ts` carries its message; `permission-catalog.test.ts` compares every active permission's
+  message with its grantable flag and scope. **Mutations:** the settings refusal back to the old text (3 tests fail),
+  `platform.audit.read` given the reserved text (1), `merchant.roles.manage` given the ask text (1 + 3 + 3).
+  **Gate:** on `850a4b1`, one step at a time (0.52 GB free of 7.7 GB at the start, 0.23 GB at the end): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 604 (96 s), API 691, all passing, exit 0, 221 s wall, no worker timeout this time; `pnpm test:concurrency` — 13 races, 50 staged runs each, passing, 154 s wall; oasdiff 1.32.1 against `origin/main` (`5d8904b`): no breaking changes (descriptions only).
+- **The owner's characters (the reviewer's re-review, 2026-10-14), `3d53835`.** The owner signed the form
+  (`feea3d4`; answers unchanged). The two new messages now match his signed answers R1 and R3 character for
+  character — "You don't have permission to do this. Ask the business owner if you need it." and "… Ask a super admin
+  if you need it.", with the straight apostrophe he typed, replacing the typographic one quoted in the bullet above.
+  The kept messages (R2 "Keep it", R4 "keep them") stay byte for byte as P4 had them, the typographic apostrophe of
+  "merchant’s status" included: keeping them means not changing them, and the form only quoted them. A new test in
+  `permission-catalog.test.ts` reads the signed form and compares the two messages with its R1 and R3 answers (and
+  that the form is signed); the typographic apostrophe put back fails it and the catalog test (2 tests). **Gate:** on `3d53835`, one step at a time (0.61 GB free of 7.7 GB at the start, 0.67 GB at the end): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 604 (103 s), API 692, all passing, exit 0, 238 s wall; `pnpm test:concurrency` — 13 races, 50 staged runs each, passing, 148 s wall; the contracts are unchanged since `850a4b1`, so its oasdiff result stands (no breaking changes).
+- **Built 2026-10-14; gate approved 2026-10-14** (§14: "Verdict: P5.6 approved to close", after the test-budget
+  split and the owner's signed wording (O18) were applied; the reviewer re-ran the policy, permission-catalog and
+  settings-refusal suites serially — 80 API tests passed, worktree clean; the full gate and the concurrency run not
+  re-run; CI has not run; P5.7 needs its own reviewer approval and the project lead's go). Commits, in order: `63e1893` (the strengthened source
+  guard — **the first P5.6 commit after the go, as the hard gate requires; no grant writer or endpoint precedes it**),
+  `062b53a` (the bounded list rule), `b597345` (permission descriptions), `cfc1573` (the grant writer, the role reader
+  and the two endpoints), `588bfae` (their tests), `521ed4e` (races (c), (k)), `e41a97d` (the P5.5 staff-authority
+  tests on writer-set grants). **The source guard** (`apps/api/test/support/authority-flow.ts`, in
+  `authorization-policy.test.ts`): through the compiler's type checker, the caller's kind or role — the `kind`/`role`
+  property of `AuthContext` or `TenantContext`, found by its declaration, or any non-literal value whose type admits
+  `'owner'` or `'super_admin'`, followed through variables, destructuring, helpers that return one, templates,
+  concatenation, conditionals and arrays, and an untyped `.kind`/`.role` — may be copied into data but may not reach
+  an equality, `in`, a `switch`, an element-access key or the argument of any call; the API source holds one such flow,
+  allowed with its reason (`tenantContextOf` validates that a merchant session's kind is a merchant kind); 17
+  type-checked probes, one per form (a comparison through a constant, a copied variable, destructuring; a lookup table, a
+  template key; a map, a set, an array through a variable; `in`; `switch`; a helper returning the kind, one returning a
+  table, one deciding; a value typed with the kinds; the platform role through a constant; access by name; an untyped
+  kind) are caught, 7 controls are not; a lookup table planted in `memberships.ts` fails it. **The list rule**
+  (migration `20261014000300`): `audit.validate_event` accepts `{"type": "string_list", "maxItems": n, "max": m}`; the
+  mirror's `FieldRule` too; 12 tests on a scratch pair. **Descriptions** (`20261014000400`): the catalog's
+  `description`, seeded word for word with O13 and required for every merchant permission (CHECK); the B1 catalog
+  reader returns it. **The writer** (`20261014000500`): `tenancy.set_role_permissions(session, role, permissions[],
+  context)` on the plan's footprint (`2:S`, `A3:NKU`, `7:NKU`, `9:W`, `+9`, met by the guard); `assert_authority`
+  for the reserved `merchant.roles.manage`; the set checked (active, grantable, merchant, none twice); `forbidden`,
+  `not_found`, `invalid_permissions` returned with nothing written; #21 with the set before and after; an archived
+  role's set may change and stays inert until restored (O14). `list_roles` returns each role's permissions.
+  **Endpoints** (ADR-16's frozen shapes): `GET /v1/merchant/permissions`, `PUT /v1/merchant/roles/{roleId}/permissions`,
+  `Role.permissions` on every role answer (read back in the same transaction after a write); 46 operations in the frozen
+  route map. **Tests:** `role-permissions.test.ts` (db, 17), `role-permissions-api.test.ts` (API, 10), the
+  database-only refusal in `settings-refusals.test.ts`, #21's co-commit and injected-rollback case, races **(c)**
+  (an edit against an assignment into the role) and **(k)** (a staff write against the owner removing its permission)
+  50 staged runs each, no deadlock; the enforcement, privileged-function and containment suites and race (b)'s staff
+  half now grant through the writer. **Gate on `e41a97d`:** `format:check`, `lint`, `typecheck`, `build`,
+  `openapi:check` pass; `pnpm test` — contracts 64, db 614, api 690, all passing; 574 s wall
+  (0.30 GB free of 7.7 GB, Docker Desktop just restarted); oasdiff 1.32.1 against `origin/main`: 0 errors,
+  0 warnings, 8 info — the two endpoints added, `Role.permissions` on the four role responses, and P5.4's two
+  `permissions` fields. **Test budget (§9.3), re-checked as decided:** the two-connection suites (13 × 50 staged runs)
+  took 165 s against an estimate of about 78 s, and the whole run 574 s; the suites stay in `pnpm test`, 50 runs
+  each, one gate run at a time, and the time is put to the reviewer (judgement 8).
+  **Sabotage:** an unpinned definer (P5.5's guard); a planted lookup table (the source guard); the list rule without
+  its per-item check (2 tests); the writer without its role lock (race (k) and the lock-order guard). **Judgement
+  calls:** (1) the source guard treats **any call** receiving the caller's kind as a decision, so a helper cannot hide
+  one; data copies (object literals, assertions, variables) stay allowed; (2) platform permissions have no description
+  yet — no contract shows them; P5.7 adds them if its staff screens need them; (3) `set_role_permissions` does not lock
+  the actor's own role — an owner-only operation, as the plan's row states; a staff caller's role is re-asserted
+  NOWAIT by `assert_authority`; (4) every successful call writes #21, even when the set is unchanged — it records that
+  the owner set it; (5) an unknown, owner-only or platform identifier is a 400 `VALIDATION_ERROR` recorded best effort
+  as a failure; a malformed body (repeated identifiers, not a list) is refused by the contract first, with no row;
+  (6) the P5.5 staff-authority fixtures were converted to the writer rather than duplicated; the grant table's own
+  refusals (P5.1), the resolver's tests (P5.2) and platform grants (until P5.7) keep direct inserts; (7) **open for the
+  reviewer:** staff refused a grantable permission still read P4's message "Only the business owner can do this"
+  (`DENIAL_MESSAGE`, unchanged since P5.4 — the oracle pins it); now that the owner can grant those permissions, a
+  neutral wording may be wanted; not changed here; (8) **open for the reviewer:** the gate's length on this machine —
+  a `test:concurrency` split (the races out of `pnpm test`, still run at every gate) or fewer runs would each need a
+  recorded decision (§9.3); none is made here.
+- **Done when:** role management cannot escalate.
+
+### P5.7 — Platform staff
+
+- **Migrations:** `…_platform_staff_eligibility` (`eligible_memberships` admits active platform memberships of every
+  role; the `super_admin` literal of the SQL authority guard's temporary allowance disappears here);
+  `identity.set_platform_grants(session, membership, permissions[])`, `identity.create_platform_staff` and the
+  deactivate and reactivate functions (super admin; footprints of §7.2; target `FOR NO KEY UPDATE`, §7.5).
+- **Contracts/code:** platform staff management endpoints (create, deactivate, reactivate, list, set grants);
+  effective permissions on `GET /v1/auth/session` (§5); `GET /v1/platform/merchants` through
+  `tenancy.platform_list_merchants` and `GET /v1/platform/merchants/{id}/members` through
+  `tenancy.platform_list_merchant_members` (closes P4 limitation 1); each designated function writes its one read event
+  (#35, #36) in the transaction that returns the rows. **Both lists are paginated from the start** (a cross-tenant list
+  of every merchant cannot be unbounded): at most 100 rows per page, ordered `created_at DESC, id DESC`, with the cursor
+  rules of the §8.5 pagination contract (position only, bound by digest to the request's filters, `400 INVALID_CURSOR`
+  on mismatch, strict tuple continuation); every page is its own sensitive read with its own event. Supporting indexes
+  are chosen from recorded query plans on seeded data, as in §8.5.
+- **Staff lifecycle** per §7.4: create (passwordless identity, membership without grants, setup token), deactivate
+  (sessions revoked, grants removed), and reactivate (O8(b)); an existing email refused (O8(a)).
+- **Tests:** creation → setup link → password → forced MFA enrolment → `full` session with no grants; the role label
+  grants nothing; creating with `super_admin` refused; an email with an existing identity refused, with nothing
+  created and a denial recorded (O8(a)); concurrent creation with the same email: exactly one succeeds, no `40P01`;
+  deactivation revokes sessions and removes grants; reactivation starts with no grants and writes #37; staff without grants:
+  sign-in + MFA works, nothing else; one grant ⇒ exactly that; revoked grant ⇒ next
+  request; lifecycle, transfer, staff management refused for staff even if a grant is attempted (reserved); super
+  admin unchanged; MFA enrolment/verification unchanged for staff; reads audited, refused if the audit insert fails;
+  **two-connection races in both orders** (revoke grant vs protected operation; deactivate staff vs protected
+  operation) with the outcomes stated in §7.5, including two-connection test **(e)** of §7.2 (50 runs, no `40P01`); a
+  grant to one platform membership never authorizes another membership of the same identity; **sensitive reads #35 and
+  #36 (R16, R18)** — each designated function writes exactly one event per successful call, in the same transaction as
+  the rows it returns, the repository writes none, and an injected failure of that insert returns no rows; a scratch
+  second function that writes `platform.merchant_list_read` fails the writer guard; **pagination** — first and
+  continuation pages, a page boundary inside a group of equal `created_at` values (no row lost or repeated), and a
+  cursor reused with different filters refused; the **read-consistency tests (a)–(d) of §7.2** for both lists (R25).
+- **Done when:** platform staff have exactly their grants; the session endpoint reports them; the staff lifecycle and
+  the platform lists behave as specified.
+- **Go 2026-10-15** (project lead, §14), after the reviewer approved the technical plan of P5.7–P5.10 with its hold
+  points. P5.7 stops at its own gate; any owner decision it needs is asked in a questionnaire in `docs/business/`.
+- **Built 2026-10-16; gate approved 2026-10-17** (§14: "P5.7 approved", after the cursor fix `8913290`; the reviewer
+  re-ran the decoder and list API suites — 20 of 20 passed — and relied on the reported full gate; the go-ahead for
+  P5.8 given with the R19 condition; Part 2 not approved by it). No owner question arose: every choice below follows an
+  earlier owner decision (D4, O3, O8(a), O8(b), CF3, CF5) or is technical. Commits, in order:
+  `d51caea` (**platform staff**, migration `20261015000100_platform_staff`): `eligible_memberships` admits every
+  active platform membership (the authority guard's temporary `super_admin` allowance is gone); four functions —
+  `identity.create_platform_staff` (passwordless identity, membership with no grants, setup token; an email with an
+  identity refused before the inserts and again by the identity insert's key; #30), `identity.set_platform_staff_status`
+  (deactivate: grants removed, every session of the membership revoked, #31 listing the grants removed and the sessions
+  revoked; reactivate: active with no grants, #37), `identity.set_platform_grants` (#32, before and after), and the B1
+  reader `identity.list_platform_staff`; each writer on its planned footprint (`A1:S`, `+6`, `+1`; `A1:S+NKU`, `9:W`,
+  `10:W`; `A1:S+NKU`, `9:W`, `+9`), `platform.staff.manage` checked by `assert_authority` under the locks; the five
+  staff endpoints of ADR-16's frozen contracts; cursor pagination (`src/platform/pagination.ts`: the position in
+  microseconds and a digest of the list and its filters; another list's cursor is `400 INVALID_CURSOR`). `2e2e03d`
+  (**the platform lists**, migration `20261015000200_platform_lists`): `tenancy.platform_list_merchants` (#35) and
+  `tenancy.platform_list_merchant_members` (#36), the designated and only writers of their read events — the reader's
+  platform membership FOR SHARE, the permission under it, the event, then one page; `lock-plan` `SENSITIVE_READS`; the
+  writer guard accepts a read pair only in its function (a scratch second writer, `recordBestEffort` and
+  `mutateAudited` are rejected); the transaction classes gain **T4** (one call of one designated read function); two
+  indexes chosen from recorded query plans (below). `2c758a2` and `668a230` (**the session's permissions**): `GET
+  /v1/auth/session` answers `CurrentSession` — `Session` plus `permissions`, required, as the database resolved them
+  for that request. `c7db7b4` (**tests**): `platform-staff.test.ts` (db, 20), `platform-lists.test.ts` (db, 9, with the
+  read-consistency tests (a)–(c)), three new races in `lock-races.test.ts` (`test:concurrency`, 50 staged runs each:
+  (e) grant revocation against a read, both orders and both lists — which is (d) for the two lists; staff deactivation
+  against that member's read, both orders; two creations of one email), and `apps/api/test/platform` (12: the whole
+  journey from creation through the setup link, password, forced MFA enrolment, exactly the grants given, deactivation
+  and reactivation; refusals and their records; pagination and cursors; the read events; a refusal by the database
+  alone; `CurrentSession.permissions` for each kind of caller). The route map has 53 operations.
+  **Query plans behind the indexes** (a throwaway database: 20,000 businesses in groups of seven sharing a timestamp,
+  110,000 memberships with one business holding 50,000; `EXPLAIN (ANALYZE, BUFFERS)` of generic prepared plans, which a
+  function reuses): without indexes every page sorts its table (businesses 5–11 ms; the largest business's members
+  87–514 ms); with `merchants (created_at, id)` and `merchant_memberships (merchant_id, created_at, id)` a page — first
+  or three quarters down — is a backward index scan of about one page (0.07–0.09 ms, 3–6 buffers; members 0.12–0.24 ms,
+  18–211 buffers). One statement serving both the first page and continuations ("no cursor, or the tuple predicate")
+  cannot use the position as an index condition in a generic plan: its deep pages filtered out 15,001 and 37,501 rows
+  (3.6 and 13 ms). So each list has a first-page statement and a continuation statement — still one statement a page.
+  **Sabotage:** the businesses list without its read event (2 tests fail), without its authority lock (the lock-order
+  guard and race (e) fail), and deactivation keeping the grants (2 tests fail). **Gate on `668a230`:** one step at a time (0.42 GB free of 7.7 GB at the start, 0.40 GB at the end; local, not CI): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 633 (121 s), API 720, all passing, exit 0, 266 s wall, no worker timeout; `pnpm test:concurrency` — 16 races (13 and P5.7's three), 50 staged runs each, passing, 191 s wall; oasdiff 1.32.1 against `origin/main` (`5d8904b`): 0 errors, 0 warnings, 16 info (the seven endpoints added, `CurrentSession`, and the earlier packages' additions). Earlier, on `2e2e03d`, the API suite under memory pressure ended 700 passed and 8 failed in four files, with Vitest RPC timeouts and dropped connections; rerun serially as §9.3 requires, those four files passed, 152 of 152.
+  **Judgement calls:** (1) the session's permissions are a schema of their own, `CurrentSession`, on `GET
+  /v1/auth/session`, the one endpoint ADR-16's row names; first built as an optional `Session.permissions` (`2c758a2`),
+  but two of the login response's `oneOf` variants embed `Session`, and oasdiff matches variants by their content, so
+  any change inside them reads as variants removed and added — a breaking error the CI gate would fail on; the plain
+  `Session` of login, refresh, MFA, selection and the agent flows is unchanged; (2) the super admin is not platform
+  staff: the team list leaves that membership out and the staff writers answer it "not found" (the frozen contract's 404,
+  "the super admin included"); (3) #36 is recorded against the business whose members were read (merchant and target),
+  as the platform team's other actions on a business are (#27–#29), so it belongs to that business's record (O3) and is
+  shown there without the platform actor's IP address and device (CF5); #35 has no business; (4) a read event's summary
+  is the page asked for (`limit`, `continued`), not a row count: the event is written before the rows (§8.2a rule 7);
+  (5) each list function returns one row more than the page, which tells the API whether a cursor follows without a
+  second query, and is never sent; (6) the team list keeps the single-statement form — the team is small and unindexed;
+  (7) the setup token is inserted by `create_platform_staff` itself, not through `issue_one_time_token`, whose update of
+  the identity's earlier tokens would be a wait after the contested inserts (L3) — a new identity has none; (8) an
+  existing email is a recorded **denial** (`platform.staff_created`/denied, reason `email_in_use`), as O8(a) says; the
+  other refusals are denials (forbidden) or failures, as P4 records them; (9) deactivation revokes every session of the
+  membership, the enrolment-only ones included; (10) "a grant to one platform membership never authorizes another
+  membership of the same identity": an identity holds at most one platform membership (`UNIQUE (identity_id)`) and CF3
+  keeps platform identities out of businesses, so the test shows that a grant authorizes only its own membership's
+  sessions and that a second platform membership of the identity cannot exist; (11) **open for the reviewer:** §8.5
+  describes a lock-order-guard check that a tenant-table query in a merchant-scoped definer function carries the
+  session-merchant predicate (R19); it was never built — the B1 readers rely on their tests — and the platform reads are
+  cross-tenant by design; it could be built with P5.8's first merchant-scoped sensitive read, or recorded as not needed;
+  (12) no rate limit is added (§5: every new operation needs a session and a permission; creation, the only one that
+  sends email, is the super admin's); (13) the machine rebooted twice on 2026-10-16; each time Docker Desktop was started
+  again and only `alphakolect-postgres-1` with it.
+- **Gate review 2026-10-16: changes requested** (§14). One finding, P3: a cursor whose timestamp has the right shape
+  but is not a real date (month 99, say), with its list digest kept, reaches the database's `timestamptz` cast and
+  answers 500 instead of the documented `400 INVALID_CURSOR`; the decoder must check the calendar value, with a
+  regression test. Judgement call 11 (R19) decided: carried into P5.8 as a condition (§10 P5.8). Everything else traced
+  was found consistent with the plan.
+- **The finding fixed (`8913290`), 2026-10-16.** The decoder now requires a real instant: a real date and time of day in
+  years 1–9999, parsed and required to come back unchanged (JavaScript rolls some impossible dates forward — 30
+  February to 2 March, hour 24 to the next midnight); a leap second is refused too. **Tests:** `pagination.test.ts`
+  (new, 13) — positions round-trip to the microsecond, edge dates included (a leap day, years 1 and 9999); ten
+  impossible timestamps with the digest kept are `400 INVALID_CURSOR`; another list's cursor, forged shapes and garbage
+  are refused; every accepted value is one the database reads, and the impossible dates are ones it could not;
+  `platform-lists-api` — a real cursor of each list (the businesses, a business's members, the team) with its month
+  changed to 99 is `400 INVALID_CURSOR` and records no read. **Sabotage:** without the check the ten cases fail and the
+  API answers `500 INTERNAL_ERROR`, the reviewer's finding exactly (11 tests). **Gate on `8913290`:** one step at a time (0.44 GB free of 7.7 GB at the start; local, not CI): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` pass; `pnpm test` — contracts 64, db 633 (132 s), API 734, all passing, exit 0, 281 s wall, no worker timeout; `pnpm test:concurrency` — 16 races, 50 staged runs each, passing, 380 s wall (the machine short of memory); the contracts are unchanged since `668a230`, so its oasdiff result stands (0 errors, 0 warnings).
+
+### P5.8 — Audit reads (and O9 list pagination)
+
+- **Go-ahead 2026-10-17** (the reviewer, with the P5.7 approval, §14), with the R19 condition below; it does not approve
+  the retention step — Part 2 still needs its own approval before step (a). The other hold points of the P5.7–P5.10
+  review stand: the O4 spike, the owner's decision and the ADR-16 addendum before the audit-read contracts; the D9 policy
+  before P5.10. **The project lead's go, 2026-10-17** (§14): in the plan's order — the R19 guard first, then O9
+  pagination, the log redaction, the O4 spike and an owner questionnaire on it; the retention purge stays parked until
+  Part 2 is approved; P5.8 stops at each hold point and at its gate.
+- **Condition (the reviewer, at the P5.7 gate, 2026-10-16 — R19):** before any merchant-scoped definer read is added,
+  the lock-order guard gains the check §8.5 describes: a query on a tenant table inside a merchant-scoped definer
+  function must carry the `merchant_id` predicate bound to the session-derived merchant, or the guard fails; it is
+  mutation-tested like the guard's other checks. The platform reads, cross-tenant by design, stay exempt by
+  classification (P5.7).
+- **Work:** the audit **reads** — merchant and platform audit reads (§8.5) with their designated functions (#33,
+  #34), the IP/user-agent visibility of §8.6; the **retention purge** of §8.6 (#38, #40–#50) — its twenty functions, the reservation, the report request and delivery tables, and the operator
+  command with its export and failure semantics; indexes; the D9 written policy
+  drafted from the decisions (§8.6); cursor pagination (O9, decided) of the members and invitations lists
+  (invitations defaulting to open ones) with first-page, continuation, equal-`created_at` boundary and mismatched-cursor
+  tests. The audit foundation is P5.3a.
+- **Operator commands — where they live ([Fact] the existing pattern).** `admin:bootstrap` is an operator script,
+  `apps/api/scripts/bootstrap-super-admin.ts`, run with `pnpm --filter @alphakolect/api admin:bootstrap`, using the
+  migrator connection (`DATABASE_MIGRATOR_URL`) because the app role cannot call operator functions, with its logic in
+  `apps/api/src/modules/identity/bootstrap.ts`, and printing outcomes but never secrets. The purge follows it:
+  `apps/api/scripts/audit-purge.ts` (`audit:purge [--dir <directory>]` — a run, and an export run's copy;
+  `audit:purge-request-report` and `audit:purge-request-cancel --request <id> --note <reference>`;
+  `audit:purge-reports [--check-files]`; `audit:purge-report-handover --report <id> --to <medium directory>`, then `--verify` after the medium is unplugged
+  and inserted again (the eject confirmed interactively by typing the stick's label), and
+  `audit:purge-report-handover-abandoned --attempt <id> --note <what became of the stick>`;
+  `audit:purge-report-delivered --report <id> --attempt <id> --receipt <reference>` (and the copy's destruction);
+  `audit:purge-report-destroyed --report <id>`, `audit:purge-report-lost --report <id>` and
+  `audit:purge-export-discarded --run <id>`, each with `--attest <note>` or `--lost <note>` where the automatic path has
+  no proof — rev 84) and
+  its logic in `apps/api/src/modules/audit/purge.ts`,
+  tested there with a temporary directory and the test-only pause hook of §8.6. The containment switch of §11.1
+  follows it too (`admin:containment`, built in P5.5).
+- **Order inside P5.8 (implementability).** (a) **(Part 2 — waits for its approval, §12)** The **retention purge** first — it does not depend on O4: the
+  migration (the dedicated audit guard function and its triggers, the reservation, run, export, report, handover, request and manifest tables, the
+  twenty functions and three helpers, the `(occurred_at, id)` index if absent), the operator command and
+  every §8.6 test; (b) **O9** — members and invitations pagination; (c) the **audit reads**, in the O4 order below;
+  (d) the **log redaction** of §8.6 (no IP address or user agent in application logs) with the extended leak sweep;
+  (e) the **D9 written policy**, drafted from the decisions (including O10–O12) and from the purge and logs as built, and
+  handed to the owner.
+- **Order inside P5.8 (O4):** (1) **validation spike** — on a throwaway database seeded per §8.5, run
+  `EXPLAIN (ANALYZE, BUFFERS)` for every candidate query shape and index; nothing from the spike is committed except the
+  recorded plans, dataset parameters and the seeding script used; (2) the **owner decides O4** on that evidence (page
+  size, window, filters); (3) **both audit-read contracts** (merchant and platform, with the O4 bounds and the O3
+  visibility rules already decided) are **frozen as an ADR-16 addendum**, and the reviewer confirms it; (4) only then the migrations
+  (indexes, designated functions) and the endpoints are written. The spike covers the query shapes of both reads.
+- **Tests:** the coverage guard of §8.1 now complete in both directions (every catalog pair, including #33/#34, has
+  its writer and tests); secrets never stored (leak sweep extended to the audit-read journeys); append-only unchanged **except** the purge
+  path, with the §8.6 retention tests; IP address and user agent returned to the business owner for their own people's
+  events, never for platform actors' events, to the super admin, and never to platform staff;
+  audit reads tenant-isolated, bounded, themselves audited — **sensitive reads #33 and #34 (R16, R18)** with the same
+  single-writer, same-transaction and injected-failure tests as #35/#36; **merchant isolation of definer reads (R19)** —
+  calling `audit.read_merchant_events` **directly** with a valid session of merchant A returns none of merchant B's
+  events, including with a forged cursor positioned on one of B's events and an actor filter naming one of B's
+  members; the same attempts through `GET /v1/merchant/audit-events` with forged ids and cursors; both run with the
+  real function owner and as `alphakolect_app`, so they exercise the RLS exemption that makes the explicit predicate
+  necessary; **pagination (R21)** — first page,
+  continuation pages, a group of same-timestamp events split across a page boundary (no row lost or repeated), actor
+  filtering, merchant filtering (platform), an empty window, a window over the O4 maximum refused **on both endpoints**, and a cursor reused with a
+  different window or filter refused with `400 INVALID_CURSOR`; the **read-consistency tests (a)–(e) of §7.2** (test (e): traversal against a concurrent
+  purge, R35) for
+  both audit reads and, with O9, the members and invitations lists (R25); the §8.5 query-plan validation recorded on
+  representative data.
+- **Done when:** every event class behaves as §8.2 states, proven by failure injection; both audit reads and (O9) the
+  members and invitations lists are paginated as specified; the retention purge passes its §8.6 tests; the D9 written
+  policy is drafted from the decisions and handed to the owner for approval (approved before P5.10).
+- **Progress 2026-10-17 — at its first hold point.** In the order of the go (§14), each step committed with its tests:
+  **(R19) the merchant-scope guard**, `1b5a5ba`: `merchantScopeFindings` in the lock-order analysis — every reference to
+  a tenant table in a merchant-scoped definer read must be a FROM or JOIN item whose business column is equal, in an
+  AND-ed conjunct of its own query, to a session-derived value (the resolver's `merchant_id`, a variable selected from
+  it, or another table so bound); a LEFT JOIN binds only its item; an OR, a deeper subquery, a parameter, another session,
+  a comma or outer join, or any other mention is a finding (fail closed). The seven merchant-scoped reads pass
+  (`MERCHANT_SCOPED_READS`); `validate_session` and the two platform lists are exempt with their reasons, and the check
+  would refuse each; a new reader of a tenant table cannot escape it by not being listed. Eight self-tests, five controls,
+  and a sabotage of `list_members`' filter in its migration fail it. **(b) O9**, `95f3060` (migration
+  `20261017000100_list_pagination`): the members (oldest first) and invitations (newest first; `open` by default — pending
+  and unexpired — or `all`) lists paginated; one statement a page, first page and continuation (and open and all)
+  separate; indexes from recorded plans (invitations `(merchant_id, created_at, id)` and a partial one over pending
+  invitations; members reuse P5.7's): without them every invitations page sorts the business's invitations (35–61 ms
+  for 30,000), with them 0.1–0.15 ms; existing calls and an older application version keep working (no page: every row;
+  status `all` by default in the function); oasdiff 0 errors, 0 warnings. **(d) the log allowlist**, `0a05652`: request
+  lines are the id, method and path, response lines the status; a database error is logged as its structural fields
+  under a fixed message; the request id is the server's own, an incoming `X-Request-ID` ignored (the deviation from P3
+  the plan records); the leak sweep's D9 part — addresses in six headers and a query string, a distinctive user agent, a
+  forged request id and an injected database failure printing a session's IP address and user agent — finds none in any
+  log line, response or stored request id, and catches each of three sabotages. **(c)(1) the O4 spike**, `d15d133`
+  (`docs/architecture/evidence/p5-o4-spike/`: the script, the dataset, every plan): on 2,000,000 events, with
+  `(occurred_at, id)`, `(merchant_id, occurred_at, id)` and `(actor_identity_id, occurred_at, id)` every page of both reads
+  reads about one page (0.05–0.38 ms); without them the platform read sorts the window (120–161 ms); a page's cost does
+  not depend on the window's length. **(c)(2) the owner's questions**, `07b61b1` (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`):
+  page size, window, and the filters of each read — answered and signed by the owner on 2026-10-17 (`7497869`; O4, §14). **Judgement calls:** (1) R19 covers the merchant-scoped
+  **reads**, as the condition states; writers use row-id derivations and `%ROWTYPE` declarations the read check does not
+  parse — a survey of every function with a session shows which — and stay guarded by their footprints and tenant tests;
+  (2) the paginated readers keep the earlier calls' meaning (no page: every row; `list_invitations` status `all`), so an
+  application version older than the migration keeps working; the API applies the contract's default (`open`); (3) a
+  members cursor is bound to its list, not to a business — the business comes from the session alone and the guard
+  checks it; an invitations cursor is bound to its status filter; (4) read-consistency (d) of §7.2 does not apply to the
+  O9 lists: they are lock-free readers whose authority and rows come from one statement's snapshot, so there is no
+  authority lock to race; (a)–(c) pass for both; (5) the tests' app honours a plain caller-supplied `X-Request-ID`
+  (`test/support/request-id.ts`, outside `src`), because hundreds of tests find their request's activity rows, and inject
+  audit failures, by an id they must know before the request; the server's own tests and the D9 sweep build the app as
+  production does, and a guard fails if anything in `src` reads the header; (6) log lines keep the request **path**, as
+  §8.6 states (only the query string is dropped): a path is the route and resource ids, though a caller can put anything
+  in an unknown path; (7) the spike seeds no platform staff member busy across many businesses, so a business filtering
+  its record by such a person is to be measured when the indexes are chosen. **Hold-point review 2026-10-17: changes
+  requested** (§14) — calls 2–5 accepted; (1) accepted in scope, with the inventory fixed; (6) **not accepted**; (7)
+  accepted provisionally, and since the owner chose the person filter (O4 Q3) the measurement is required. Both
+  findings fixed: **(R19 inventory)** `12f839c` — the guard's inventory is every reader or designated sensitive read of a
+  tenant table, whatever its parameters are called (it took only those with a `p_session_id` argument); the three
+  internal readers that take no session (`active_membership`, `eligible_memberships`, `permissions_of`) are listed
+  apart, and the guard checks that none takes a session and that no application role may execute them; a session
+  parameter is `p_session_id` in every function; self-test (9). A migration adding `tenancy.zz_probe(p_session uuid)`,
+  granted to the app and reading every business's branches, passes the guard as committed in `1b5a5ba` (33/33) and
+  fails the fixed one (4 of 36). **(logged path)** `2134b80` — the request line is the id and the method; the completion
+  line names the contract route the request matched, never the path as sent, and nothing for an unmatched request
+  (§8.6, amended); the D9 sweep adds an unknown path holding an address and a user agent and a known route whose
+  parameter is an address, and fails on each of three sabotages (the path back in the request line, the path as sent
+  recorded as the route, no route recorded). The full gate on the fixes found one test, `platform-staff-api`'s team
+  list, reading the whole platform's list while other files added to it in parallel; it now walks the list to its own
+  rows (`b53ff00`). Gate on the fixes: format, lint, typecheck, build, OpenAPI check, contracts 64, db 657, the
+  races 16 (50 staged runs each) — all passing; the API suite 745 of 746 with that test, then 746 of 746 after its fix
+  (oasdiff not rerun: no contract changed). **(c)(3) the ADR-16 addendum**, `cbe8467` (`TARGET_ARCHITECTURE.md` §3.5, "Addendum — the
+  activity-record reads"): both audit-read contracts frozen on O4 and on O3, D8′, D9 and CF5 — window, page, order,
+  cursor, the item `AuditEvent`, the filters, who sees `ip` and `userAgent`, errors, the record of a read, indexes,
+  locks and tests; its Logs paragraph amended to the route template. **Judgement calls of the addendum:** (a) `limit`
+  defaults to 50, as every list, with 100 the maximum the owner chose; (b) the window is `from ≤ occurredAt < to`, at
+  most 744 hours; (c) a filter naming a person or business the reader cannot see is `404 NOT_FOUND`, as the
+  members endpoint answers; (d) the person filter is the **person** — the identity behind the membership given — so
+  the platform read shows everything they did, on any membership; (e) the actor's email is the one held when read, not
+  a copy taken when the event was written (the record stores no email); (f) the merchant read shows `ip` and
+  `userAgent` on every event of the business except the platform team's — events with no actor included — following
+  D9 "for their own business's events" with CF5's exception; (g) #34 filtered by one business is written with that
+  business as `merchant_id`, as #36 is, so the business's record shows that the AlphaKolect team looked at it; (h)
+  "kind of activity" (O4 Q4) is one catalog event identifier. **Owner question O19** (`c78dec8`,
+  `docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`): whether a business's record names the platform team member;
+  the contract's shape is the same either way — **answered 2026-10-17** (`4fe4f75`, relayed; the form's name and date
+  lines blank, the owner's signature requested): "AlphaKolect team", without naming the person. **The reviewer's
+  re-check (2026-10-17, §14):** both fixes confirmed (R19 inventory, logged route); (a)–(h) accepted in principle, the
+  busy-platform-staff measurement required; one finding on the addendum — `AuditEvent.actor` could not represent an
+  invitation acceptance, recorded with the person and their new membership but no audience. Fixed in `915ad30`: the
+  actor is `null` when the event records no person, otherwise its audience, membership and email each as recorded and
+  each nullable, nothing inferred; a test fails on a writer recording any other audience; the platform team is an actor
+  whose identity holds a platform membership (CF3), whatever the audience; O19 applied. **Waiting for:** the reviewer's
+  confirmation of the addendum as amended, and the owner's signature on the O19 form, before the audit reads (#33, #34) are built — with them the app
+  loses `SELECT` on `audit.audit_events` and the reporting role its `ip` and `user_agent` columns (§8.6); Part 2's approval
+  before the retention purge (step (a)); the D9 written policy (step (e)) after the purge is built.
+
+**Step (a) built (revision 92, 2026-10-18).** The retention purge as approved (§8.6 at revision 90): the database side
+`c30cbff` (migrations `20261018000100_retention_core` and `…000200_retention_reports`: the helpers, the eight purge
+tables, `audit.audit_events_guard()`, the index, events #38 and #40–#50, twenty purge functions; the lock-order guard's
+categories, classes and footprints with two new source rules, each mutation-tested; formatted in `3319542`); the API's
+catalog mirror `9fefdcf`; the engine, the operator lock and the `audit:purge*` command `16c2d86`; the runbook
+`c7cc91a`. Built with a second agent (a Copilot session in the editor) and reviewed against the design before each
+commit. **Found and fixed while smoke-testing the command** on a throwaway database (`16c2d86`): a step that took no row
+advanced the page number, so the next call would be refused `page_out_of_order` — the round-5 stall again, in the
+command — now the page number moves only on a recorded page, in both loops (unit test, mutation-checked on each); the
+default as-of was the operator's clock, refused when ahead of the database's — now read from the database; Windows tools
+by absolute path; a folder refusal shown by its code (`non_operator_acl`); `reports` querying one client in turn.
+The smoke run, as the operator runs it: request, a run without a folder (skipped, nothing deleted), an export (report and
+marker written, nothing deleted), the listing, a cancellation (report withdrawn, files removed), a plain run (the five
+old rows deleted). **Tests** (`6f3de9c`, `1f7200f`, `6e7919f`; 38 database cases and 6 in the API): the main flows with
+every new pair's commit-and-rollback evidence; a held block larger than one step's ceiling crossed; a request appearing
+mid-run refusing the page; page order and idempotency; a second run refused and a dead run taken over after a short
+lease, the old run refused; `p_as_of` in the future refused; one open request; the guard case by case beside a deletion
+it allows; the ledger's guard unchanged against P1's text; calendar years (29 February 2028), UTC throughout, a redefined
+retention, overrides that only lengthen; the app and reporting role kept out; every `CHECK` and partial unique index;
+the clearing's batches, idle and revoked-after-expiry sessions, valid links and live sessions never; the export's,
+handover's, delivery's, destruction's and loss's database rules. Mutation checks: the guard without its held-row check
+and without its copy-awaited check, the verification without its disk-sequence check, the destruction without its
+unaccounted-stick check — each fails the matching case. **Reviewer-approved §8.6 test allocation (revision 96):**
+coverage includes the request race at the lease's edge (round 4), a late commit during page deletion (R38), reservation
+contention and renewal after a long page, clearing races, process locks, connection heartbeat and idle timeout, export
+write failures and kills at each publication boundary, recovery modes, listings/reminders, and R25/R35 consistency
+against both audit reads. The one-minute idle timeout is now exercised against PostgreSQL and the connection receives
+SQLSTATE `25P03` after the idle transaction expires.
+
+The POSIX directory-mode check is assigned to the existing Ubuntu CI job in `.github/workflows/ci.yml`, whose `pnpm
+test` and `pnpm test:concurrency` commands include these suites; its successful CI run remains a closure prerequisite.
+Injected `ENOSPC` and a renamed folder are accepted as stand-ins for the write-failure and unavailable-path code paths;
+they do not claim to reproduce a physically full disk or an unmounted volume. FAT/exFAT behavior, real full-disk and
+volume-removal checks, and the physical removable-stick handover (new-process verification, label/serial/disk-sequence
+checks and truncation) are assigned to the documented test-database rehearsal in
+`docs/operations/AUDIT_PURGE.md`. The operator must record that rehearsal before the first real copy is handed to the
+owner; a failed step stops that handover. **The rehearsal has not yet been performed.** This disposition replaces
+requiring those hardware conditions in the automated §8.6 suite. The lost-response fault-injection obligation was built
+in revision 97 (`0013185`, `e648b0b`); revision 101 adds database guards for unaccounted handover media and pending
+operator-copy destruction, with regression tests. Both have passed in two full CI runs. The hardware rehearsal remains
+required before the first real copy, not as a P5 closure gate. **Lost-response tests built in revision 97 for review:**
+a connection that commits one
+chosen statement and then throws as a lost answer, against the real database; and a publication link made, then
+reported failed. The purge run: a page deleted (the run reads the page's own mark, counts it once and goes on); the
+release (the reservation free all the same). The export: begin and the file record (nothing deleted, discarded, files
+removed); the confirmation (the report stands with its file and marker); a discard after an injected ENOSPC (recorded
+discarded, the marker left for the listing); the link (left unresolved with both names, then cleared by
+`export-discarded`). The handover, its two steps now a module (`purge-handover.ts`) taking the volume and the eject
+confirmation as inputs, a folder standing in for the stick: the write recorded (attempt written, copy whole, operator
+told); the handover recorded (stick untouched); a failed verification recorded (attempt abandoned, stick left); the
+attempt recorded by another command after this one read it (the failure record refused, stick untouched).
+Mutation-checked: without the page's re-read, and with the stick's copy removed before the failure is recorded, the
+matching test fails. **Final evidence:** the full gate twice at `45c044f` — format, lint, typecheck, build, OpenAPI check;
+contracts 65, database 722, API 1219; the races 16 at 50 staged runs each — all passing both times (an earlier pair at
+`7b6db3d` failed format, typecheck and one intermittent #34 test; fixed in `97c9c63`, `eb841b9`, `45c044f`); gitleaks over
+the full history at `45c044f`, no leaks. **Evidence:** the full gate twice at `3dbb482` — run 1
+all passing (format, lint, typecheck, build, OpenAPI check; contracts 64, database 673, API 1143, the races 16 at 50
+staged runs each); run 2 the same except three API tests in three files timing out at 30 s together with Vitest's own
+`Timeout calling "onTaskUpdate"` (the machine stalled, under 1 GB free), the API suite then rerun: 1143 of 1143.
+After `1f7200f` and `6e7919f` (tests only): the database suite 698 of 698 in 41 files, format, lint and typecheck
+passing. gitleaks over the full history at `fecca3f`: 425 commits, no leaks; every commit's staged scan clean. **Focused
+validation on 2026-10-19 after the read and purge follow-ups:** API purge slice (five files, 33 tests, run in focused
+groups), database audit-read/purge slice (three files, 32 tests), including the idle-timeout test, API typecheck,
+**Validation after the closure fix (revision 101):** GitHub Actions PR #7 run `39912951275` passed twice on
+`f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`. Both attempts passed format, lint, OpenAPI check, typecheck, contracts,
+database and API tests, concurrency tests, build, the required-config boot refusal, API contract comparison and
+full-history Gitleaks. The P2 handover and pending-copy guard regressions passed; the function-grant and lock-order
+inventories include the new trigger. This is the final code/test SHA for P5.
+
+**Steps (c)(3)–(4) built after the addendum confirmation (revision 95).** The R19 guard now recognizes and checks the
+merchant-scoped read's own audit-event insert (`3cd0362`). The O4 measurement named by the reviewer was run against
+two million events; its composite `(merchant_id, actor_identity_id, occurred_at, id)` index was adopted, and every
+query shape of both reads was measured as the functions plan it per call (`33ada71`). Migration
+`20261019000100_audit_reads` adds both designated functions, the indexes, the recorded-audience `CHECK`, and removes
+the app's `SELECT` on `audit.audit_events` and the reporting role's `ip`/`user_agent` access (`2e981e0`). Contracts
+and OpenAPI (`89d5598`), API handlers and writer/route guards (`e0b22c3`), and authorization/isolation-matrix support
+(`1f0bb49`) are built. The threat model, ADR-16 as-built note and P5 record were updated (`70401fb`, `edf2b14`,
+`4b6d2c0`). The read tests cover visibility, permission, failure injection, paging and shared timestamps; R25/R35
+consistency scenarios run against both reads (`357df26`).
+
+### P5.9 — Authorization matrix and regression gate
+
+- **Work:** extend `isolation-matrix.test.ts`: expected results come from registry declarations (the
+  `^FORBIDDEN` description regex is removed); actors = anonymous, invalid session, owner, staff with / without the
+  permission, staff attempting a member or invitation write (reserved), archived-role staff, branch-restricted staff, staff restricted to an archived branch
+  (§7.6), agent, super admin, platform staff with none / one / revoked
+  grant; plus foreign tenant and own-tenant-forbidden resources. Direct database-function tests run in
+  `packages/db/test` alongside. Negative cases assert **no row changed**.
+- **Integrity:** no existing test weakened or skipped; every run recorded with command, commit and result.
+- **Done when:** the full matrix and all P1–P4 suites are green on a from-zero database.
+- **Built (revision 92, 2026-10-18):** `apps/api/test/authorization-matrix.test.ts` (`42fe471`) — every permission
+  endpoint × 13 actors (anonymous, an invalid session, the owner; staff granted every grantable merchant permission,
+  without any, with an archived role, restricted to a branch and to an archived branch; an agent; the super admin;
+  platform staff granted every grantable platform permission, without any, revoked), 391 cases; the expected answer from
+  the declaration and the catalog's grantable flag; a refusal leaves the business's rows and the platform rows it
+  addresses unchanged; an allowed call passes the API policy and the database's check. The isolation matrix's
+  `^FORBIDDEN` description regex replaced by the declaration (`3dbb482`). Foreign-tenant resources stay in the isolation
+  matrix; database-function tests in `packages/db/test`. Green on a from-zero database in both gate runs. **Departures:**
+  a new file beside the isolation matrix rather than an extension of it; platform staff with every grantable permission
+  rather than one (each grantable permission is exercised by its own endpoint). The rows of the audit reads come with
+  them.
+
+### P5.10 — Closure
+
+- **Work:** ADR-16 updated to as-built; `RESTRUCTURING_MAP.md` P5 record (packages, migrations, endpoints, mutation
+  counts, limitations, deviations); the owner-approved D9 written policy (§8.6) in place; the **as-built P5
+  threat model** written in `docs/security/` — **outstanding until this step**: `P5_AUDIT_REPORT.md` §15 is a
+  design-stage threat model that serves as its **input**, not the deliverable, and no document may describe the
+  deliverable as complete before P5.10 (TARGET_ARCHITECTURE §27 lists it as owed); it must document the
+  **read-authorization boundary** of ADR-16 §3.5 — after owner decision B1 every permission-gated read is checked in
+  the database as well; the threat model records that tenant separation alone does not prove permission, that the
+  invitation and member lists expose email addresses, and the tests and residual risk of the read functions; **operator runbooks** in
+  `docs/operations/` for `audit:purge` (Part 2; requesting a report, running, recovering a stopped run, where to keep a report
+  until delivery — local, owner-only, not synced or backed up, full-disk encryption, a file system with hard links —, the handover in the owner's presence onto a separate medium — written, ejected, inserted again and verified — and the receipt quoting its hash, no network drive and no shadow copies or restore points on the report's drive, reminders after 7 days, a cancellation, recording a delivery and destroying the operator's copy, resolving an export or a copy automatically, by attestation or as lost, recording a report lost before delivery and making a new one, the listing and `--check-files`, markers to remove, running on a persistent machine with one operator account — never in a container, never cloning it while a report exists — and finding a program squatting on, or a client keeping, the lock's name) and `admin:containment` (when to set and lift it; the §11.1 procedure; **O16 made operational** — who may set it
+  (the owner, or the technical lead in an emergency who informs him straight away), how business owners are told when
+  staff access is paused and when it is back, and how the owner's approval to lift it is confirmed and recorded before
+  the lift — the reviewer's condition of 2026-10-15), each command shown with its exact invocation and expected output; full gate twice;
+  gitleaks over full history; the three review documents are already committed on this branch as planning records —
+  whether they stay in the history that is merged or are removed before the merge is the **owner's choice**.
+- **Done when:** §13 checklist complete; owner approves; CI runs only when the owner pushes.
+- **Done so far (revision 96, 2026-10-19):** ADR-16 as built (`9d412d0`, updated for #33/#34 in `edf2b14`); the P5 record in `RESTRUCTURING_MAP.md`
+  (`fecca3f`, `d08dcdc`); the threat model `docs/security/P5_THREAT_MODEL.md` (`d5fbfb0`); the runbooks
+  `docs/operations/AUDIT_PURGE.md` (`c7cc91a`) and `AUTHORIZATION_CONTAINMENT.md` (`3fc54d9`); the D9 policy drafted for
+  the owner (`995fbc6`); the full gate twice and gitleaks over the full history (P5.8 above). The review documents stay
+  in the history (O17, decided 2026-10-14; the closing form no longer asks it, `b437d98`). **Closure review
+  (revision 101, 2026-10-23):** §13 items 1–11 are met. The final handover-fate and copy-destruction safeguards are in
+  forward migration `20261019000200_retention_handover_guards`, with regression tests and updated function-grant and
+  lock-order inventories. GitHub Actions run `39912951275` passed on the exact final code SHA
+  `f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`, including the full test and concurrency suites, build, contract check,
+  boot-config refusal and full-history secret scan. The owner-approved D9 policy, as-built threat model and both
+  operator runbooks are present. I found no remaining P5 closure blocker. **Verdict: P5 approved to close.** The
+  physical hardware rehearsal remains required before the first real report handover, not for P5 closure. The local
+  focused database test could not run because PostgreSQL was unavailable at `127.0.0.1:5436`; the passing CI run is
+  the execution evidence for that suite.
+
+## 11. Rollout and rollback (no fail-open)
+
+1. **P5.1–P5.2 (expand):** additive tables and functions. From P5.2 the app resolves effective permissions on every
+   request, but nothing enforces them until P5.4 — `requireOwner` and the P4 SQL checks still decide; owners and
+   super admins hold fixed sets and no grant rows exist ⇒ **no access change**. A resolver failure is a 500 (§4
+   invariant 7), never an allow.
+2. **P5.3a (audit foundation):** identity security changes and their events now commit together. The one visible
+   change is in the fail-closed direction: if an identity event cannot be stored, the change is rolled back and the
+   request fails (500) instead of succeeding without its record; refusals keep their status codes whatever happens to
+   their best-effort event (A7 fixed). No access changes.
+3. **P5.3–P5.4 (switch, API):** declarations + middleware; equivalence proven by the unchanged P4 matrix. An
+   undeclared route stops the app from starting — the failure mode is unavailability, never openness.
+4. **P5.5 (switch, DB — the enforcement boundary):** functions replaced with identical signatures; owner and
+   super-admin authority is preserved by their fixed sets. One migration creates the branch/role/profile writers and
+   revokes the direct write grants together (§7.2). An instance of the previous version can only be denied, never
+   bypass; the mixed-version test proves it. No staff or platform-staff permission exists before this point (grant
+   writers arrive in P5.6/P5.7).
+5. **P5.6–P5.8:** new capabilities (role grants, platform staff, audit reads) start empty: **no step expands access
+   automatically** — access grows only when an owner or super admin grants it. That is not a claim that nothing can
+   over-grant: a defect in a grant writer, the resolver or a re-check could give access that was never intended. §11.1
+   is the procedure for that case.
+6. **Rollback:** forward-only. A defect that **denies** too much is fixed forward. A defect that **grants** too much is
+   contained first (§11.1), then fixed forward. **Never** by running an application version older than the enforcement
+   boundary (P5.5): the database refuses its direct writes (the mixed-version test), and the older database functions
+   are not restored. Each migration is tested from zero and on top of the previous state.
+
+### 11.1 Over-authorization incident procedure (R30)
+
+**Containment switch ([Plan], built in P5.5, before any grant can exist).** A one-row table
+`util.authorization_containment (merchant_grants_suspended boolean, platform_grants_suspended boolean)`, read by the
+resolver (§7.1) and by every write-time re-check (`assert_authority` and the definer functions). While a flag is set,
+the resolver and the re-checks **ignore every grant row** of that kind: staff hold no merchant permission, platform
+staff no platform permission. The fixed sets of the owner and the super admin are unaffected, so each business and
+the platform remain administrable. It is set and cleared only by `util.set_authorization_containment(merchant,
+platform, reason)` — operator-only (no app grant, §9.1), atomic event #39 `platform.authorization_containment_set`
+(pattern A, operator actor `NULL`, summary: both flags and the reason). It takes effect on the next request, because
+nothing caches authority (§4 invariant 2), and on any write already waiting for its re-check.
+
+**Procedure.**
+
+1. **Contain.** If the defect is in one grant, the owner or super admin removes it through the normal writers
+   (audited). If grants, the resolver or a writer cannot be trusted, the operator sets the matching containment flag.
+   An affected person's sessions are ended by deactivating their membership through the normal writers (owner for
+   staff, super admin for platform staff), which revokes their sessions (§7.2 footprints, category 10); they are
+   reactivated after reconciliation (platform staff come back with no grants, O8(b)). No new session tool is needed.
+2. **Assess.** The audit record shows what the excess access was used for: every privileged write and grant change has
+   its atomic event (the coverage guard), every sensitive read its read event, and every refusal its best-effort event.
+3. **Reconcile.** The owner (merchant grants) or super admin (platform grants) confirms the intended grants; every
+   other grant is removed through the writers.
+4. **Correct forward.** A regression test reproduces the defect and fails before the fix; the fix ships as new code and,
+   where needed, a new forward migration.
+5. **Verify and lift.** The regression test, the authorization matrix (P5.9) and the full gate pass; the operator
+   clears the flag (event #39); the incident is recorded in `docs/security/` (TARGET_ARCHITECTURE §21: incident
+   records).
+
+**Tests (P5.5):** with each flag set, a staff member (or platform staff member) with grants resolves to no permission
+on the next request and a write already waiting for its re-check is refused; the owner and the super admin are
+unaffected; clearing the flag restores the grants; the app role cannot execute the switch or write the table; the
+event commits with the change and an injected failure of its insert leaves the flags unchanged.
+
+## 12. Approval sequence
+
+**The rule — the only statement of when implementation is authorized (rev 25).** P5 is approved in two parts.
+
+- **Part 1** is everything in this plan **except** the retention design listed below. **P5.0 begins** when §14 records
+  both: the reviewer's approval of Part 1, and the owner's go-ahead for Part 1 — **given** on 2026-10-12 (G1, "yes,
+  start now with Part 1", `docs/business/P5_OWNER_GO_AHEAD.md`). Until the reviewer's Part 1 approval is recorded, no
+  P5 application code, migration or test is written or committed.
+- **Part 2** is the retention design. **Nothing of it is built** — no migration, function, table, trigger, command or
+  test of it — until §14 records the reviewer's approval of Part 2. **Recorded 2026-10-18 (revision 91):** approved by
+  Claude under the project lead's delegation of that day (§14), not by an independent review. P5.8 step (a) waits for it; P5.10 cannot close
+  without it; nothing in Part 1 depends on it.
+
+**Part 2, every place it appears** (each also marked "(Part 2)" in place):
+
+- §8.6 from "Retention design" to the end of §8.6: the audit table's own guard and its trigger swap, the reservation,
+  report requests and reports, the manifest, the purge functions, the operator command, its failure semantics and tests;
+- §7.2: L1's sentence on the purge's deletes, L4's description of `audit.audit_events_guard()`, the four operator-only
+  footprint rows of the purge functions (the bootstrap and containment rows are Part 1), and read-consistency test (e);
+- §8.1: events #38 and #40–#50, and the catalog override's `GREATEST` rule;
+- §8.2a: rule 2's exception for the purge functions;
+- §8.6: the "Copy before deletion" bullet and the session and link details' clearing (CF4);
+- §9.1: "Purge ownership and privileges", and the purge functions in the list of functions without an app grant;
+- §10: P5.8 step (a) with its work, command and tests, and the purge runbook of P5.10;
+- §13: the retention-purge clause of exit criterion 9.
+
+**Always:** planning and review records — this plan, the audit report, the review handoff, the evidence pack, owner
+questionnaires and the decision records of §14 — may be committed as they are written (R23); nothing is pushed or
+merged without the owner.
+
+**History.** The original sequence (draft → owner review → reviewer challenge → the owner's explicit implementation
+approval) still holds and is now met by the two parts above. The owner's earlier intention ("yes, build it, but wait
+for my final go-ahead after the reviewer approves the plan", confirmation form, 2026-10-12) is fulfilled for Part 1 by
+G1. The staged approval was proposed in revision 22; the reviewer approved Part 1 on revision 22 and withdrew that
+approval on revision 23; revision 24 corrected the defects named; revision 25 states the rule above and marks the
+Part 2 boundary in place (§14, §16).
+
+## 13. P5 exit criteria (proposed for RESTRUCTURING_MAP)
+
+1. Every endpoint declares one authorization class; the router refuses undeclared endpoints.
+2. The registry-driven authorization matrix is green for every endpoint and actor in P5.9.
+3. API and database agree; no hard-coded owner/super-admin authority remains outside the resolver (source + SQL guards).
+4. Privileged writes re-check authority in their own transaction; the revoke-vs-write race is tested; the lock-order
+   guard is green; the containment switch of §11.1 works and is operator-only.
+5. Role, member, invitation and audit-read management are owner-only and enforced in the database (D5, D5′, D8′);
+   escalation tests green.
+6. Platform staff hold exactly their membership grants; reserved powers are super-admin only; the staff lifecycle
+   (create, deactivate, reactivate) and the account separation of §7.4 are tested.
+7. Audit: closed catalog with allowlists; atomic / best-effort / sensitive-read classes proven by failure injection;
+   A7 resolved; audit reads isolated and audited; every paginated read meets the read-consistency guarantees of §7.2
+   (one statement per page, immutable keys, exactly-once across pages for rows committed before the first page and
+   still present when their page is read), proven by the concurrency tests including the concurrent purge (R25, R35).
+8. All P1–P4 guards, the tenant-isolation matrix and the leak sweep stay green; every new guard proven by mutation.
+9. An owner-approved written D9 policy (§8.6) exists, matching the decisions recorded there (O10–O12 included); the
+   retention purge (Part 2) is built and tested, including, for every requested report, its recorded delivery against the owner's written receipt and the deletion of
+   its rows only after it — or the request's cancellation by him in writing — and the operator's copy destroyed (O11,
+   O20, O21; a report lost before delivery is made again); application logs
+   carry no IP address or user agent (leak sweep); the P15 obligations are recorded in the P5 record.
+10. Assigned-customer authorization recorded as a P7/P8 exit criterion (D1).
+11. Every `permission` endpoint declares its branch scope; branch-restricted and archived-branch staff are covered by
+    the matrix; P5 claims no end-to-end branch isolation for resources that do not exist yet (D7, §7.6).
+
+## 14. Open items for the reviewer and owner
+
+**Independent reviewer — P5.8–P5.10 closure gate (2026-10-23, revision 101). Verdict: approved to close.** I reviewed
+the final handover-fate and copy-destruction safeguards and their database tests, checked the current branch head
+against the successful GitHub Actions run, and reconciled the §13 criteria with the as-built record. The workflow
+passed on `f7ee57bf0d7e32c0ea6070d375eb6aa57d2ab57c`, including the test/concurrency suites and full-history Gitleaks.
+No P5 closure blocker remains. The hardware rehearsal remains a prerequisite before the first real report handover
+only. The focused local database test was unavailable because PostgreSQL was not running at `127.0.0.1:5436`; CI
+provides the passing database-suite evidence. This reviewer record satisfies the condition in O24. The PR remains
+open for the repository owner to merge.
+
+**Independent reviewer — combined P5.8–P5.10 technical review and revised §8.6 test allocation (2026-10-19, revision 96). Verdict:**
+"I approve the revised §8.6 allocation. The POSIX report-directory mode check is assigned to the existing Ubuntu CI
+job (`pnpm test` and `pnpm test:concurrency`); that CI run must pass. An injected `ENOSPC` write failure and a renamed
+report directory are accepted as automated stand-ins for the full-disk error path and unavailable-directory path;
+neither is evidence of a physically full disk or an unmounted volume. The real FAT/exFAT, removable-stick handover,
+volume-removal and disk-sequence checks are assigned to the documented rehearsal on a throwaway test database. The
+rehearsal must be recorded before the first real copy is handed to the owner, and a failed step stops that handover.
+
+The combined technical review found no additional P5.8–P5.10 design or implementation finding in the material reviewed.
+However, fault-injected lost responses at database/filesystem boundaries remain an untested §8.6 obligation, especially
+a committed mutation whose reply is lost. A process kill after the command receives a confirmation response is not an
+equivalent test. Until that test is added and passes, P5.8's test gate is not approved as complete. This review approves
+the revised allocation but does not close P5. P5 closure still requires the lost-response tests, passing Ubuntu CI, the
+final gate twice, full-history gitleaks, and the owner's final approval. The recorded rehearsal is a prerequisite to
+the first real copy, not a P5-closure prerequisite under this allocation."
+
+**Disposition.** This is the combined technical review of P5.8–P5.10 and approval of the revised §8.6 allocation, not
+completion of P5.8's test gate. The focused API and database slices passed; the lost-response injection tests, full
+repository gate, fresh gitleaks scan and Ubuntu CI have not yet been run against the final tree. The rehearsal is also
+pending. The owner's answer on `P5_OWNER_FINAL_APPROVAL.md` is conditional on this review and the remaining closure
+checks; it is not unconditional closure approval.
+
+**Independent reviewer follow-up — lost-response test re-check (2026-10-19, revision 98). Verdict:** the `as_of_in_future`
+failure is fixed: the lost-response fixtures now obtain canonical UTC `as_of` from PostgreSQL rather than the Node
+host clock, matching the production clock source and preserving microseconds. The full `purge-cli.test.ts` file passes
+24/24, including all 11 tests in `answers lost after a step took effect`; formatting, lint and API typecheck pass. **I
+approve pushing this branch to open a PR and activate Ubuntu CI.** This is not approval to merge or close P5. Ubuntu CI
+must pass; the final gate
+must be rerun twice after this test edit, full-history gitleaks rerun, and O24's conditional owner approval must be
+satisfied before closure. The hardware rehearsal remains required before the first real copy.
+
+**Critic review of Part 2, round 10 (2026-10-18, on revision 89; a new fresh-context agent; a narrow confirmation round; no sign-off).** Verdict: "the deletion-safety core is unchanged, and the rev-89 changes are mostly sound and consistent … The handover state machine is closed except for one ordering gap." Findings: P0 none; P1 none; **P2** (1) the failure path deleted the stick's file before the database moved the attempt out of the unended state, so a commit of the successful record landing late could still leave a recorded attempt on a wiped stick; and P3 points (transient refusals treated as failures, `record_report_lost` with an unaccounted stick, the reason given for keeping `ended_at`, an unlabelled stick's confirmation, §8.2's atomic range). **Disposition (revision 90):** (1) the database decides first — `record_handover_failed` locks the attempt and is refused unless it is unended and written, and the stick is touched only after that call succeeds (or a re-read shows it abandoned by it); the P3 points applied — only a hash mismatch or an unreadable or truncated file is a failure, a loss refused while any attempt lacks a fate, the eject confirmed with a fixed phrase and the attempt's id, unlabelled sticks refused, §8.2's range #37–#50.
+
+**Critic review of Part 2, round 9 (2026-10-18, on revision 88; a new fresh-context agent; a final confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds after revision 88 … The rev-88 handover changes are mostly sound"; the statements on the eject and `diskseq` "accurate". Findings: P0 none; P1 none; **P2**, both in the handover and neither able to delete a held row alone — (1) no function could record the command's own abandonment without also attesting the stick's fate; (2) the verification's failure path did not re-read the attempt, so a response lost after the record committed could wipe a stick then handed over as verified; and P3 points (copy destruction with an unaccounted stick, a null `diskseq`, an unchanged `diskseq` after a real eject, `--ejected` as a rubber stamp, the attempt's number, the reminder's time). **Disposition (revision 89):** (1) `record_handover_failed` (the twentieth function, its own event #50) records the command's abandonment with no fate; the operator's `record_handover_abandoned` later sets only the fate; (2) before any cleanup the command re-reads the attempt and never touches a stick whose attempt is recorded; the P3 points applied — `record_report_copy_destroyed` refused while another attempt has no fate, a null disk sequence never passes, an unconfirmed eject and an unchanged sequence are refusals that change nothing, the eject confirmed interactively by typing the stick's label, "the attempt's number" is its id, superseding keeps the verification's time.
+
+**Critic review of Part 2, round 8 (2026-10-18, on revision 87; a new fresh-context agent; a confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds … I found no path that deletes a held row, deletes a row before its retention, or deletes while a copy is awaited. Nothing stalls the two-year rule or CF4." Findings: P0 none; P1 none; **P2**, all in the handover and none risking a deletion — (1) a stick from an automatically abandoned attempt could never get an attested fate; (2) Linux's mount id is reused and proves neither an unmount nor a dropped cache; (3) `record_handover_abandoned` could rewrite the delivered attempt, and one of its tests was impossible; and P3 points (the eject enforced only by the command, wording, the delivery command without the receipt's attempt, the listing and reminders). **Disposition (revision 88):** (1) a fate is attested on every attempt but the delivered one (`fate_attested_at`, `fate_note`), the same call attesting an auto-abandoned one; (2) the eject is the operator's attestation on every platform, **enforced by the database** (`record_report_handover` refuses without it), with the disk's never-reused `diskseq` required to change where Linux offers it (5.15+), and every claim stated "as far as the attested eject is true"; (3) the delivered attempt is refused; the P3 points applied — `--attempt` on the delivery command, the listing and reminders per attempt.
+
+**Critic review of Part 2, round 7 (2026-10-18, on revision 86; a new fresh-context agent; a confirmation round; no sign-off).** Verdict: "The deletion-safety core still holds after revision 86. I found no path that deletes a held row, deletes a row before its retention, or deletes while a copy is awaited." Findings: P0 none; P1 none; **P2** (1) a recorded attempt superseded by a replacement stick had no forced end, so that stick — a full copy — could go untracked, and the receipt's hash could not tell sticks apart; (2) nothing enforced the eject the verification depends on, and its test could not be built; and P3 points (no function recorded `written_at`, stale wording, a `CHECK` that cannot see another table, a serial mismatch read as a failure, deleting a file does not wipe a FAT stick, a lost response after a page's deletion, a dead run's count, the reminder with several attempts, a clock stepping back, UNC and `subst` drives). **Disposition (revision 87):** (1) at most one **live** attempt per report — unended, or recorded and not superseded — so a replacement needs the recorded attempt superseded first with the operator's attested note on what became of that stick; the delivery names the one live recorded attempt and the receipt quotes the attempt's number and the stick's label as well as the hash; (2) the eject is enforced on Linux by the medium's mount id changing between the write and the verification, and attested on Windows (`--ejected`), with the claim stated as conditional there; the P3 points applied — `record_handover_written` (nineteen functions), a composite foreign key for the delivered attempt, a serial mismatch changes nothing, a failed stick flagged "wipe" until attested. Round 8 follows.
+
+**Critic review of Part 2, round 6 (2026-10-18, on revision 85; a new fresh-context agent; no sign-off).** Its verdict on the core: "The deletion-safety core holds. I traced every way a row can be deleted … I found no path that deletes a row while it should be held, deletes it before its retention, or deletes it while a copy is awaited. Liveness also holds: the position moves past every examined row, so a held block cannot stall a run." Findings: P0 none; **P1** (1) the handover's read-back after the write is served from the operating system's memory, so its hash did not prove the bytes on the stick; **P2** (2) handover attempts lived in single columns of the report, so repeated attempts could not be represented and the rule "recorded or abandoned before another" could not be a `CHECK`; and P3 points (the exceptions to "lock first", a loss mid-run stopping the run, `rows_deleted` and category order, a discarded export's manifest, replaying a processed page, the export's `p_as_of` and `now()`, untested claims, holding the lock to the marker's removal, shadow copies and network drives, notes not in event summaries, the copy bullet's grammar and L4, the index in `schema.prisma`). **Disposition (revision 86):** (1) the handover is two steps — written, then verified by a new process after the medium is ejected and inserted again, checking the volume's serial — so a failing or counterfeit stick is caught before the owner takes it; (2) attempts are rows of `audit.purge_report_handovers`, at most one unended per report by a partial unique index, and the delivery names the attempt its receipt quotes; the P3 points applied.
+
+**Critic review of Part 2, round 5 (2026-10-18, on revision 84 — the consolidated rewrite; a new fresh-context agent; no sign-off).** The plan's facts checked true, and the rewrite kept every protection earlier rounds required. Findings: P0 none; **P1** (1) a plain run could not get past a large active report — a call examining its ceiling of held rows found nothing and had no new position to give, so deletion of every other entry stalled (O21 S1); (2) the read cursor came from the command, so a defect could skip rows from a copy, and those unheld rows could then be deleted before the owner's receipt (O20); **P2** (3) the handover's `link` fails on an ordinary FAT or exFAT stick; (4) a copy left on a medium after a failed or abandoned handover was untracked; (5) the file-system, permission and encryption checks could not be built on Windows in Node 24 as written; and P3 points (a guard condition for a request awaiting its copy, `purge_run_events` missing from category 0, a lost report "listed until destroyed", "withdrawn during a plain run", §13 and §10 wording, "the same rows", untested guarantees, the footprint's order against L5, an indefinitely waiting request, network namespaces, handover functions on inactive reports, plain manifests never pruned, the index's name). **Disposition (revision 85):** (1, 2) the read position is the run's own, kept by the database and moved past every examined row, and `purge_candidates` takes no cursor; (3) the medium file is created exclusively with no link; (4) the medium is recorded at `begin_report_handover`, and a stopped handover is ended only by an attested `record_handover_abandoned` (#49), required before another handover, a withdrawal, a loss or a cancellation; (5) hard links by a probe, the directory's access list read with `icacls` before the lock (POSIX: its mode), encryption and other sync tools as attested runbook rules; the P3 points applied — the guard refuses deletion in an export run and while a copy is awaited, the page row is locked before the audit rows, plain manifests are pruned, the index is named. Eighteen functions; events #38 and #40–#49. Round 6 follows.
+
+**Part 2 rewritten once (revision 84).** With O21 answered (`35af686`), §8.6's retention design is replaced by one consolidated specification, written fresh rather than patched, every finding of rounds 1–4 taken as a requirement. O21 S1 allowed the main simplification: **a report's rows are held, not separately deleted** — while a report is active the plain runs skip its rows (purge function, guard), and its delivery releases them to the next plain run — which removes the reported-deletion run, the waiting run, the per-row deferral and the satisfaction-at-last-page that rounds 3–4 found contradictory. Round 4's findings are met: liveness judged with `clock_timestamp()` after the row lock, and `purge_expired_events` refusing any page while a request awaits its copy (1); per-function reservation rules, so recovery, attestation and `--lost` can discard (2); the unusable-copy path removed — the handover command writes and verifies the medium itself, and after delivery the owner holds the only copy (O11) (3, 8); attested paths for an intact machine without proof, files of the run's name deleted whatever their content, and the Linux host id the machine id only (4); no deferral left to contradict (5); the interim O21 reading gone (6); the `(occurred_at, id)` index created by the Part 2 migration if absent, a sargable bound and a per-call ceiling of rows examined (7); and the P3 points. The clearing no longer needs a reservation. Seventeen functions, three helpers, events #38 and #40–#48. Round 5 follows.
+
+**Critic review of Part 2, round 4 (2026-10-18, on revision 82; a new fresh-context agent; no sign-off) — recorded, not yet applied.** The plan's facts checked true. Findings: P0 none; **P1** (1) the rule "nothing deleted while a request is open" rests on lease timing, and the clock of the liveness check is never named: a plain run whose transaction began just before its lease expired can delete a page after a request was recorded — fix: liveness judged with `clock_timestamp()` after the row lock everywhere, and `purge_expired_events` refusing a plain run's page whenever a request is open, with a two-connection test; **P2** (2) `discard_purge_export` cannot be called by recovery, by an attestation, by `--lost` or after a refused heartbeat under the stated reservation rule; (3) the unusable-copy path of rev 82 contradicts the R54 tests and needs the marker the delivery already removed; (4) an intact writing machine whose marker is gone, whose file was altered, or whose Linux host id changed (the network-namespace inode) can only be recorded with a false "machine lost"; (5) step 3 and a test still carry rev 81's `not_yet_eligible` instead of rev 82's deferral, and the deferred ids and the "exhausted" flag have no columns; (6) the interim O21 reading contradicts the §7.2 row, the tests and the deferral text, and "until he says stop" contradicts "no cancellation"; (7) the `(occurred_at, id)` index the purge pages by is created only by the audit-read migration, after the purge in P5.8's order, and the bounded-scan claim needs a sargable range predicate and fails with long overrides; (8) the copy on the owner's medium is an untracked personal-data file; and P3 points (a marker listing with no column, the SID and `MachineGuid` needing a child process, best-effort container detection, a shorter-override test, `reserve_purge_run` returning the export run's `p_as_of`, L1's fourth kind of delete, L4's allowlist wording, §12's list of Part 2 places, "processed" wording, a delivery recorded off the writing machine, a hung command holding the lock, a test for the bounded clearing). **Disposition:** five of the eight (2, 3, 5, 6, 7) were introduced or left by the patches of revisions 81–82, and the counts of blocking findings (13, 9, 8, 8) show that patching is no longer converging; (6) and part of (1) depend on O21. So the findings are **not patched one by one**: Part 2 is to be **rewritten once, as a single consolidated specification**, after the owner answers O21, taking every finding of rounds 1–4 as requirements, and simplified where a whole class of failure can be removed; then a fresh critic round on the rewrite.
+
+**Critic review of Part 2, round 3 (2026-10-18, on revision 81; a new fresh-context agent; no sign-off).** The plan's facts checked true. Findings: P0 none; **P1** (1) the delivery hash proved only the operator's copy, not the medium the owner took — a truncated copy could be signed for, then the rows deleted; **P2** (2) nothing checked that a report was complete, and an export's `p_as_of` was the operator's choice; (3) every cleanup deleted the marker before the database recorded the outcome, so a failure in between left only a false `--lost`; (4) the heartbeat on a pooled connection meets the run's own page transaction under `NOWAIT`, the pool's 10-second statement timeout cancels long pages, and a renewal at a transaction's start does not extend a long page; (5) the field clearing was one unbounded transaction that re-cleared every old row on every run; (6) a page not yet eligible held a whole report — and the request — for as long as its longest retention; (7) the interim O21 reading was not the least-deleting for S2, the owner's C2 answer on the O20 form was not recorded, and the build promise differed from the forms'; (8) an export with nothing eligible, and page boundaries "computed from the file", contradicted the procedure; and P3 points (`purge_candidates` in the wrong kinds of run, `--lost`/`--host-lost` naming and the command flags, the runbook's omissions and OneDrive, the `STABLE` claim and `purge_lease` on the allowlist, §8.2a rule 2, overrides shortening the retention, the per-account lock and a lingering pipe client, no event when a report file comes into existence, the planned BR-11.3 anonymisation). **Disposition (revision 82):** (1) the medium is hashed and recorded at the handover in the owner's presence (#47), the receipt quotes the hash, the delivery needs the handover, and a copy reported unusable before any page is processed is recorded lost and made again; (2) a confirmation needs the manifest exhausted, and an export run's `p_as_of` is the reservation's time; (3) the marker is deleted only after the outcome is recorded; (4) one dedicated client per run, heartbeats only between its own transactions, the purge's own 5-minute statement timeout, renewal at the end of each function's work, pages scanned through the `(occurred_at, id)` index; (5) the clearing runs in bounded batches and only on rows still holding a value; (6) a page's eligible rows are deleted and the rest deferred to later plain runs, so a report completes; (7) the interim reading keeps the request open after a report completes (a copy every time), the C2 answer is recorded in the O20 row, and no part of Part 2 is built before O21; (8) pages are never empty, page boundaries come from the database's manifest, and an empty export is discarded `empty`; the P3 points applied — the confirmation now writes #46. Round 4 follows.
+
+**Critic review of Part 2, round 2 (2026-10-18, on revision 80; a new fresh-context agent; no sign-off).** It checked the plan's facts against the repository and found them true except the guard's. Findings: P0 none; **P1** (1) a delivered report whose page can no longer be verified — a column added, the canonical function or `to_jsonb` changed, or the retention lengthened — blocks deletion and clearing for good; (2) recovery and the lost-report path took "file not found" for "file removed" (an unmounted volume, a remapped drive, another machine), leaving a report untracked; **P2** (3) the guard fails closed on writes to the purge's own tables, which had no category; (4) CF4 clearing stopped whenever a deletion or an export was stuck; (5) the run kinds overlapped once a report was delivered, allowing a second copy; (6) the database never checked the confirmed file against the frozen manifest; (7) an export had to hold the whole report in memory; (8) while a request is open all deletion stops, with no deadline, no withdrawal and an inferred scope — owner questions; (9) the host identity is unstable in containers, and the destruction had no lost-host path; and P3 points (idempotent pages and unknown outcomes, lease times from `now()`, manifest lifecycle gaps, the canonical helper missing from the inventories, stale counts and texts, FAT/exFAT, the Windows pipe name, the repository check, the listing needing the lock, notes and personal data). **Disposition (revision 81):** (1) deletion verifies a reported page by its ids, existence and the guard's age rule only, the content having been checked once at confirmation, and a page not yet eligible is left with `not_yet_eligible`; (2) a run marker, created right after the export is recorded, proves the directory — every cleanup, loss and destruction refuses without it, and a loss off the writing machine needs `--lost`; (3) the purge tables are category 0 after the reservation row, with a guard rule and a mutation test; (4) clearing is attempted in every run whatever happened, and an unresolved export makes every run clearing-only; (5) the kinds are decided in a fixed order, with at most one active report per request; (6) the confirmation compares the count, page count and manifest digest computed from the file with the database's manifest; (7) the export streams page by page; (8) asked of the owner as O21, the design keeping the reading that deletes least until he answers; (9) commands refuse in a detected container, and the destruction has an attested `--lost` path; the P3 points applied. Round 3 follows.
+
+**Critic review of Part 2, round 1 (2026-10-18, on revision 79; a fresh-context agent run at the project lead's request — "Repeat the cycle of a critic reviewer till you are satisfied with part 2"; no sign-off).** Findings: P0 none; **P1** (1) request satisfaction could not be evaluated (run completion stored nowhere); (2) the manifest was never frozen, so a page read after confirmation could delete a row outside the report; (3) an unresolved export whose host is lost blocked every purge forever; (4) the copy could be recorded destroyed from another machine, or with the drive unmounted; (5) deleting before the owner's receipt, and closing his request on a lost copy, was never asked of the owner; (6) session clearing used `revoked_at`, which revocation stamps on long-expired sessions, keeping details years too long; **P2** (7) `audit.audit_events` had no lock category, so the guard could not check the purge's `DELETE`; (8) the #38 summary's per-pair counts are not expressible in the catalog's allowlists; (9) the stated takeover-with-report test contradicted `export_unresolved`; (10) the canonical text depended on the session `TimeZone` and the file bytes were unspecified; (11) the rebuild's scratch database was an untracked full copy of personal data; (12) the rebuild depended on backups that do not exist before P15; (13) the lock assumed "never in a container" without enforcing it; and P3 points (function count, the command list, column lists, the §9.1 event list, a run with nothing eligible, the confirmation's location, takeover recording, the guard's age reference, the recovery's lock key, an unknown commit outcome, full-disk encryption, withdrawal of a request, a squatted lock name). **Disposition:** (5) asked of the owner as O20 and answered — deletion only after his receipt; Part 2 restructured on it (revision 80), which removes (11) and (12) with the rebuild-from-backup altogether and makes (1) and (2) one rule — a reported-deletion run deletes exactly a delivered report's frozen manifest, and the deletion of its last page satisfies the request; (3) an attested `--host-lost` discard, with an incident record; (4) destruction only on the writing machine, the file present with its SHA-256, "already gone" only by attestation; (6) a session ends at the earliest of revocation, absolute and idle expiry; (7) `audit.audit_events` is category 11, with a mutation test; (8) the #38 and #40 fields listed; (9) the takeover cases restated as they can occur; (10) one canonical-text function pinned to UTC and the exact file bytes; (13) the host id includes the Linux network namespace and an empty machine id refuses; the P3 points applied. Round 2 follows.
+
+**Technical review follow-up — Part 2 revision 77 (2026-10-18; no sign-off).** A PID plus process-start token can
+repeat or be unavailable on some platforms, so revision 77 risked relying on another reusable identity. Revision 78
+replaces it with a kernel-held OS lock that remains held while any exporter can touch files; stale recovery must
+acquire that same lock before inspection, cleanup, or discard. Missing lock support, an unreachable host, or a missing
+lock file with unresolved exports fails closed. Tests cover pauses before and after lock acquisition and throughout
+export registration and file creation. Part 2 remains unapproved.
+
+**Review — Part 2 re-check on revision 76 (2026-10-18; no sign-off).** **[P1] Manual export recovery did not fence a
+paused writer.** With no recorded artifact, an operator could inspect an empty directory and discard the export while
+the old process was paused before creating its file; that process could later resume and leave an untracked report.
+Revision 77 requires a stable host id, PID and OS process-start token to be recorded before any filesystem operation,
+and requires recovery to verify that exact process has exited before inspecting files or discarding. If the process is
+live or cannot be verified, the export remains unresolved and blocks new runs. Tests cover pauses before create and
+between create and artifact recording. This is a design amendment only; Part 2 remains unapproved.
+
+**Reviewer — P5.8 addendum re-review (2026-10-17, on rev 68): Changes requested.** The merchant-read row maps the
+platform-team display to `actor.audience: 'platform'`, which can overwrite a recorded `null` audience. Keep the recorded
+audience unchanged and represent "AlphaKolect team" with a separate `actorLabel`; require a regression test for a
+platform identity whose event has no recorded audience. The addendum is not confirmed. O19 signature and Part 2
+approval remain separate gates.
+
+**Decision records (R26).** A decision exists only when it is recorded, not when this document is edited. Each owner
+decision gets an entry in the **ADR-16 decision log** with: the item (e.g. O7); the option selected, quoting the
+owner's answer; the decision-maker; the date; the source (for the owner's answers,
+`docs/business/P5_OWNER_QUESTIONS.md`, answered in the owner's words as in the earlier business questionnaires); the
+plan sections and contracts it affects; and the commit that applies it to this plan. Only then does the item's row
+below change to **DECIDED**, citing that entry. The positions agreed "unless the owner objects" (D2, D3, D6–D8,
+D10–D12, §3) are recorded the same way — as the owner's explicit confirmation, or as "no objection" with its date.
+Questionnaire mapping (confirmation form: CF1 → every entry, CF2 → D9 retention and copy, CF3 → §7.4, CF4 → §8.6,
+CF5 → §8.5): A1 → O7; A2 → O3; B1 → O8(a); B2 → O8(b); B3 → the owner's preference for O4 (decided at P5.8
+step 2 on the spike's evidence); C1 → O9; Part D → the D9 policy (§8.6); E1–E8 → D2, D3, D6, D7, D8, D10, D11, D12.
+Remaining-questions form (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, 2026-10-14): A1 → O13; A2 → O14; A3 →
+O15; B1–B3 → O16; Part C (P1, P2a–d, P3, unchanged from the privacy form of 2026-10-12) → O10–O12; D1 → O17.
+Refusal-messages form (`docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, asked at the P5.6 gate, answered 2026-10-14): R1–R4 → O18.
+Activity-record form (`docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, asked 2026-10-17 on the spike's evidence, P5.8 step (c)(2); answered and signed 2026-10-17, `7497869`): Q1–Q4 → O4.
+Team-in-the-business-record form (`docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`, asked 2026-10-17 with the ADR-16 addendum, `c78dec8`; answered 2026-10-17, `4fe4f75`, relayed — the name and date lines blank): T1 → O19.
+Report-copy timing form (`docs/business/P5_OWNER_REPORT_COPY_TIMING.md`, asked 2026-10-18 on the critic review of Part 2, `c536da6`; answered 2026-10-18, `65dd6d9`, signed `6b5e318`): C1 → O20 (C2 applies only to the option not chosen).
+Copy-request scope form (`docs/business/P5_OWNER_COPY_REQUEST_SCOPE.md`, asked 2026-10-18 on the critic's round 2, `bb809b8`; answered and signed 2026-10-18, `35af686`): S1–S3 → O21.
+
+**Decision log (interim — moved verbatim into ADR-16 at P5.0).** Source for every entry: the owner's answers in
+`docs/business/P5_OWNER_QUESTIONS.md`, relayed by Olamide Fadahunsi on 2026-10-11 (the form's "Answered by" and
+"Date" lines are blank and are requested again in `docs/business/P5_OWNER_FOLLOWUP.md`), and the follow-up answers in
+that file (F1–F4), relayed on 2026-10-12, with two clarifications of F4 given the same day by the owner's
+representative, Olamide Fadahunsi. The commit applying each entry is recorded when the entry is committed.
+
+**Provenance (R33).** The owner wrote the answers on the two forms; Olamide Fadahunsi relayed them, and himself gave
+the two F4 clarifications. A relayed or representative answer is recorded as such and is **not** treated as the
+owner's own until the owner confirms it in writing: the confirmation form `docs/business/P5_OWNER_CONFIRMATION.md`
+asks him to sign and date the earlier forms, to confirm the two clarifications, and to confirm the three rev-13
+interpretations (CF3–CF5). **Returned signed on 2026-10-12**: every relayed answer is now the owner's own. Each entry below records its decision-maker; in ADR-16 every entry carries the
+decision-maker, the date, the source, the selected option, the affected contracts and the applying commit.
+
+| Item | Owner's answer (quoted or exact) | Decision-maker and date | Status | Affects |
+|---|---|---|---|---|
+| O8(a) | B1: "Refuse. Ask them for a different email address, so their platform account is completely separate from any business account." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §7.4; P5.7 |
+| O8(b) | B2: "Switch the same account back on, with no permissions. You then give them only what they need again." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §7.4, §7.2 footprints, §8.1 #37; P5.7 |
+| O9 | C1: "Now, as part of this stage." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §1.1; P5.8 |
+| O10 | P1: "35 days" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — backups are kept 35 days, so a deleted entry leaves every backup about five weeks after its deletion; applied by P15, where backups are built | §8.6 (the D9 written policy, P5.8 step e); P15 |
+| O11 | P2a: "Handed to me directly (for example on a USB stick, in person)." P2b: "Straight away, once you confirm you have it." P2c: "Yes — a short signed or emailed 'received' from me". P2d: "As long as I decide; it is my responsibility." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — the report copy is handed to the owner in person; the operator deletes their copy as soon as the owner confirms receipt in writing, and that written receipt comes before the clean-up is recorded as complete; the owner keeps his copy at his own discretion | §8.6; P5.8 (the purge, Part 2, and the D9 policy); the `audit:purge` runbook (P5.10) |
+| O12 | P3: "Yes." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — a short privacy notice at sign-up and invitation says what is recorded, why, who can see it and for how long; written and shown in P13 (web) | the D9 written policy (P5.8 step e); P13 |
+| O13 | A1: "Agree." for each of the eleven suggested descriptions, unchanged | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — P5.6's catalog migration seeds exactly the suggested wording | §10 P5.6 (finding 2); the frozen `PermissionCatalog.description` |
+| O14 | A2: "Yes, straight away — restoring the role should immediately reinstate the permissions that were previously assigned to it." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — as designed: an archived role keeps its set, inert, and a restored role's permissions apply again at once | §10 P5.6; D6; the frozen `Role.permissions` |
+| O15 | A3: "That is fine — these are business-wide settings, and the owner chooses who gets them." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — as designed: every P5 endpoint stays `merchant_wide`, and a branch restriction does not narrow them | §7.6; P5.6, P5.9 |
+| O16 | B1: "Me, or the technical lead in an emergency, who tells me straight away". B2: "Only with my approval, after the fault is fixed and checked". B3: "Yes — every business owner is told that staff access is paused, and again when it is back." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — the `admin:containment` runbook (P5.10) states it: set by the owner, or by the technical lead in an emergency, who informs the owner straight away; lifted only with the owner's approval after the fault is fixed and checked; every business owner told when staff access is paused and when it is back | §11.1; P5.10 |
+| O17 | D1: "Keep them" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward FAdahunsi", "Date: 14th of October, 2026"), relayed by Olamide Fadahunsi | **Decided** — `P5_AUDIT_REPORT.md`, `P5_REVIEW_HANDOFF.md` and `P5_EVIDENCE_PACK.md` stay in the merged history | P5.10 |
+| O18 | R1: "You don't have permission to do this. Ask the business owner if you need it." R2: "Keep it". R3: "You don't have permission to do this. Ask a super admin if you need it." R4: "keep them" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 14th of October, 2026"; `feea3d4`), relayed by Olamide Fadahunsi — answers relayed unsigned first (`6cfb681`), then signed, unchanged | **Decided** — a refusal of a grantable permission says whom to ask: the business owner (merchant) or a super admin (platform); a reserved permission keeps P4's message ("Only the business owner can do this"; the three super-admin messages). Applied in `616cff1` (API), `850a4b1` (the 403 descriptions) and `3d53835` (the two new messages in the owner's exact characters, straight apostrophe included) | §10 P5.6; the 403 message of every permission endpoint; P5.7's platform refusals |
+| O4 | Q1: "Up to 100 entries a page". Q2: "up to 31 days (one month) at a time". Q3: "Not now: by person only, as already decided". Q4: "One business, One person, One kind of activity" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 17th of October, 2026"; `7497869`), relayed by Olamide Fadahunsi; asked on the measured evidence of the spike (`d15d133`) | **Decided** — for **both** audit reads (R24): at most 100 events a page; a required window of at most 31 days; the merchant read (#33) filters by person only (event filtering may be added later if owners ask); the platform read (#34) filters by business, by person and by kind of activity (an event identifier of the catalog), each optional and combinable. Frozen with both contracts in the ADR-16 addendum, which the reviewer confirms before the reads are built | §8.5; §10 P5.8; #33, #34 |
+| O19 | T1: "As "AlphaKolect team", without naming the person" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_TEAM_IN_BUSINESS_RECORD.md`, relayed by Olamide Fadahunsi on 2026-10-17 (`4fe4f75`) and signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 17 October 2026"; `894d309`), unchanged | **Decided** — a business's record shows the platform team's actions as `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record names the person. Applied in the ADR-16 addendum (`915ad30`) | §8.5; #33 |
+| O20 | C1: "only after I confirm you have the copy". C2 (asked only for the other option): "your request stays open" — committed with the signature in `6b5e318`, whose message wrongly called the form unchanged; recorded here in rev 82 | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_REPORT_COPY_TIMING.md`, relayed by Olamide Fadahunsi on 2026-10-18 (`65dd6d9`) and signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 18 October 2026"; `6b5e318`) | **Decided** — when the owner has asked for a copy, the entries it covers are deleted only after his written receipt is recorded; a copy lost before then is made again from the entries. Applied in §8.6 (rev 80) | §8.6 (Part 2) |
+| O21 | S1: "They are deleted on thier normal without a copy". S2: "One copy for each request". S3: "You can cancel a request in writing and if a copy has waited 7 days for my recieved, i am reminded" | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_COPY_REQUEST_SCOPE.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 18th of October, 2026"; `35af686`), relayed by Olamide Fadahunsi | **Decided** — every suggested option: only the entries in a copy wait for his receipt, all others are deleted on their normal day; one copy per request; cancellation in writing; a reminder when a copy has waited 7 days for his receipt. Applied in §8.6 (rev 84) | §8.6 (Part 2) |
+| O22 | Q1: "I approve the policy as written." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_POLICY_AND_CLOSURE.md` (`a592b8f`; its "Answered by" and "Date" lines blank, relayed by Olamide Fadahunsi) and signed on the policy itself ("Owner approval of this draft: Mayowa Edward Fadahunsi  Date: 18th of October, 2026"; `37d6acd`) | **Decided** — the D9 written policy, `docs/business/ACTIVITY_RECORD_PRIVACY_POLICY_DRAFT.md`, approved as written (the text of `995fbc6`); a material change needs renewed review | §8.6, §13 item 9 |
+| O23 | Q2: "Once a month, on the first working day" | Mayowa Edward Fadahunsi (owner), the same form (`a592b8f`), relayed by Olamide Fadahunsi | **Decided** — the operator runs `audit:purge` by hand once a month, on the first working day, until P12 schedules it (RESTRUCTURING_MAP P15/P12 obligation 6) | §8.6, `docs/operations/AUDIT_PURGE.md` |
+| O24 | Q1: "I approve closing this stage, with the condition that the independent reviewer's final checks are completed and recorded before final closure." | Mayowa Edward Fadahunsi (owner), `docs/business/P5_OWNER_FINAL_APPROVAL.md`, signed on the form ("Answered by: Mayowa Edward Fadahunsi", "Date: 19th of October 2026"; `6770796`) | **Decided — conditional:** the owner's final approval holds once the independent reviewer's final checks are completed and recorded | P5.10, §13 |
+| O4 (preference only) | B3: "One month at a time is fine. If needed, we can implement a feature to allow searching longer periods in the future." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | Preference recorded; O4 itself decided 2026-10-17 on the spike's evidence (the O4 entry) | §8.5; P5.8 |
+| O3 | A2a–c, F2: "Only the owner, always. The owner cannot give this to any staff member." A2b: refused attempts shown to the owner only. A2c: the owner can see one person's actions | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §6, §8.5; P5.8 |
+| O7, D5 → D5′ | A1 and F1a: inviting staff or agents and cancelling invitations, changing a staff member's role or branch, and switching a staff member or agent off or on are owner-only ("All 3"); F1b: "The owner may choose one branch or all branches." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D5's staff-delegation clause; O7 no longer arises | §3, §4, §5, §6, §7.3, §7.6; P5.5, P5.6, P5.9 |
+| D9 purpose | D1: "Investigate break-ins and suspicious activity, and settling disputes." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §8.6 |
+| D9 retention | D3: "1 year", replaced by F4: "Delete the whole entry after two years." Clarified 2026-10-12: every entry, IP address and user agent included, is kept two years and then deleted in full | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — confirmed as CF2a ("Yes, two years for everything") | §8.6, #38; P5.8 |
+| D9 existing records | D5: the rule applies to records already stored | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §8.6 |
+| D9 access | D2 and F3: "Each business owner only, for their own business only and me. The AlphaKolect team cannot see this information." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** | §8.5, §8.6; P5.8 |
+| D9 copy before deletion | F4: "The owner may ask for a record of the deleted entries, but the system will not keep them." Clarified 2026-10-12: a copy of the entries about to be deleted, handed over as a file on request; no copy kept | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — confirmed as CF2b ("may be sent as a report, but the system will not keep a copy") | §8.6; P5.8 |
+| D2, D3, D6, D7, D10, D11, D12 | E1–E4, E6–E8: "Agreed." | Mayowa Edward Fadahunsi (owner), E1–E8; signed CF1 2026-10-12 | **Confirmed** | §3 |
+| D8 → D8′ | E5 "Agreed", replaced by F2: "Only the owner, always." | Mayowa Edward Fadahunsi (owner), forms 2026-10-11/12; signed CF1 2026-10-12 | **Decided** — supersedes D8 | §3, §4, §6, §8.5 |
+| All answers above | Written by the owner on the two forms, relayed by Olamide Fadahunsi; "Answered by"/"Date" blank | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Confirmed** — CF1 signed: "Yes, I confirm both sets of answers as written." (The two forms' own "Answered by" lines stay blank; this signature covers them.) | all entries |
+| CF3 | Separation of platform and business accounts in the invitation direction (§7.4) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Yes, keep them apart both ways." (§7.4, including the bootstrap change found in rev 14) | §7.4; P5.5 |
+| CF4 | Two-year rule for IP/user agent in sessions and one-time tokens (§8.6) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Yes, two years." | §8.6, §9.1 purger grants; P5.8 |
+| CF5 | Platform actors' IP/user agent hidden from business owners (§8.5) | Mayowa Edward Fadahunsi (owner), confirmation form 2026-10-12 | **Decided** — "Show your team's action, but not your team's internet address or device." | §8.5; P5.8 |
+| Reviewer approval — **Part 1** (§12), first | "Part 1 is approved … This is approval of Part 1 only; it does not supply the owner's go-ahead or authorize P5.0 by itself." | The independent reviewer, 2026-10-12, on revision 22 (`5b51190`) | **Withdrawn** — in the next review (2026-10-12, on revision 23) the reviewer wrote "I have not approved Part 1 in this review": the approval had been recorded with a wrong date (2026-10-13), and P5.0 still put the retention design (Part 2) into ADR-16. Both corrected in revision 24 | §12, P5.0 |
+| Reviewer approval — **Part 1** (§12), current | "Part 1 of revision 25 (`e6b367d`) is approved. Part 2, including the retention design and purge, is not approved by this verdict." (preceded by: "I recommend approving Part 1 … I have no Part 1 design finding to return.") | The independent reviewer, 2026-10-12, on revision 25 (`e6b367d`) | **APPROVED** — Part 1 only, as defined in §12 | §12 |
+| Approval — **Part 2** (§12) | "Part 2 — the retention design of §8.6 as it stands at revision 90 (`687dee6`), with its places listed in §12 — is approved for implementation. The approval rests on ten critic rounds by fresh agents (§14): the last five (rounds 6–10) found no path that deletes a row an active report holds, deletes a row before its retention or deletes while a copy is awaited, and nothing that stalls the two-year rule or CF4; every finding of every round is resolved in revisions 80–90, the owner's decisions O20 and O21 are applied, and no question is open. **Residual risks, accepted and stated:** (1) the eject before a stick's verification is the operator's attestation wherever Linux offers no `diskseq` (Windows, older kernels), so the verification proves the stick's bytes as far as that attestation is true; (2) the fates of sticks, the destruction of the operator's copy, and the report folder's encryption and freedom from sync, backup and shadow copies rest on the operator's attestations; (3) the migrator is trusted, as everywhere in the P1 role model; (4) while a request awaits its copy, nothing is deleted — a scheduled run (P12) must alert on it. The implementation must meet the Tests paragraph of §8.6 in full, and P5.8's gate review stays with the independent reviewer." | Claude, under the project lead's delegation of 2026-10-18 ("Once you have approved part 2 it is approved"); **not an independent review** | **Approved** (2026-10-18) — P5.8 step (a) may be built | §8.6, P5.8, P5.10 |
+| Owner decision **B1** (ADR-16 form) | "Add the database check now for these screens too." — every permission-gated read also checked in the database | Mayowa Edward Fadahunsi (owner), 2026-10-12 | **Decided** — a change to Part 1, built in P5.5; the reviewer's approval of ADR-16 must cover it | ADR-16 §3.5, P5.1, P5.5 |
+| Owner follow-up to ADR-16 (C1, C2, A3; `docs/business/P5_OWNER_ADR16_FOLLOWUP.md`) | C1: "Yes, I accept the recommendation to keep the rule with the protections in place when the system goes live." C2: "lose at most 5 minutes of activity; back within 1 hour." A3: "Yes, that is correct." | Mayowa Edward Fadahunsi (owner), 2026-10-12 | **Answered** — no change to Part 1; C1 and C2 become P15 obligation 5 | ADR-16 §3.5 (availability consequence, decision log); RESTRUCTURING_MAP P15 obligations |
+| Reviewer approval — **ADR-16 text** (P5.0 "Done when") | "I approve ADR-16 Part 1, including owner decision B1, for implementation. The database-side permission checks and the removal of direct app SELECTs are required technical controls. Part 2, including the two-year activity-record retention design, remains pending and is not approved by this verdict. The standby database, backups, alerts, and 5-minute / 1-hour recovery targets are P15 obligations, not missing P5 tests." | The independent reviewer, 2026-10-12 | **Approved as written** — the first verdict stated coverage of lines 259–416 (read to 430); the reviewer confirmed the same day: "Yes. I approve ADR-16 Part 1 **as written**, including B1 and the full §3.5 through the frozen contracts, error codes, rollout and decision log (lines 259–499 at `fac08e7`). I found no technical blocker in the previously uncovered portion." Part 2 remains unapproved | ADR-16 decision log; P5.0 |
+| Owner approval — dated note under BR-11.2 (`docs/business/P5_OWNER_RULE_11_2_NOTE.md`) | "Yes, add it as written." | Mayowa Edward Fadahunsi (owner), 2026-10-12 | **Applied** (`a3e801a`) — records D9 in the signed rules; separate from ADR-16; implies no Part 2 approval | BUSINESS_RULES 11.2; TARGET_ARCHITECTURE §16 |
+| Reviewer — **P5.1 completion gate** | "P5.1: approved to close, based on the evidence you've reported. Go ahead with the next package sequence: P5.2, P5.3 and P5.3a, following the approved plan and their individual completion gates." The eight judgement calls accepted (5, 6 and 8 subject to checks); CI has not run | The independent reviewer, 2026-10-12 | **Approved** — checks answered and effective privileges tested in `dfaf579`; each later package stops at its own gate | P5.1 |
+| Reviewer — **P5.2 completion gate** | "P5.2 is approved to close based on the evidence reported. Proceed with P5.3 and P5.3a according to the approved plan, with a separate completion gate for each package." Eight judgement calls accepted (2, 3, 6, 7 with conditions); P5.5 must test the real functions against concurrent revocation; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — boundary check added in `3baa6bf`; conditions answered under P5.2 | P5.2 |
+| Reviewer — **P5.3 completion gate** | "Verdict: P5.3 approved to close. I accept decision 1: defer the authorization-middleware mount assertion to P5.4. … P5.4 must add the parity assertion when it mounts the real middleware. I accept decisions 2–8." The reviewer ran the focused tests (36 passed); the full gate as reported; CI has not run | The independent reviewer, 2026-10-12 | **Approved** — this closes P5.3 only; P5.3a has its own gate | P5.3, P5.4 |
+| Reviewer — **P5.3a completion gate** | "Verdict: P5.3a approved to close. I accept the 14 recorded decisions. … The remaining account-setup invitation event is explicitly assigned to P5.5, and sensitive-read behavior tests belong with the first such events in P5.7/P5.8. … The unused retention override remains outside this approval; it does not approve Part 2." Focused suites re-run serially: 141 API and 19 database tests passed; a first parallel run hit timeouts and a dropped connection | The independent reviewer, 2026-10-13 | **Approved** — closes P5.3a only; P5.4 has its own work and gate; the contention is carried to P5.5's test-budget check (§9.3); CI has not run | P5.3a, P5.5 |
+| Reviewer — **P5.4 completion gate** | "Verdict: P5.4 approved to close. The router wiring and policy behavior match the plan. … I accept decisions 1–12, including the temporary API-only check for profile, branch, and role writes until P5.5. That is an acknowledged boundary, not approval to treat those writes as database-protected today. The intermittent invitation-revoke test failure is not blocking … keep it in P5.5's test-budget check. Decision 13: … Please strengthen the guard before P5.6 introduces staff grants … This approves P5.4 only; P5.5 still awaits your go-ahead." Policy, P4 isolation-matrix and route-parity suites re-run serially: 115 passed; worktree clean; full gate not re-run by the reviewer | The independent reviewer, 2026-10-13 | **Approved** — closes P5.4 only; the guard-strengthening condition is a P5.6 precondition; P5.5 waits for the go-ahead; CI has not run | P5.4, P5.5, P5.6 |
+| Project lead — timing of the P5.4 guard condition; go for P5.5 | "No need to close the guard condition before P5.5. Keeping it as a P5.6 precondition is sufficient, provided staff grants cannot be enabled until the broader guard and its mutation tests pass. P5.5 can proceed under its own gate and your go-ahead, starting with the test-budget check." | Olamide Fadahunsi (project lead), in the implementation session, 2026-10-13 | **Decided** — the guard stays a P5.6 precondition and is a hard gate on enabling staff grants (P5.6 text); P5.5 proceeds under its own gate, starting with the §9.3 test-budget check | P5.5, P5.6 |
+| Reviewer — **P5.5 completion gate** | "Verdict: P5.5 approved to close. I found no blocking issue in the database enforcement boundary, ordered locks and authority re-checks, audit co-commit behavior, containment switch, or enforcing-mode guards. The six-function read boundary, the account-separation checks, and the two additions made at the gate are consistent with the plan. I accept the seven recorded decisions. The bootstrap CLI fix is small and separate; dropping one leading `--` matches the documented invocation. I did not find an automated regression test specifically for that parsing case, but that does not block P5.5." Focused verification: 80 database and 76 API tests passed serially; worktree clean; "I did not rerun the full local gate, and CI has not run. I left the five test databases untouched. P5.6 remains behind its source-guard precondition and your explicit go-ahead; this verdict does not start it." | The independent reviewer, 2026-10-14, relayed by Olamide Fadahunsi | **Approved** — closes P5.5 only; P5.6 waits for its precondition (the strengthened source guard, first commit) and the project lead's go; CI has not run | P5.5, P5.6 |
+| Project lead — **go for P5.6**, and the audit list rule (§10 P5.6, finding 1) | Asked in the implementation session after the owner's answers were recorded: "Shall I take your 'please proceed' as the go for P5.6? It would start with the hard-gate commit (the strengthened source guard) and stop at the P5.6 gate for review." — **"Yes, start P5.6."** And, for the permission lists #21 must record: **"Bounded list rule"** — "Add a size-limited list type to the audit rules (database check, mirror, guard, tests); the reviewer judges it at the P5.6 gate." | Olamide Fadahunsi (project lead), 2026-10-14 | **Decided** — P5.6 starts with the strengthened source guard (the hard gate); finding 1 is built as option (a), and the reviewer judges it at the P5.6 gate instead of before the commit | P5.6 |
+| Reviewer — **P5.6 completion gate** | "Verdict: P5.6 is not approved to close yet. The implementation and audit-list design look sound, but two gate items need resolution. 1. Denial wording needs an owner decision. The API still tells staff, 'Only the business owner can do this' when they lack a grantable permission. That is now inaccurate. … please get an owner decision on neutral wording and update the authorization response and its tests. Keep owner-only wording only where the permission truly is reserved to the owner. 2. Apply the test-budget rule. Keep all 50 race repetitions, but move the concurrency suites into a separate `test:concurrency` command that remains mandatory in the gate. … Record the split and timings rather than reducing coverage. Accepted: The `string_list` rule is bounded and structured: at most 32 items, each at most 100 characters, with rejection tests. The strengthened source guard and grant-writer behavior also look consistent with the plan." Focused runs: 48 database and 79 API tests passed serially; worktree clean; full gate and races not re-run; CI has not run; "P5.7 remains gated; this review does not give its go-ahead." | The independent reviewer, 2026-10-14, relayed by Olamide Fadahunsi | **Not approved yet** — the list rule (finding 1, option (a)) accepted; refusal wording put to the owner; `test:concurrency` split to be applied | P5.6 |
+| Reviewer — **P5.6 gate, item 2 re-checked** | "The test-budget item is **resolved**: the concurrency suite remains at 50 runs per race, runs through its own command, and is wired into root scripts and CI. … The reported database runtime is now below the five-minute threshold. … I wouldn't call the original full run green, but the clean rerun and recorded results are sufficient to treat this as a resolved budget finding, not a new blocker. **P5.6 remains open** until the owner answers R1–R4 in `P5_OWNER_REFUSAL_MESSAGES.md`, the response and tests are updated, and the package returns for final gate review. … This does not approve P5.7." | The independent reviewer, 2026-10-14, relayed by Olamide Fadahunsi | **Item 2 resolved**; item 1 open until the owner's answers are applied and the package returns for review | P5.6 |
+| Reviewer — **P5.6 re-review** (on rev 55) | "**Technical review: approved; no other technical blocker found.** The shared refusal table covers the permissions, and the API middleware and database refusal paths now use it consistently. The test-budget change is also resolved and wired into CI. I ran the focused refusal, catalog, and settings suites: **79 tests passed**. The full gate and CI were not independently rerun for this review. **P5.6 is not closed yet.** O18 remains relayed because the owner's 'Answered by' and 'Date' lines are blank, so his sign-off is still required under R33. I also spotted a literal mismatch to reconcile before closing: the form says 'You don't…' with a straight apostrophe, while the implementation uses 'You don’t…' with a curly apostrophe. Align the code and expected text with the owner's signed wording in `P5_OWNER_REFUSAL_MESSAGES.md` and `authorization.ts`." | The independent reviewer, 2026-10-14, relayed by Olamide Fadahunsi | **Technically approved; not closed** — the form signed by the owner (`feea3d4`) and the two messages put in his exact characters (`3d53835`), rev 56; P5.6 returns for closure | P5.6 |
+| Reviewer — **P5.6 completion gate, closed** (on rev 56) | "**Verdict: P5.6 approved to close.** The owner's signed R1–R4 answers now match the implementation exactly: the two grantable-permission messages use the straight apostrophe, and the reserved-permission messages remain unchanged. The shared message mapping, API denials, database-only refusals, and contract wording are consistent." Focused verification: "I reran the focused policy, permission-catalog, and settings-refusal suites: **80 tests passed**. The worktree is clean. The full gate and concurrency results are recorded as passing; I did not rerun them, and CI has not run. This closes P5.6 only. P5.7 still needs its own reviewer approval and your go-ahead." | The independent reviewer, 2026-10-14, relayed by Olamide Fadahunsi | **Approved** — closes P5.6 only; P5.7 needs its own reviewer approval and the project lead's go; CI has not run | P5.6, P5.7 |
+| Reviewer — **P5.7–P5.10 plan review** (on rev 57) | "**Verdict: approve the P5.7–P5.10 technical plan, with its hold points enforced.** The platform-staff lifecycle, audited cross-tenant reads, pagination/read-consistency requirements, retention safeguards, and closure criteria are coherent. I found no plan-level blocker requiring redesign. 'Implement it in one go' should mean one planned effort, not bypassing the sequence: **P5.7** still needs your explicit go-ahead and its own reviewer gate. **P5.8 retention step (a)** must wait for separate reviewer approval of Part 2. The audit-read contracts must wait for the measured query-plan spike, your O4 decision, and reviewer confirmation of the ADR-16 addendum. **P5.9** follows P5.7 and P5.8; **P5.10** remains blocked on the owner-approved D9 policy and final closure requirements. The O16 containment authority and notification choices should be made operationally explicit in the P5.10 runbook, including how owner approval to lift containment is confirmed and recorded. CI has not run on this branch; a CI run after an owner-approved push would be useful before accumulating more changes. This approves the plan's technical direction, **not** implementation authorization for P5.7." No code changed, no tests run. | The independent reviewer, 2026-10-15, relayed by Olamide Fadahunsi | **Approved (plan only)** — the hold points stand: P5.7's go and gate; Part 2 before P5.8 step (a); the O4 spike, decision and addendum before the audit-read contracts; the D9 policy before P5.10. The O16 runbook condition added to §10 P5.10. A CI run is the project lead's call (he pushes) | P5.7–P5.10 |
+| Project lead — **go for P5.7** | "you can go ahead with P5.7. If need be create a questionairre when you needs answers anytime" | Olamide Fadahunsi (project lead), 2026-10-15 | **Decided** — P5.7 starts; it stops at its own gate; any owner decision it needs goes to a questionnaire in `docs/business/` | P5.7 |
+| Reviewer — **P5.7 completion gate** (on rev 59) | "**[P3] Reject impossible timestamps as `INVALID_CURSOR`.** `pagination.ts:21` checks the timestamp's shape, not whether it is a real date. A client can alter the timestamp in a valid cursor while keeping its list digest, for example to use month `99`. The list query then casts it to `timestamptz`, and the database error becomes a `500 INTERNAL_ERROR` rather than the documented `400 INVALID_CURSOR`. Validate the calendar value and add a regression test." On R19: "Carry the guard into P5.8 and require it before adding merchant-scoped definer reads. P5.7's platform lists are intentionally cross-tenant; their explicit permission check, actor lock, and audit-before-data behavior are appropriate and do not need that merchant-scope predicate." "**Verdict: Request changes** for the cursor error-contract defect. The other P5.7 behavior I traced is consistent with the plan, including lifecycle revocation, audit fail-closed reads, and the permission-revocation races. I reviewed the reported gate results but did not rerun the suites." | The independent reviewer, 2026-10-16, relayed by Olamide Fadahunsi | **Changes requested** — the cursor's calendar check and its regression test; R19 recorded as a condition of P5.8 (§10 P5.8) | P5.7, P5.8 |
+| Reviewer — **P5.7 completion gate, approved** (on rev 61) | "**P5.7 approved. Go-ahead for P5.8**, with the recorded R19 condition: add and mutation-test the merchant-scope guard before introducing any merchant-scoped definer read. The platform-wide reads remain correctly exempt. The cursor fix handles impossible dates before database access; the focused decoder and API tests passed, 20/20. The plan records R19 as a P5.8 prerequisite in `P5_IMPLEMENTATION_PLAN.md`. I relied on the reported full-gate results rather than rerunning the full suite. This go-ahead does **not** approve the retention step; Part 2 still needs separate approval." | The independent reviewer, 2026-10-17, relayed by Olamide Fadahunsi | **Approved** — closes P5.7; go-ahead for P5.8 with the R19 guard first; Part 2 (the retention step) not approved; CI has not run | P5.7, P5.8 |
+| Project lead — **go for P5.8** | Asked in the implementation session: "The reviewer approved P5.7 and gave the go-ahead for P5.8. Shall I start P5.8 now, in the plan's order: R19 guard first, then members/invitations pagination, log redaction, the O4 measurements and an owner questionnaire on them (retention purge left parked until Part 2 is approved)?" — **"Yes, start P5.8"** | Olamide Fadahunsi (project lead), 2026-10-17 | **Decided** — P5.8 starts with the R19 guard; Part 2 stays parked; the audit-read contracts wait for O4 and the reviewer's confirmation of the addendum | P5.8 |
+| Reviewer — **P5.8 first hold point** (on rev 64) | "**[P2] R19 can miss a reader with a differently named session argument.** The inventory only considers functions whose arguments contain `p_session_id` (`lock-order-guard.test.ts:172`); the resolver recognizer is similarly fixed to that name (`lock-analysis.ts:1109`). A new reader taking `p_session` could read tenant data without being inventoried. Make the guard detect and validate session-scoped readers independently of that spelling, or explicitly fail if a reader's session parameter does not follow the required convention. Add a mutation test for the alternate name." "**[P2] The raw URL path can still put caller-controlled data in logs.** `logger.ts` strips the query string but logs the remaining path verbatim. A request to an unknown path containing an IP address or device string will therefore log it. Log the matched route template, or omit the path for unmatched routes, and add a leak test using distinctive values in a 404 path." On the judgement calls: "I accept calls 2–5 … Call 1 is appropriate in scope, but the R19 guard needs the completeness fix above. For call 6, I do not approve logging raw paths; route templates preserve useful context without recording arbitrary path contents. I accept call 7 provisionally: repeat the query-plan check with realistic activity by platform staff if the owner chooses the person filter." "**Verdict: Changes requested.** The pagination and O4 evidence look sound from inspection, but I would not clear the R19 hold or proceed to activity-read contracts until both findings are addressed. The owner's answers and name/date remain for him to provide; I have not supplied them. Part 2 retention approval remains separate. I reviewed the code and plan but did not rerun the reported full gate." | The independent reviewer, 2026-10-17, relayed by Olamide Fadahunsi | **Changes requested** — both findings fixed: the R19 inventory (`12f839c`, both remedies: spelling-independent scope and the naming convention) and the logged route (`2134b80`, the template; nothing for an unmatched request); §8.6 amended; rev 66. Returned for the reviewer's re-check | P5.8 |
+| Reviewer — **P5.8 re-check and addendum review** (on rev 67) | "**[P2] The `AuditEvent.actor` schema cannot represent a recorded invitation acceptance.** The database records `auth.invitation_accepted/success` with a known identity and membership but `actor_audience = NULL` (`migration.sql:123`). The addendum currently says a non-null actor has an audience of `merchant`, `agent`, or `platform` (`TARGET_ARCHITECTURE.md:478`). The contract must allow a null audience for capability-based actions, or define an explicit, accurate mapping. Add a test for this event when implementing the reads; otherwise the endpoint cannot represent all business activity faithfully." "The R19 and logging fixes are confirmed: the guard's inventory no longer relies on parameter spelling, and logs use matched route templates rather than caller-supplied paths. I accept choices **(a)–(h)** in principle, including the required query-plan remeasurement for a business filtered by a platform staff member active across many businesses." "**Verdict: Fix the actor shape before I confirm the addendum.** O19 remains the owner's decision and must be answered before the screens are built. Part 2 retention approval remains separate." | The independent reviewer, 2026-10-17, relayed by Olamide Fadahunsi | **Fixes confirmed; addendum not yet confirmed** — the actor made faithful to the record (`915ad30`: each field as recorded and nullable, nothing inferred; the invitation acceptance tested), rev 68; returned for confirmation | P5.8 |
+| Project lead — **who signs off the rest of P5** (2026-10-18) | Asked to "Act as the reviewer, Execute all the remaining p5 … You have my go ahead". Claude began to confirm the addendum as reviewer; the session's permission check refused it as self-approval, the edit was undone, and three options were put to the project lead: (1) the independent reviewer keeps every sign-off; (2) the project lead gives each verdict on Claude's prepared review; (3) a permission rule letting Claude record approvals. Answer: **"option 1"** | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — every remaining sign-off (the addendum's confirmation, Part 2, the P5.8–P5.10 gates) stays with the independent reviewer; Claude builds each step and stops at its gate. No approval is recorded in Claude's name | P5.8–P5.10 |
+| Review — **the addendum and Part 2** (on rev 70; a review that, by its own statement, records no sign-off) | "**[P1] Failed exports can leave untracked personal-data files.** The purge workflow writes the report before confirmation, then says failures stop before deletion; it doesn't specify cleanup or tracking for a partial or complete file left by a failed confirmation or process crash (`P5_IMPLEMENTATION_PLAN.md:1282`). `purge-reports` only lists confirmed reports, so such a file could be left outside the recovery workflow. Define crash-safe handling and test that failed runs cannot leave untracked exports." "**[P1] The operator's copy is not required to be deleted after receipt.** O11 says the operator deletes their copy as soon as your father confirms receipt in writing (`P5_IMPLEMENTATION_PLAN.md:2964`). The workflow records delivery and says to keep the file until then, but never makes deletion a postcondition or tests it (`P5_IMPLEMENTATION_PLAN.md:1338`). Specify and test that lifecycle before approving Part 2." "The activity-record design now cleanly separates `actorLabel` from the recorded audience, including the null-audience case. I recommend the independent reviewer confirm that addendum. **Part 2 needs changes before approval.** I have not recorded either sign-off." | Relayed by Olamide Fadahunsi (project lead), 2026-10-18 | **Not a sign-off.** The addendum: recommended for confirmation — still awaiting the independent reviewer. Part 2: both findings addressed in its design (rev 71) — exports recorded before their file exists, written under a temporary name and removed on any failure, an unresolved one blocking new runs (#45); the operator's copy destroyed after the owner's written receipt, as a recorded step (#44), before a request is satisfied. Part 2 still awaits the independent reviewer's approval | Part 2; P5.8 |
+| Project lead — **two standing instructions** (2026-10-18) | "I have answered the questions, Please any decision from now on, just pick the most recommended of the options, please. Once you have approved part 2 it is approved" | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — (1) a decision that would go to the project lead is taken as its recommended option and recorded as chosen under this instruction; the owner's business decisions still go on his forms; (2) **Part 2's approval is delegated to Claude**: once Claude, after critic rounds, is satisfied with Part 2, that approval is Part 2's approval — recorded as Claude's under this delegation, not as an independent review. Every other gate (the audit-read addendum, the P5.8–P5.10 gates) stays with the independent reviewer (option 1) | Part 2; all later decisions |
+| Reviewer — **the audit-read addendum** (2026-10-19) | "I confirm the ADR-16 §3.5 activity-record addendum as amended for the design of #33 and #34. It resolves the prior `actorLabel` finding: the recorded `actor.audience` remains unchanged, and “AlphaKolect team” is represented separately. The O4 bounds are supported by the recorded spike and the owner’s signed decisions. Before finalizing indexes, measure the platform-team-member-across-many-businesses query shape identified in the addendum. This confirmation covers the design only. It does not approve implementation or the P5.8, P5.9, or P5.10 gate reviews, and it does not approve P5 closure. Under the current approved criteria, P5 may not close without #33/#34 or with the §8.6 test list incomplete. Deferring either requires a formally revised plan and approval; this verdict grants no such exception." Also: "update its §8.6 missing-test list: commit `0cf9a4a` now covers empty-export discard, though the remaining race, disk-failure, and handover gaps still block closure." | the independent reviewer, 2026-10-19, relayed by the project lead | **Confirmed — design only**: #33 and #34 may be built as the addendum states, the platform-team-member-across-many-businesses query shape measured before the indexes are final. Not an implementation approval, not a gate review, not closure; P5 may not close without #33/#34 or with §8.6's tests incomplete, and deferring either needs a revised plan and approval | ADR-16 §3.5 addendum, P5.8, §13 |
+| Project lead — **restart cleanup of an export** (2026-10-18) | After revision 72 (a review session's edit, committed as written, `38753d6`: cleanup removes only files the run can prove it created), Claude noted that a restart could never prove it, so every crash during an export would need the operator's attestation, and asked whether to record the file's identity at creation so a restart can prove ownership. Answer: **"Add rev 73 (Recommended)"** | Olamide Fadahunsi (project lead), 2026-10-18 | **Decided** — revision 73: `record_export_artifact` records the file's device, file number and creation time right after the exclusive create; restart cleanup deletes only a file whose identity matches, and an export without a recorded identity stays manual. Part 2 still awaits the independent reviewer's approval | Part 2 |
+| Review — **revision 73** (a review session; it records no sign-off) | "**Part 2 finding: file identity may be reused.** Revision 73's recovery deletes a path when its device, file number, and optional creation time match the stored identity (`P5_IMPLEMENTATION_PLAN.md:1310`). On filesystems without a reliable creation time, device plus inode/file number may be reused after the original file is deleted. A different file could then appear to match and be removed. The restart tests cover a different identity, but not a reused file number (`P5_IMPLEMENTATION_PLAN.md:1542`). Before Part 2 approval, treat file numbers without a non-reusable generation/birth identifier as insufficient proof, or add a run-specific nonce stored in both the database and the created file. Add a test for a replacement file with the same device and file number." "The activity-record design at `c4e9266` looks consistent; I recommend confirmation. I haven't recorded either sign-off." | Relayed by Olamide Fadahunsi (project lead), 2026-10-18 | **Not a sign-off.** Addressed in revision 74 by the first remedy: the birth time is required with the device and file number; without it no identity is recorded and the export is resolved by hand (a nonce in the file would change the report the owner receives); the reused-number test added. The addendum: recommended for confirmation again. Both still await the independent reviewer | Part 2; P5.8 |
+| Review — **revision 74** (a review session; it records no sign-off) | "**[P1] Creation time may not uniquely identify a file.** Revision 74 requires matching device, file number, and birth time (`P5_IMPLEMENTATION_PLAN.md:1283`). But 'finest resolution reported' does not guarantee unique timestamps. On a filesystem with coarse birth-time resolution, a new file could reuse the same number within the same timestamp tick and match all three values. The new test changes the birth time, so it doesn't cover that case (`P5_IMPLEMENTATION_PLAN.md:1543`). Before Part 2 approval, require a generation-unique identity or a per-export nonce stored outside the report payload; otherwise resolve cleanup manually. Add a test where the replacement has the same full identity tuple." "The activity-record design still looks consistent, and I recommend the reviewer confirm it. I have not recorded either sign-off." It also noted `origin/feat/p5-authorization-audit` at `3b52114` (revision 73), revision 74 local only | Relayed by Olamide Fadahunsi (project lead), 2026-10-18, asking to "resolve evrything you may think will block part 2 from approval" | **Not a sign-off.** Revision 75: the per-export nonce, outside the report — the file is named by the run's unique id, recorded in the database; ownership is that name, and no timestamp or file number is relied on (revisions 73–74's identity removed; with it the identity-tuple test is moot, replaced by tests on the run's name). Four further gaps closed in the same pass: the rebuild's file is tracked like an export; a stalled old run racing the cleanup is caught by a repeated check; the report folder must be local, owner-only and not synced or backed up; a report can be confirmed only for an export that recorded its file and was not discarded. Part 2 and the addendum still await the independent reviewer | Part 2; P5.8 |
+| Owner go-ahead G1 (§12; `docs/business/P5_OWNER_GO_AHEAD.md`) | "yes, start now with Part 1." | Mayowa Edward Fadahunsi (owner), form dated "12th of October, 2026", relayed by Olamide Fadahunsi | **Given, for Part 1** — it takes effect once the reviewer's Part 1 approval is in force; P5.8 step (a) still waits for Part 2 | §12 |
+
+**Every owner decision asked before rev 19 is answered and confirmed** (`docs/business/P5_OWNER_CONFIRMATION.md`,
+signed by Mayowa Edward Fadahunsi on 2026-10-12), and the owner's **go-ahead for Part 1 is given** (G1, 2026-10-12).
+**No owner question for P5 is open.** O10–O17 were asked in one form, `docs/business/P5_OWNER_REMAINING_QUESTIONS.md`,
+and answered and signed by the owner on 2026-10-14 (decision log above). O18, the refusal wording the reviewer asked
+the owner to decide at the P5.6 gate, was asked in `docs/business/P5_OWNER_REFUSAL_MESSAGES.md` and answered and signed by the owner on
+2026-10-14. O4 was asked on the spike's evidence in `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` and answered
+and signed by the owner on 2026-10-17. **Coming later, by design:** the owner's approval of the D9 written policy (P5.8 step e, before P5.10) — **given 2026-10-18 (O22)**; the owner's
+final approval at P5.10. **Both conditions for P5.0 are met** (§12): the reviewer's Part 1 approval (2026-10-12, on `e6b367d`) and the
+owner's G1. O4 was decided at P5.8 step (c)(2) on measured evidence, by design (2026-10-17). P5.0 then moves this log into ADR-16 (Part 1
+entries; Part 2 entries with the Part 2 addendum), adding the applying commit of each entry.
+
+| # | Item | Proposed position |
+|---|---|---|
+| O1 | Move branch/role/profile writes into definer functions and revoke direct grants (§7.2) | adopt (owner supports), with the single-migration enforcement boundary of §7.2 |
+| O2 | Exact contracts of the new endpoints (§5) | frozen in P5.0 |
+| O3 | What the business activity record shows | **DECIDED (2026-10-12; decision log, §14; R28):** merchant audit access is **owner-only** (`merchant.audit.read` reserved, D8′) — there is no staff visibility to decide; the owner sees every event of their own business, including refused attempts, can filter by person, and sees each event's allowlisted summary plus the IP address and user agent of their own business's people (§8.5, §8.6); never another business's events, credentials, tokens or request bodies. **Nothing in O3 is outstanding.** The page size and window are O4's (R24), frozen with this contract at P5.8 step 3 |
+| O4 | Audit-read bounds — **both** the merchant and the platform audit read (R24) | proposal (reviewer recommends approving, subject to validation; **owner's preference, B3: one month at a time is fine**): ≤ 100 events per page; required time window ≤ 31 days; **filter by actor** (the legacy per-staff log view, §15); stable ordering and cursor on `(occurred_at, id)` for equal timestamps; the cursor bound to the request's window and filters and unable to widen or leave the window (§8.5 pagination contract). **Prerequisite:** the index and query-plan validation of §8.5 on representative data (R21), run as the first step of P5.8 — **done 2026-10-17** (`d15d133`, `docs/architecture/evidence/p5-o4-spike/`), and **asked 2026-10-17** (`07b61b1`, Q1–Q4). **DECIDED (2026-10-17; decision log):** at most 100 events a page and a 31-day window, for both reads; the merchant read filters by person only; the platform read by business, person and event identifier. Frozen with both contracts in the ADR-16 addendum (P5.8 step (c)(3)), which the reviewer confirms before the reads are built |
+| O5 | D9 IP/user-agent policy | **DECIDED (2026-10-11/12; decision log):** purpose, access (business owners for their own business, the super admin; never platform staff), two-year retention with whole-entry deletion, existing records included, copy on request (§8.6). The owner-approved written policy remains a P5 exit criterion |
+| O6 | Class of `auth.password_forgot` and `auth.verification_resend` successes (§8.1) | **DECIDED by the owner (2026-10-11): best effort.** Conditions: the success outcome means only that the request was processed for link issuance, subject to eligibility — never that a link was delivered, opened or used; an audit failure never changes the response; the public response never reveals whether an account exists (unchanged P3 behaviour, ADR-14 D12 — anti-enumeration); the eventual reset, verification or setup keeps its atomic event (#2, #9, #10). |
+| O7 | Branch ceiling for delegation | **RESOLVED by D5′ (2026-10-12; decision log):** only the owner assigns or invites, choosing one branch or all (F1b), so no branch ceiling is needed (§7.6) |
+| O8 | Platform staff onboarding (§7.4) | **DECIDED by the owner (2026-10-11; decision log, §14): (a) an email that already has an identity is refused; (b) reactivation restores the membership with no grants (event #37).** |
+| O13 | Wording of the merchant permission descriptions (the frozen `PermissionCatalog.description`; §10 P5.6, finding 2) | **DECIDED (2026-10-14; decision log):** the suggested descriptions, unchanged |
+| O14 | Restoring an archived role (A2; follows from E3/D6 and the frozen `Role.permissions`: "an archived role keeps its set, inert") | **DECIDED (2026-10-14; decision log):** as designed — the role's permissions apply again at once |
+| O15 | A branch-restricted staff member and the business-wide permissions (A3; §7.6, D7) | **DECIDED (2026-10-14; decision log):** as designed — business-wide; no branch-scoped declarations added |
+| O16 | Who may set and lift the containment switch, and whether business owners are told (B1–B3; §11.1) | **DECIDED (2026-10-14; decision log):** the owner, or the technical lead in an emergency who informs him straight away; lifted only with the owner's approval after the fault is fixed and checked; every business owner told when it is set and when it is lifted |
+| O17 | Whether the three planning documents stay in the merged history (D1; P5.10) | **DECIDED (2026-10-14; decision log):** keep them |
+| O18 | The refusal message for a permission that can be given (R1–R4; the reviewer's P5.6 item 1) | **DECIDED (2026-10-14; decision log):** the suggested wording — whom to ask for a grantable permission; P4's messages kept for the reserved ones |
+| O19 | Whether a business's activity record names the platform team member who acted on it (the merchant audit read, #33; CF5 already withholds the team's IP address and user agent) | **DECIDED (2026-10-17, signed; decision log):** "AlphaKolect team", without naming the person (`4fe4f75`; signed `894d309`). Asked 2026-10-17 (`c78dec8`) with the proposal: "AlphaKolect team", without naming the person — `actor` `{ audience: 'platform', membershipId: null, email: null }`; the platform's own record always names the person. The contract's shape is the same either way (ADR-16 addendum, `cbe8467`); the read is not built with either answer assumed |
+| O20 | Whether entries covered by the owner's requested copy may be deleted before he confirms receipt (Part 2; the critic review of 2026-10-18) | **DECIDED (2026-10-18, signed; decision log):** only after his written receipt (`65dd6d9`; signed `6b5e318`) — Part 2 restructured accordingly (rev 80) |
+| O21 | What a copy request covers and what happens meanwhile (Part 2; the critic's round 2): S1–S3 | **DECIDED (2026-10-18, signed; decision log):** other entries deleted on their normal day; one copy per request; cancellation in writing and a reminder after 7 days (`35af686`) — applied in the consolidated Part 2 (rev 84) |
+| O22 | The owner's approval of the D9 written policy (§13 item 9) | **DECIDED (2026-10-18, signed on the policy; decision log):** approved as written (`37d6acd`) |
+| O23 | How often the clean-up runs until P12 schedules it | **DECIDED (2026-10-18; decision log):** once a month, on the first working day (`a592b8f`) |
+| O24 | The owner's final approval of P5 (P5.10) | **DECIDED (2026-10-19, signed; decision log), conditional:** approved once the independent reviewer's final checks are recorded (`6770796`) |
+| O9 | Members and invitations list pagination (P4 closure review (D); P4 limitation (6)) | **DECIDED by the owner (2026-10-11; decision log, §14): in P5.8** — cursor pagination on `(created_at, id)` for `GET /v1/merchant/members` and `GET /v1/merchant/invitations`, invitations defaulting to open ones, P5.3 query validation and the §8.5 cursor rules; additive |
+
+## 15. Legacy context (background only — not a requirement)
+
+Read 2026-10-11 at the owner's request, from `legacy/current-system/*.md` (36 documents; secrets and server details
+not reproduced). Facts about the **old** system, recorded so the plan's deliberate differences are visible:
+
+- Authentication: one JWT kept in browser `localStorage`; route checks were coarse (`requireSuperAdmin`,
+  `requireMerchant`, `requireAuthenticated`) with no per-operation permissions (`ARCHITECTURE_OVERVIEW.md`). P5's
+  per-endpoint declarations and database-side checks replace that model.
+- Platform staff were **role-based**: admin roles with permissions and "view / edit / restricted" capabilities, staff
+  assigned a role (`ADMIN_INTEGRATION_GUIDE.md`, `ADMIN_PAGES_INTEGRATION_SUMMARY.md`). P5 deliberately grants
+  **per person** instead (D4, BR-3: "only what you grant each one").
+- Auditing was an `activities` table shown as "audit logs", including **per-staff log views**
+  (`/superAdmin/logs/:staffId`). P5's platform audit read should therefore support filtering by actor — part of the §8.5
+  pagination contract, with its index chosen from measured query plans (input to O4).
+- Merchant-side `staff`, `roles`, `branches` and `collaborators` existed as tables (`MIGRATION_STATUS.md`).
+  `docs/architecture/CURRENT_SYSTEM_INVENTORY.md` §1.1, §1.3 and §1.15 and `ARCHITECTURE_RECONNAISSANCE.md` §5.2, §8–§9
+  add: merchant roles stored JSON `permissions` that were **enforced only in the UI** (sidebar filtering from
+  `staffPermissions`); admin roles were never enforced and admin staff could not log in; agents passed every check a
+  merchant passed; tenant ids were taken from request bodies at several endpoints; the subscription middleware failed
+  open. Each of these is a failure mode P5's design rules out — server-side enforcement in API and database, permissions
+  served to the UI rather than decided by it (§5), agents limited to self (P4 matrix pin), no client tenant (P4 contract
+  guard), fail-closed middleware (§4 invariant 7). They add no requirement beyond BR-3 and Q7c.
+
+## 16. Revision log
+
+| Rev | Date | Change |
+|---|---|---|
+| 101 | 2026-10-23 | **P5 closure approved by independent reviewer.** Final handover-fate and pending-copy guards are present in `20261019000200_retention_handover_guards`; the current-head GitHub Actions run passed, including tests, concurrency and full-history Gitleaks. The reviewer found §13 items 1–11 met. The hardware rehearsal remains required before the first real report handover, not as a closure gate. Updated the owner-approved activity-record policy to reflect its signed approval and monthly cleanup decision. |
+| 1 | 2026-10-11 | First draft from the reviewer's outline, verified against the source. |
+| 100 | 2026-10-19 | **CI and local closure gates verified.** GitHub Actions PR #7 run `39313373095` passed all checks on `e69fc91a40d10fb43cc9a4f5bb217ad95ff0f942`; two full local gates and Gitleaks 8.30.1 (477 commits, no leaks) passed on `05c1210552817c85b9b7dcc716d930d33949a853`. The CI-tested commit precedes two documentation-only commits. The independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record remain open; P5 is not closed. |
+| 99 | 2026-10-19 | **Owner final approval recorded; CI pass reported.** The owner approved closing P5 and reports the full P5 test suite passed on CI. Still open: full gate twice after the final test edit, fresh full-history gitleaks, and the independent reviewer's final P5.8 test-gate and P5.8–P5.10 closure record. Approval does not waive those gates; P5 is not closed. |
+| 98 | 2026-10-19 | **Reviewer re-check of the lost-response tests; approved to push for Ubuntu CI only.** Replaced Node-host `Date` values with the database's canonical UTC clock; the 11-case lost-response group passes, as do formatting, lint and API typecheck. Push to a PR is approved to activate Ubuntu CI. Not approved to merge or close: rerun the final gate twice after this edit, rerun full-history gitleaks, pass Ubuntu CI, and satisfy the owner's conditional O24 before closure. |
+| 97 | 2026-10-19 | **The lost-response tests built; the final gate and gitleaks green; the owner's conditional approval recorded (O24).** For the independent reviewer's re-check: the fault injection the review of revision 96 required (`e648b0b`, handover steps extracted for it in `0013185`); the full gate twice and gitleaks at `45c044f`. Still waiting: the reviewer's record of P5.8's test gate and of closure, and a passing Ubuntu CI run. Nothing approved or closed. |
+| 96 | 2026-10-19 | **Combined P5.8–P5.10 technical review; revised §8.6 allocation approved, P5.8 test gate still open.** POSIX directory mode is assigned to existing Ubuntu CI; injected `ENOSPC` and a renamed directory are accepted only as code-path stand-ins; physical full-disk, unmount and removable-media checks are assigned to the test-database rehearsal before first handover. The one-minute idle timeout is verified against PostgreSQL (`25P03`). A separate lost-response-after-commit fault-injection test remains untested and is not waived. P5 closure requires that test, passing Ubuntu CI, the final gate twice, full-history gitleaks, and unconditional owner approval; the rehearsal is required before first handover, not as a closure gate. |
+| 95 | 2026-10-19 | **The confirmed activity-record reads built; more of §8.6's tests written.** #33/#34 and the measured index change are recorded above; the app/reporting direct read grants are removed; matrices and as-built documents include the reads. §13 criteria 5 and 7 are met for the reads. Added process-level command cases, host/connection tests, export heartbeat, injected `ENOSPC`, retention concurrency races and R25/R35 tests for both reads; focused API and database slices pass. The full §8.6 list remains open for real disk exhaustion and removable-media/kernel-specific handover tests. No full repository gate, new gitleaks scan, P5 gate review or owner final approval is claimed by this revision. |
+| 94 | 2026-10-19 | **The audit-read addendum confirmed by the independent reviewer — design only** (§14, verbatim): #33 and #34 may be built, the busy-platform-staff query shape measured before the indexes are final; no gate review, no closure, no exception for the reads or §8.6's tests. The owner's signature on the closing form (`c245394`); the empty-export test (`0cf9a4a`) removed from P5.8's list of tests not yet written. |
+| 93 | 2026-10-18 | **The owner's policy decisions recorded** — the D9 written policy approved as written and signed by the owner (O22, `37d6acd`); the clean-up run by hand once a month, on the first working day, until P12 (O23, `a592b8f`); §13 item 9 now waits only for §8.6's tests in full. The operator lock tested with a real process holding it, a connection dropped and the holder killed (`3355a83`). Nothing approved by this revision beyond the owner's own decisions. |
+| 92 | 2026-10-18 | **P5.8 step (a), P5.9 and the P5.10 documents built** — the retention purge (database, API mirror, engine, lock, command, runbook) with 38 database and 6 API tests, two command defects found by a smoke run and fixed, §8.6's tests met in part and the remainder listed (P5.8); the authorization matrix, 391 cases, and the isolation matrix's regex replaced by the declaration (P5.9); ADR-16 as built, the P5 record, the threat model, both runbooks and the policy draft (P5.10); the full gate twice (run 2's three timeouts a machine stall, rerun green), gitleaks over the full history clean; the closing form's repeated question (O17) removed. Not built: the audit reads, awaiting the reviewer's confirmation. Nothing approved by this revision. |
+| 91 | 2026-10-18 | **Part 2 approved** — by Claude, under the project lead's delegation of 2026-10-18, not by an independent review (§14): the retention design at revision 90 (`687dee6`), after ten critic rounds whose last five found the deletion-safety core and liveness sound, with every finding resolved and the residual risks stated (the attested eject where no `diskseq`, the operator's attestations, the trusted migrator, the alert on a request awaiting its copy). P5.8 step (a) may be built; P5.8's gate review stays with the independent reviewer. |
+| 90 | 2026-10-18 | **Part 2: the critic's round 10 addressed** (§14). Round 10 found the core unchanged and the handover closed but for one ordering gap: on a failure the database now decides first (`record_handover_failed` locks the attempt and is refused unless it is unended and written; the stick is touched only after it succeeds). Also only a hash mismatch or an unreadable file is a failure, a loss is refused while any stick is unaccounted for, the eject is confirmed with a fixed phrase and the attempt's id, unlabelled sticks are refused, and §8.2's atomic range reads #37–#50. Design text only. |
+| 89 | 2026-10-18 | **Part 2: the critic's round 9 addressed** (§14). Round 9 again found the deletion-safety core sound and no P0 or P1; its two P2: `record_handover_failed` (twentieth function, #50) records the command's own abandonment without a fate, and the verification re-reads the attempt before any cleanup, never touching a recorded stick. Also copy destruction refused while another stick is unaccounted for, a null disk sequence never passing, refusals that change nothing, the eject confirmed interactively, the attempt id, the reminder's time kept. Design text only. |
+| 88 | 2026-10-18 | **Part 2: the critic's round 8 addressed** (§14). Round 8 again found the deletion-safety core sound and no P0 or P1; its three P2 were handover details: every attempt but the delivered one gets an attested stick fate; the eject is the operator's attestation on every platform, enforced by the database, with Linux's `diskseq` checked where available (the reused mount id dropped); the delivered attempt can no longer be superseded; the delivery command takes the receipt's attempt; listing and reminders per attempt. Design text only. |
+| 87 | 2026-10-18 | **Part 2: the critic's round 7 addressed** (§14). Round 7 found no P0 or P1 and the deletion-safety core intact; its two P2 concerned the handover: one live attempt per report (unended, or recorded and not superseded), a replacement stick only after the recorded attempt is superseded with an attested note on that stick's fate, the delivery naming the live recorded attempt and the receipt quoting its number and the stick's label; the eject enforced by a changed mount id on Linux and attested on Windows. Also `record_handover_written` (nineteen functions), the delivered attempt by composite foreign key, a serial mismatch a refusal, failed sticks flagged for wiping, an unknown page outcome re-read, a dead run's count kept, reminders per attempt, UNC and `subst` drives resolved. Design text only. |
+| 86 | 2026-10-18 | **Part 2: the critic's round 6 addressed** (§14). Round 6 found the deletion-safety core and liveness sound; its P1 and P2 concerned the handover: the medium is now verified by a new process after an eject and re-insertion (a read-back after a write comes from memory), and attempts are rows of `audit.purge_report_handovers`, one unended per report, the delivery naming its attempt. Also: the exceptions to "lock first" listed and the lock held to the last file step; a loss mid-run stops the run; `rows_deleted` recorded at release; a discarded export's manifest removed; a processed page's replay refused; the export's `p_as_of` the reservation's `now()`; network drives refused, shadow copies a runbook rule; the index with `IF NOT EXISTS` in both migrations and in `schema.prisma`; L4 and the copy bullet corrected; tests added. Design text only. |
+| 85 | 2026-10-18 | **Part 2: the critic's round 5 addressed** (§14). The read position kept by the database and advanced past every examined row (no cursor parameter): a held block can no longer stall deletion, nor a defect skip rows from a copy; the medium written exclusively without a hard link (FAT/exFAT sticks work), recorded at the handover's start, and a stopped handover ended by an attested `record_handover_abandoned` (#49); checks buildable on Windows (a hard-link probe, `icacls` before the lock; encryption and sync tools attested); the guard's fourth condition; `purge_run_events` in category 0; the page row locked before the audit rows; plain manifests pruned; `p_as_of` checked on every call; the copy-destruction modes; the index named `audit_events_occurred_at_id_idx` (also in §8.5); §10, §12, §13. Eighteen purge functions. Design text only; critic round 6 follows. |
+| 84 | 2026-10-18 | **Part 2 rewritten once as a consolidated specification** (§8.6, §14), on O21 (signed, `35af686`: other entries deleted on their normal day, one copy per request, cancellation and a 7-day reminder) and every finding of rounds 1–4. A report's rows are held while it is active and released by its delivery; an open request without a report makes the next run an export run that deletes nothing; liveness judged with `clock_timestamp()`; per-function reservation rules; the handover writes and verifies the medium; automatic, attested and lost resolution paths; the clearing independent of runs; the `(occurred_at, id)` index and a bounded scan; cancellation (#48) and reminders. Also §7.2 (L1, L4, footprints), §8.1 (#48), §9.1, §10, §12, P5.10 and the "Copy before deletion" bullet. The project lead's two standing instructions recorded (§14): the recommended option is taken for decisions put to him, and Part 2's approval is delegated to Claude. Design text only; critic round 5 follows. |
+| 83 | 2026-10-18 | **Part 2: the critic's round 4 recorded, not applied** (§14): one P1 — a plain run's page can be deleted after a request is recorded, the liveness clock being unnamed — and seven P2, five of them introduced or left by revisions 81–82. Patching is no longer converging (13, 9, 8, 8 blocking findings), and several findings depend on O21, so Part 2 is to be rewritten once as a consolidated specification after the owner answers O21, with every finding of rounds 1–4 as requirements, then reviewed afresh. No design text changed. |
+| 82 | 2026-10-18 | **Part 2: the critic's round 3 addressed** (§14). The medium is checked at the handover in the owner's presence (`record_report_handover`, #47) and the delivery needs it; a copy found unusable before any page is processed is recorded lost and made again; a confirmation needs the manifest exhausted and writes #46; an export run's `p_as_of` is the reservation's time; the marker goes only after the outcome is recorded; one dedicated client per run, the purge's own statement timeout, renewal at the end of each function's work, paging by `(occurred_at, id)`; the clearing in bounded batches over rows still holding a value; a page's ineligible rows deferred so a report completes; pages never empty, boundaries from the manifest, an empty export discarded; overrides can only lengthen the retention (`GREATEST`); `purge_lease` on the lock-free allowlist; §8.2a's exception for the purge functions; the `STABLE` claim corrected; the command flags, the runbook and the OneDrive check; the BR-11.3 constraint. The owner's C2 answer on the O20 form ("your request stays open"), missed in `6b5e318`, is recorded, and the interim O21 reading keeps a request open after its report completes; no part of Part 2 is built before O21. Fifteen purge functions. Design text only; Part 2 awaits the critic's next round, O21, then the independent reviewer. |
+| 81 | 2026-10-18 | **Part 2: the critic's round 2 addressed** (§14). Reported pages deleted by ids, existence and the age rule, never re-hashed (a later column, function or retention change can no longer block deletion; a page not yet eligible is left); a run marker proves the directory for every cleanup, loss and destruction; the purge tables category 0 after the reservation; clearing attempted in every run, and clearing-only runs while an export is unresolved; run kinds in a fixed order with one active report per request; the confirmation checks the file against the manifest (count, page count, manifest digest); the export streams; `purge_candidates` idempotent per page; lease times from `clock_timestamp()`; containers refused, the Windows pipe named by SID, a git work tree refused, FAT/exFAT excluded; the listing reads without the lock; the manifest's lifecycle completed; stale counts and texts corrected (§7.2, §8.1, §9.1, §10, §13). **O21** asked of the owner (the copy request's scope, deletion meanwhile, cancellation) — until answered, the reading that deletes least. Design text only; Part 2 awaits the critic's next round, O21, then the independent reviewer. |
+| 80 | 2026-10-18 | **Part 2 restructured for O20, and the critic's round 1 addressed** (§14). The owner decided (O20, signed) that entries covered by his requested copy are deleted only after his written receipt: a run is now a plain run, an export run (deletes nothing) or a reported-deletion run (deletes exactly a delivered report's frozen manifest; its last page satisfies the request), and a run waiting for delivery only clears. The rebuild-from-backup, its scratch database and its rebuilt file are withdrawn: a copy lost before delivery is recorded lost and made again from the rows. Also: `audit.purge_runs` (completion, takeovers); the manifest frozen at confirmation and `purge_candidates` refused after an export began; `purge_expired_events` takes a source run and page number; a lost host resolved by an attested `--host-lost`; the copy destroyed only on the writing machine with the file present; sessions end at the earliest of revocation, absolute and idle expiry; `audit.audit_events` lock category 11; the #38/#40 fields; the canonical text pinned to UTC with exact file bytes; the host id includes the Linux network namespace; the P3 points. Design text only; Part 2 awaits the critic's next round, then the independent reviewer. |
+| 79 | 2026-10-18 | **Part 2: the kernel-held lock made concrete.** Node has no file-locking call and the common lock libraries judge staleness by age, so revision 78's lock file could not be built as written. The lock is now a listening endpoint the OS frees when its process ends: a named pipe on Windows, an abstract-namespace socket on Linux, keyed by the operator's account; other platforms and containers are refused; no lock file exists. Tests with real processes (a paused holder, a killed holder, a squatted name). The purge procedure's list indentation fixed. Design text only; Part 2 still awaits the independent reviewer. |
+| 78 | 2026-10-18 | **Part 2 stale-writer fence uses a kernel-held OS lock.** Replaces revision 77's host/PID/process-start-token check, whose token might repeat or be unavailable. Exporters hold an exclusive process lock before registration through confirmation/discard; recovery must acquire the same lock before touching files. A stale process cannot resume filesystem work after recovery; unavailable lock support, host or lock file fails closed. Tests pause the exporter before/after lock acquisition and around registration/file creation. Design text only; Part 2 still awaits the independent reviewer. |
+| 77 | 2026-10-18 | **Part 2 stale-writer recovery fence.** `begin_purge_export` records a stable host id, PID and OS process-start token before filesystem work. Recovery must verify that exact process instance has exited before inspecting files or discarding; a live, unreachable or unverifiable writer keeps the export unresolved and blocks new runs. Tests pause the writer before create and between create and artifact recording, then verify recovery refuses until termination. Design text only; Part 2 still awaits the independent reviewer's approval. |
+| 76 | 2026-10-18 | **Part 2: the export made portable** (found while resolving what could block Part 2). Node's `rename` overwrites on POSIX, so the no-overwrite rename is a hard `link` then an `unlink` (a stop between leaves both names on one file, removed by name); where a directory cannot be flushed (Windows), the run says so and relies on the file's flush, the read-back after the rename and the recorded SHA-256, with a later loss found and rebuilt (R53). Tests added. Design text only; Part 2 and the addendum still await the independent reviewer. |
+| 75 | 2026-10-18 | **Part 2: ownership by the run's unique file name** (a review of revision 74, §14; the project lead asked that everything likely to block Part 2 be resolved). The report is named `alphakolect-purge-report-<run_id>.jsonl` in the directory the operator names, `run_id` being the run's new UUID recorded in the database: that name, outside the report's bytes, is the proof of ownership, replacing the device/file-number/birth-time identity of revisions 73–74, which a coarse timestamp could repeat. `record_export_artifact(run_id)` records that the file exists; restart cleanup deletes the run-named files of an export that recorded its file, repeating the check until both stay absent; an export that recorded none, a refused create or an unreachable directory goes to the operator's attestation. Also: the rebuilt file of R53 is written and cleaned up like an export; the delivery and loss steps remove the run's files, a rebuild's partial included; the report folder must be local, owner-only and not synced or backed up; `confirm_purge_report` requires the run's export to have recorded its file and not been discarded. `purge_exports`: `directory`, `artifact_recorded_at`. Tests restated. Design text only; Part 2 and the addendum still await the independent reviewer. |
+| 74 | 2026-10-18 | **Part 2: a file number alone is not proof** (a review of revision 73, §14). The recorded identity requires the birth time with the device and file number — a file number can be reused once its file is deleted; a file system that reports no birth time records no identity, and its exports are resolved by hand; restart cleanup leaves untouched a file with the same device and file number but another birth time, or an unreadable one; test added for the reused number. Design text only; Part 2 and the addendum still await the independent reviewer. |
+| 73 | 2026-10-18 | **Part 2: restart cleanup proves ownership by file identity** (the project lead's choice, §14). Right after the exclusive create, `record_export_artifact(run_id, identity)` records the file's device, file number and (where reported) creation time on its export, once; after a crash the next run deletes a file at either name only if its identity matches, records the discard and proceeds; any other file is left untouched, and an export with no recorded identity (a crash between create and record, or a platform without stable file numbers) stays for the operator's attestation. `purge_exports.artifact_identity`; tests; footprints, grants and counts updated (fourteen purge functions). Design text only; Part 2 still awaits the independent reviewer's approval. |
+| 72 | 2026-10-18 | **Part 2 export collision safety.** Same-process and crash-recovery cleanup remove only paths this run successfully created; exclusive-create or no-overwrite-rename collisions preserve existing files, with regression coverage including a process stop before discard. If file ownership cannot be established, the export remains unresolved for operator reconciliation. The independent reviewer's approval remains pending. |
+| 71 | 2026-10-18 | **Part 2 design: the review's two findings addressed** (design text only; nothing of Part 2 built). (1) An export is recorded (`audit.purge_exports`, `begin_purge_export`) before its file exists, written as `<path>.partial` (exclusive, owner-only) and renamed only when verified; any failure removes both names and records the discard (#45, `discard_purge_export`); an export left unresolved by a crash blocks every new run (`export_unresolved`) and is listed by `audit:purge-reports` until resolved, by the command or by the operator's attestation. (2) O11 applied: a delivery needs the owner's written receipt; the operator's copy is then destroyed, checked and recorded (#44, `record_report_copy_destroyed`), and a request is satisfied only when every report is delivered with its copy destroyed, or lost; an altered file and a rebuild's scratch database are destroyed too. Tests, footprints, grants, the catalog (#44, #45), the Part 2 list and the P5.10 runbook updated; thirteen purge functions. The review's recommendation on the addendum recorded (§14). Waiting for: the independent reviewer — the addendum's confirmation and Part 2's approval. |
+| 70 | 2026-10-18 | **O19 signed; sign-offs stay independent.** The reviewer's revision 69 edits committed as written (`2b28a3b`); the owner signed the O19 form (`894d309`), recorded in the decision log, the open item and ADR-16. The project lead chose that the independent reviewer keeps every remaining sign-off (§14, "option 1"). Waiting for: the reviewer's confirmation of the addendum as amended in revision 69, and Part 2's approval. |
+| 69 | 2026-10-17 | **P5.8 addendum re-review: changes requested.** The merchant-read row used `audience: 'platform'` as the team label, conflicting with the recorded nullable audience. Separate `actorLabel` from actor fields, preserve `audience` as stored, and test a platform identity with no recorded audience. The addendum remains unconfirmed; O19 signature and Part 2 approval remain separate gates. |
+| 68 | 2026-10-17 | **The reviewer's re-check: both fixes confirmed; the addendum's actor fixed.** (a)–(h) accepted in principle; `AuditEvent.actor` now carries each actor field as recorded and nullable — an invitation acceptance has no audience — with a test required (`915ad30`); **O19 answered** (`4fe4f75`, relayed, signature requested): "AlphaKolect team", applied in the addendum. Returned for the addendum's confirmation. |
+| 67 | 2026-10-17 | **The ADR-16 addendum drafted** (`cbe8467`): both audit-read contracts frozen on O4 and the visibility decisions, eight judgement calls (a)–(h) recorded under §10 P5.8; ADR-16's Logs paragraph amended to the route template; **O19** asked of the owner (`c78dec8`). For the reviewer: the re-check of rev 66's fixes and the confirmation of the addendum. |
+| 66 | 2026-10-17 | **The P5.8 hold-point review: changes requested, both findings fixed.** (R19) the guard's inventory no longer depends on a session parameter's name, and the name is checked (`12f839c`); (logs) the completion line names the matched contract route, never the path as sent (`2134b80`), §8.6 amended; a parallel-isolation flake in the team-list test fixed (`b53ff00`). The verdict recorded in §14. Returned to the reviewer for re-check. |
+| 65 | 2026-10-17 | **O4 decided.** The owner answered and signed `docs/business/P5_OWNER_ACTIVITY_RECORD_QUESTIONS.md` (`7497869`), choosing every suggested option: 100 events a page and a 31-day window for both audit reads; the merchant read filters by person only; the platform read by business, person and event identifier. Recorded in §8.5, §10 P5.8 and §14 (decision log and open items). Next: the ADR-16 addendum freezing both audit-read contracts, for the reviewer's confirmation. |
+| 64 | 2026-10-17 | **P5.8 at its first hold point.** Built and committed: the R19 merchant-scope guard (`1b5a5ba`), O9 pagination of the members and invitations lists (`95f3060`), the log allowlist with server-only request ids (`0a05652`), the O4 spike (`d15d133`); the owner's O4 questions asked (`07b61b1`). Seven judgement calls recorded. Waiting for the owner's O4 answers (then the addendum and the reviewer), and for Part 2's approval. |
+| 63 | 2026-10-17 | **Go for P5.8** (project lead, §14), in the plan's order: the R19 guard first, then O9 pagination, the log redaction, the O4 spike and an owner questionnaire on it; the retention purge parked until Part 2 is approved. |
+| 62 | 2026-10-17 | **P5.7 gate approved** by the independent reviewer ("P5.7 approved"; the decoder and list API suites re-run, 20 of 20; the full gate relied on as reported), with the go-ahead for P5.8 on the R19 condition — the merchant-scope guard, mutation-tested, before any merchant-scoped definer read. Part 2 (the retention step) is not approved by it. Recorded in §14. |
+| 61 | 2026-10-16 | **The P5.7 finding fixed** (`8913290`): an impossible timestamp in a cursor is `400 INVALID_CURSOR` before any query, with a decoder test and an API regression test for each list; without the check the API answers 500, as the reviewer found. P5.7 returns for its gate review; P5.8 waits for the reviewer's approval and the project lead's go, and its merchant-scoped reads for the R19 guard check. |
+| 60 | 2026-10-16 | **P5.7 gate: changes requested** (reviewer, §14): an impossible timestamp in a cursor must answer `400 INVALID_CURSOR`, not 500, with a regression test. R19 (judgement call 11) decided: the guard's merchant-predicate check is a condition of P5.8, before any merchant-scoped definer read; the platform lists need none. |
+| 59 | 2026-10-16 | **P5.7 built; awaiting review at its gate.** Platform staff (`d51caea`: sign-in for every active platform membership, creation, deactivation, reactivation and grants, each the super admin's; the team list), the platform lists as sensitive reads with their indexes chosen from recorded plans (`2e2e03d`), the session's permissions (`2c758a2`, then `CurrentSession` in `668a230` after oasdiff flagged the login response), and the tests (`c7db7b4`): 29 database tests, 12 API tests, three races of 50 runs. Thirteen judgement calls; one open for the reviewer (the R19 guard check of §8.5 was never built). No owner question arose. |
+| 58 | 2026-10-15 | **P5.7–P5.10 plan approved (technical direction) and the go for P5.7** (§14): the reviewer approved the plan with its hold points enforced — P5.7's own gate, Part 2 before P5.8 step (a), the O4 spike and decision before the audit-read contracts, the D9 policy before P5.10 — and asked that the P5.10 containment runbook make O16 operational (added to §10 P5.10); the project lead gave the go for P5.7. |
+| 57 | 2026-10-14 | **P5.6 gate approved** by the independent reviewer ("P5.6 approved to close"; the owner's signed wording matches the implementation exactly; 80 focused API tests re-run serially; the full gate, the concurrency run and CI not re-run). Recorded in §14. P5.7 needs its own reviewer approval and the project lead's go. |
+| 56 | 2026-10-14 | **O18 signed; the owner's characters** (the reviewer's re-review: technically approved, not closed): the owner signed `docs/business/P5_OWNER_REFUSAL_MESSAGES.md` (`feea3d4`), so O18 is his own decision (R33); the two new messages match his signed answers character for character, straight apostrophe included, with a test against the form (`3d53835`); the kept messages unchanged. P5.6 returns for closure; P5.7 stays gated. |
+| 55 | 2026-10-14 | **The refusal wording applied** (O18, the owner's answers R1–R4 in `docs/business/P5_OWNER_REFUSAL_MESSAGES.md`, relayed — the form's name and date lines are blank): a grantable permission's refusal says whom to ask, a reserved one keeps P4's message (`616cff1`); the merchant 403 descriptions follow (`850a4b1`); the reviewer's re-check of item 2 (resolved) recorded in §14. P5.6 returns for its gate review; P5.7 stays gated. |
+| 54 | 2026-10-14 | **Test budget applied at the P5.6 gate** (`4e284ac`): the two-connection suites run in `pnpm test:concurrency`, part of every gate and of CI, still 50 runs per race; `packages/db` falls from 307 s to 116 s; the split and every re-run recorded under P5.6. The refusal wording waits for the owner's answers (R1–R4). |
+| 53 | 2026-10-14 | **P5.6 gate: not approved yet** (reviewer, §14). The bounded list rule, the source guard and the grant writer are accepted. Two items before closure: the refusal message for grantable permissions, put to the owner (`P5_OWNER_REFUSAL_MESSAGES.md`, R1–R4, the platform side included for P5.7); and the test-budget rule applied — the two-connection suites move to a mandatory `test:concurrency` command, 50 runs each. |
+| 52 | 2026-10-14 | **P5.6 built; awaiting review at its gate.** The strengthened source guard first (`63e1893`, the hard gate), then the bounded list rule, the owner-approved permission descriptions, `tenancy.set_role_permissions` with #21, `list_roles` with permissions, `GET /v1/merchant/permissions` and `PUT /v1/merchant/roles/{roleId}/permissions`; races (c) and (k) pass 50 staged runs each; the P5.5 staff-authority suites run on writer-set grants. Gate passed locally (db 614, api 690). |
+| 51 | 2026-10-14 | **Go for P5.6** (project lead, §14): it starts with the strengthened source guard, the hard gate; the permission lists of #21 use a new bounded list rule in the event catalog (finding 1, option (a)), judged by the reviewer at the P5.6 gate. |
+| 50 | 2026-10-14 | **The owner answered O10–O17** (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`, signed 2026-10-14, `17745e4`): every answer takes the suggested or as-designed option — the eleven permission descriptions as worded; a restored role's permissions apply at once; business-wide permissions for branch-restricted staff; the containment switch set by the owner or (in an emergency) the technical lead, lifted only with the owner's approval, business owners told; backups 35 days; the report copy handed over in person, the operator's copy deleted on the owner's written receipt; a privacy notice; the planning documents kept. Recorded in the decision log; no owner question for P5 is open. |
+| 49 | 2026-10-14 | **One owner questionnaire for the rest of P5** (`docs/business/P5_OWNER_REMAINING_QUESTIONS.md`): every open owner decision in one form — new open items O13 (permission wording), O14 (restoring an archived role), O15 (branch-restricted staff and business-wide permissions), O16 (who sets and lifts the containment switch; telling business owners), O17 (the planning documents in the merged history), and O10–O12 unchanged; the two unanswered earlier forms marked superseded. Mapping and timing recorded in §14. |
+| 48 | 2026-10-14 | **Findings before P5.6 starts** (§10 P5.6), open until decided: the event catalog's summary rules cannot hold the permission lists #21 (and P5.7's #31) must record — a bounded list rule is recommended and needs the reviewer's agreement; the frozen `PermissionCatalog.description` has no source — a catalog column is proposed, its wording put to the owner (`P5_OWNER_PERMISSION_DESCRIPTIONS.md`); `Role.permissions` needs `list_roles` replaced; the strengthened source guard's intended design. |
+| 47 | 2026-10-14 | **P5.5 gate approved** by the independent reviewer ("P5.5 approved to close"; seven decisions accepted; the bootstrap parsing fix accepted, a regression test for it noted as non-blocking; 80 + 76 focused tests re-run serially; full gate and CI not re-run). Recorded in §14. P5.6 waits for the project lead's go, and its first commit is the strengthened source guard. |
+| 46 | 2026-10-14 | **P5.5 built; awaiting review at its gate.** Step 6 (`d740d77`, `a897faa`): the containment switch — one-row table, operator-only `util.set_authorization_containment` with #39, read by the resolver and every re-check, fail closed, `admin:containment`. Step 7 (`89deb89`): the R32 gate tests. Enforcing mode (`0278b38`): the tolerance lists deleted, a test fails if one returns. Added at the gate: the definer `search_path` guard (`351c827`) and the settings writers' §8.2a refusal tests (`74bf1ca`). Outside the package: `admin:bootstrap` accepts its documented `--` (`9d408bf`). Gate on `74bf1ca` passed locally (contracts 62, db 580, api 642; oasdiff 0 errors). |
+| 45 | 2026-10-14 | **P5.5 step 5 built** (`383e749`, `efee310`, `6dc4a70`, `d025f0e`): admission records `auth.invitation_accepted` on both paths with the capability-based actor (the setup path's gap closed); platform and business accounts kept apart both ways (admission and the replaced bootstrap, serialized on the identity row); `recordWithin` and the transitional list deleted with their last user; nothing tolerated by any guard list; the R27 nested-writer and rollback tests and the §7.4 separation tests and race pass. Gate passed locally (db 568, api 600). |
+| 44 | 2026-10-13 | **P5.5 step 4 built** (`bb53c29`, `b555f1f`, `2591c5d`, `95214bf`): the enforcement boundary — five settings writers on their planned footprints writing their own audit rows, six read functions (B1's five and the self read `read_own_membership`), and the app's direct access to merchants, branches, roles and invitations revoked in the same migration; the mixed-version test (the 11 statements of `4319177`, each `insufficient_privilege`); races (b) staff half and (i) pass 50 staged runs each. Gate passed locally (db 551, api 598). |
+| 43 | 2026-10-13 | **P5.5 step 3 built** (`88eff08`, `50bcdc8`, `843c102`, `1302ec8`): authority from the resolver in the five privileged operations and `list_members`; each success writes its own audit row (pattern A; eight pairs off the transitional list); the SQL authority guard holds 22 data rules and tolerates nothing; the actor's own row is shown held; races (a), (b), (d), (f), (g), (j) pass 50 staged runs each. Gate passed locally (db 496, api 597). |
+| 42 | 2026-10-13 | **P5.5 step 2 built** (`8cdf7c6`): every FOR UPDATE is FOR NO KEY UPDATE; set_merchant_status, transfer_ownership, issue_invitation, verify_email, complete_account_setup and accept_invitation take their footprints; admission waits for nothing (`admit_invitation_locked`, L6). The §7.2 latent deadlock is confirmed — test (h) deadlocked on its first run against P4, none in 50 after. Guard: no L1, order or L3 finding left; six footprints tolerated until steps 3 and 5. Gate passed locally (db 477, api 597). |
+| 41 | 2026-10-13 | **P5.5 step 1 built** (`afe7499`, `73d3e89`, `708730e`, `f6c5ecc`): the seven lock helpers and the lock-order guard in report mode — SQL footprints with the baseline control against the 5d8904b fixture, approved writes (R22), and the repository-transaction classes (R17, R27). Findings: `verify_email` locks the merchant after the identity (a latent deadlock once `set_merchant_status` is reordered; footprint proposed in §7.2 for the gate review); two L3 violations the table did not list. §7.2's reconciliation amended to the 25 entries the guard reports. Gate passed locally (contracts 62, db 475, api 597). Step 2 next. |
+| 40 | 2026-10-13 | **P5.5 test budget confirmed (§9.3).** Measured before any P5.5 code: 100 two-connection races in 14.1 s (P5.5's 400 ≈ 56 s, in the sequential `packages/db` suite); a full `pnpm test` in 109 s wall; memory peaked at 916 MB for the test processes with the machine at 94–98% commit. The reviewer's P5.3a dropped connection was Postgres's 10 s idle-in-transaction termination at 00:08:09 UTC during that run — a test process stalled under memory pressure, not an application defect (no transaction takes a second pool connection). The suites stay in `pnpm test`, 50 runs each; gate runs one at a time; re-checked at P5.6 and P5.7. |
+| 39 | 2026-10-13 | **P5.5 go; the guard condition's timing decided.** The project lead: the P5.4 guard condition need not close before P5.5; it stays a P5.6 precondition and is now a hard gate — staff grants cannot be enabled until the broader guard and its mutation tests pass (P5.6's first commit; checked at the P5.6 gate). P5.5 proceeds under its own gate, starting with the §9.3 test-budget check. |
+| 38 | 2026-10-13 | **P5.4 gate approved.** Judgement calls 1–12 accepted; the API-only check on profile, branch and role writes until P5.5 is an acknowledged boundary, not database protection. Call 13 becomes a P5.6 precondition: strengthen the source guard against indirect authority lookups before staff grants exist. The intermittent invitation-revoke failure stays with P5.5's test-budget check. The reviewer re-ran the policy, isolation-matrix and route-parity suites serially (115 passed). Local runs only; CI has not run. P5.5 is next, on the go-ahead. |
+| 37 | 2026-10-13 | **P5.4 built; awaiting review at its gate.** The policy middleware enforces each endpoint's declared permission — mounted after validation on permission endpoints only, failing closed with the `authorization_resolution_failure` signal — the interim owner checks are removed, refusals are recorded as `authz.denied` (best effort), and the membership endpoints return effective permissions (`b260f3f`, `a39b2c7`, `0ca5ae3`, `1643c7a`). The P4 isolation matrix and a per-endpoint P4 denial oracle pass unchanged. Gate passed locally; evidence and 13 judgement calls under P5.4, including a correction of this package's call-site count. P5.5 waits for the gate review. |
+| 36 | 2026-10-13 | **P5.3a gate approved.** All 14 judgement calls accepted, including the fix that makes the invitation-link success atomic. The reviewer re-ran the focused suites serially (141 API, 19 database tests passed); its first parallel run hit timeouts and a dropped connection, carried to P5.5's test-budget confirmation (§9.3). Local runs only; CI has not run. P5.4 is next, on the go-ahead. |
+| 35 | 2026-10-13 | **P5.3a built; awaiting review at its gate.** The audit event catalog and its validation trigger (66 pairs), the three entry points with §9.4 signals and the TypeScript mirror, every identity flow committing with its event (pattern B), every refusal best effort, and the writer and coverage guards with per-pair co-commit and rollback tests (`4068baf`, `f2a2133`, `12ff1ad`, `7f655c7`, `0957b1c`). Finding: the invitation-link success was not atomic in P4; it is now. Gate passed locally; evidence and 14 judgement calls under P5.3a. P5.4 waits for the gate review. |
+| 34 | 2026-10-12 | **P5.3 gate approved.** All eight judgement calls accepted; the authorization-middleware parity assertion moves to P5.4 as a condition (P5.4's tests updated). The reviewer re-ran the focused tests (36 passed). Local runs only; CI has not run. Next: P5.3a, with its own gate. |
+| 33 | 2026-10-12 | **P5.3 built; awaiting review at its gate.** Every endpoint declares its authorization (the frozen route map, published as `x-authorization`), the router refuses to start on a missing or invalid declaration, and query parameters are validated from the contract with unknown ones refused (`8adec6f`, `277d389`). Gate passed locally; evidence and eight judgement calls under P5.3 — notably, the route-parity assertion for the authorization middleware moves to P5.4, where that middleware is built. P5.3a waits for the gate review. |
+| 32 | 2026-10-12 | **P5.2 gate approved.** The reviewer approved P5.2 to close on the reported evidence and gave the go for P5.3 and P5.3a, each with its own gate. Follow-up `3baa6bf` checks the resolver's identifiers at the API boundary; the review's conditions are answered under P5.2 (every current revocation path conflicts with the re-check's locks; obligations carried to P5.5). Local runs only; CI has not run. |
+| 31 | 2026-10-12 | **P5.2 built; awaiting review at its gate.** The resolver (`identity.session_authority`, with `identity.permissions_of` as the one permission rule) and the nested write-time re-check (`tenancy.assert_authority`), 22 database tests including three-order revocation races, and the API wiring of `AuthContext.permissions` and `TenantContext.permissions` (`a68cece`, `daa95d6`). Gate passed locally; evidence and eight judgement calls under P5.2. P5.3 and P5.3a wait for the gate review. |
+| 30 | 2026-10-12 | **P5.1 gate approved.** The reviewer approved P5.1 to close on the reported evidence and gave the go for P5.2, P5.3 and P5.3a, each with its own gate. Follow-up `dfaf579` tests effective privileges (role membership, column privileges, PUBLIC) for the three tables and every function, as the review asked; the review's checks are answered under P5.1. Local runs only; CI has not run. |
+| 29 | 2026-10-12 | **P5.1 built; awaiting review at its gate.** The permission catalog (`identity.permission_catalog`, the 16 permissions of §6, protected by a trigger), `tenancy.role_permissions` and `identity.platform_membership_grants` (only active, grantable permissions of the right scope; no app or readonly privilege; no writer), the Prisma models, the storage tests, the execute-grant inventory (R31) and the contracts `PERMISSIONS` list checked against the catalog (`a129f3a`, `fc6fa8b`, `acd73d7`), plus an unrelated CRLF fix to the T14 guard (`aa7d8cf`). Gate passed locally; evidence and eight judgement calls for review under P5.1. Next package (P5.2 ∥ P5.3 ∥ P5.3a) waits for the gate review. |
+| 28 | 2026-10-12 | **P5.0 complete.** The owner approved ADR-16 for Part 1 with decision B1 (`d4ac17e`) and answered the follow-up (`130fbda`: C1 accepted, C2 recovery targets, A3 confirmed); the independent reviewer approved the ADR-16 text as written, including B1, and confirmed that the approval covers §3.5 in full (lines 259–499 at `fac08e7`). Carried into the documents: B1 into P5.1 and P5.5 (`fce7f99`); the recovery targets into P15 obligation 5 (`3c05307`); the migration-naming rule into P5.1 (`d3b68d0`, critic review TA-26); the owner-approved note under BR-11.2 (`a3e801a`). Part 2 remains unapproved. Next package: P5.1. |
+| 27 | 2026-10-12 | **P5.0 work done; awaiting approval of the ADR-16 text.** TARGET_ARCHITECTURE gains ADR-16 (§0 row; §3.5, a draft for approval): the Part 1 specification without history, the route map of all 44 operations (checked against the registry), the frozen contracts of the new operations with error codes (audit-read contracts frozen at P5.8 step 3 by design), the read-authorization boundary with its residual risk, the availability consequence, the lock-order checker's stop rule, the incident procedure and the decision log with applying commits (`dd60c84`, `4ffab3c`, `e9e5690`, `e882e19`, `5a45569`, `53ba786`). RESTRUCTURING_MAP: the assigned-customer rule moved verbatim to P7/P8 (`402cc57`), the P5 definition and exit criteria (`1561f8e`), the obligations passed to P15 including the proxy access-log rule (`5ec80c9`). Plan: §1.1 lists all four P15 obligations (`82ad094`); P5.10's threat model must document the read boundary (`4c210fb`). No P5 code, migration or test written; Part 2 untouched. P5.0 completes when the reviewer and the owner approve the ADR-16 text (§10). |
+| 26 | 2026-10-12 | The independent reviewer approved Part 1 explicitly — "Part 1 of revision 25 (`e6b367d`) is approved. Part 2 … is not approved by this verdict." Recorded in §14; with the owner's G1 both §12 conditions are met and P5.0 may begin. Part 2 remains unapproved. No plan content changed. |
+| 25 | 2026-10-12 | Reviewer's direction on the coding agent's audit of revision 24: approve Part 1 after one documentation correction; keep Part 2 pending. **Part 1:** §12 is now the only statement of when implementation is authorized (P5.0 begins when §14 records the reviewer's Part 1 approval and the owner's G1, given 2026-10-12; nothing of Part 2 is built before its own approval); §14's summary says one approval remains, and a garbled sentence there is gone; Part 2 is listed by every place it appears and tagged "(Part 2)" in place. **Part 1 design unchanged since the approval on revision 22 (`5b51190`):** a word-level diff of `5b51190..e3c0971` outside §12, §14 and §16 shows only status-line text, "(Part 2)" tags, and P5.0's ADR-16 scope narrowed to Part 1 (the defect the reviewer named in revision 23). **Part 2 (pending its own review):** `purge_candidates`' writes stated consistently; a restored backup is checked to hold every manifest id before any rebuild; the manifest's lifecycle defined, with tests. |
+| 24 | 2026-10-12 | The reviewer withdrew the Part 1 approval of revision 23 and named its defects: (1) the approval was dated 2026-10-13, a day in the future — corrected here, with revisions 22 and 23 re-dated 2026-10-12; (2) P5.0 still put the retention design (Part 2) into ADR-16 and required approval of the "final" ADR-16 — P5.0 now writes Part 1 only, with the retention design added as an ADR-16 addendum after Part 2 is approved. §14 records the approval as given and withdrawn, and the Part 1 approval as pending re-review. The owner's go-ahead G1 ("yes, start now with Part 1", form dated 12 October 2026) is recorded; it takes effect once Part 1 is approved again. Revision 23's entry below is left as history, with its date corrected. |
+| 23 | 2026-10-12 | The independent reviewer **approved Part 1** (§12) on revision 22 — R53 and R54 resolved as written, no further findings for Part 1 — and stated that this approval does not supply the owner's go-ahead. Recorded in §14 with scope; Part 2 (the retention design) pending; status line updated. No content of the plan changed. |
+| 22 | 2026-10-12 | Review of rev 21 (close; two findings), recorded as **R53–R54**: **(R53)** `purge_candidates` records every page it hands out (ordered event ids and digest) in `audit.purge_run_pages`; confirmation and deletion are checked against this manifest, and a lost report is rebuilt from it in a pre-deletion backup — not by re-running the selection, which could include a late-committing row or miss one — with a recovery test for exactly that case; **(R54)** delivered and lost are mutually exclusive, one-time terminal states (`CHECK` and function checks, with tests). **Staged approval proposed (§12):** Part 1 — everything except the retention design — would let P5.0 begin with the owner's go-ahead; Part 2 — the retention design — is needed before P5.8 step (a). The owner's commit `3895d3b` (R52 with the revision-21 log) was scanned with gitleaks after the fact: no leaks. |
+| 21 | 2026-10-12 | Full-document review of rev 20 (close; three findings, none blocking P5.0), recorded as **R50–R52**: **(R50)** nothing a caller controls reaches a log line unchecked — request ids are always server-generated (a caller's `X-Request-ID`, today accepted if it matches `[A-Za-z0-9._-]{1,128}`, is ignored; two existing tests change to assert this, a recorded deviation), the path is logged without its query string, and database errors are logged as structural fields with a fixed message (message, detail, stack dropped); leak-sweep cases for a forged request id, a query string and a database message; **(R51)** the §14 summary no longer says every owner decision is answered — O10–O12 are open, needed only at P5.8 step (e); **(R52)** a confirmed report is kept at a durable location until delivered, re-checked by `audit:purge-reports`, regenerated bit for bit from a pre-deletion backup with its recorded `p_as_of` if lost, or its loss recorded (`record_report_lost`, event #43) with the owner informed; a request is satisfied when every confirmed report is delivered or recorded lost; exit criterion 9 and the P5.10 runbooks updated. |
+| 20 | 2026-10-12 | Review of rev 19 (four findings), recorded as **R46–R49**, and a systematic sweep of every subsystem P5 adds through five lenses — privileges (including what defaults and triggers run as), state and cardinality, claims versus evidence, allowlist versus denylist, and timing — plus test feasibility. **(R46)** resolved by design: roles are cluster-level (`roles.sql`, superuser, before migrations; the migrator is `NOCREATEROLE`), so a dedicated purger role needed a bootstrap change and migrator membership that gave no boundary; the purge functions are migrator-owned like every function and need no extra grant. **Sweep finding:** the audit table's append-only triggers share `util.reject_modification()` with the ledger's money tables — the ledger keeps it unchanged and the audit table gets its own guard, allowing a delete only inside a live purge run and past retention; trust boundary stated. **(R47)** at most one open report request (partial unique index, serialized on the reservation), and state rules for every new table (one-row tables, one report per run, confirmed and delivered once, the empty run). **(R48)** a recorded delivery is the operator's attestation; the hash proves the file, not receipt; questionnaire P2c asks whether the owner confirms receipt himself. **(R49)** logs use an allowlist (request id, method, path; status code; no headers or remote address); **sweep finding:** database error details ("Failing row contains …") can print a session's IP and user agent, so the error serializer keeps structural fields only. **Sweep findings:** the reporting role could read every IP address and user agent and both roles could read activity rows without a read event — the app loses `SELECT`, readonly loses the `ip` and `user_agent` columns; catalog entries are never deleted, with a retention fallback; the trigger swap is atomic; the late-commit test gets a concrete pause mechanism. No new owner decision beyond P2c. |
+| 19 | 2026-10-12 | Review of rev 18 (R44 sound; one finding), recorded as **R45**: confirmed reports must be **delivered** — requests and reports move to two purger-only tables; confirmation records the path (never contents) and is printed before any deletion; `audit:purge-reports` lists undelivered reports from the database; `record_report_delivery` records a delivery only on a matching SHA-256; a request is satisfied only when a run completed with a confirmed report **and** every confirmed report is delivered; events #41, #42. **Full-scope review against the code:** no metrics system exists, so §9.4 defines a closed list of log signals (alerting in P15); `pino-http` logs every request's IP and user agent, which F3 forbids — P5.8 redacts them and the leak sweep checks it; the contract freeze names new error codes (`INVALID_CURSOR`, `EMAIL_IN_USE`) and states inherited CSRF and the reused setup email; rate limits deliberately unchanged, with reasons; platform grants primary key; operator runbooks in P5.10; a test budget for the concurrency suites; exit criterion 9 widened. Three owner questions opened (`P5_OWNER_PRIVACY_QUESTIONS.md`): O10 backup retention, O11 the report copy's handling, O12 a privacy notice — needed only by the D9 written policy (P5.8 step e), not by P5.0. A defect in the edit helper (`$` patterns in replacements) was found and fixed; the document was verified free of duplication. |
+| 18 | 2026-10-12 | Review of rev 17 (R42 resolved; one finding), recorded as **R44**: a requested report is a database fact enforced at deletion — `request_purge_report` records it, pending until a run completes with a confirmed report; `confirm_purge_report` records a run's verified report against the totals `purge_candidates` handed out; while a report is pending `purge_expired_events` deletes nothing unless this run confirmed its own report; a takeover inherits the request; a heartbeat (`renew_purge_run`) keeps a healthy slow write reserved; every confirmed file is delivered; tests for a paused write with and without heartbeats. **Full-document review** (not only the retention section): operator-only footprints grouped at the end of the §7.2 table and a missing footprint row for the containment switch added (the guard would have failed on it as unclassified); a garbled footprint sentence corrected; operator commands placed on the existing `admin:bootstrap` pattern (`apps/api/scripts`, migrator connection) — `audit:purge`, `audit:purge-request-report`, `admin:containment`; P5.8 given an internal order (purge, O9, audit reads in the O4 order, D9 policy). No owner question arose. |
+| 17 | 2026-10-12 | Review of rev 16 (not yet approved; two findings), recorded as **R42–R43**: **(R42)** `audit.d9_retention()` becomes the runtime source — catalog entries carry a nullable `retention_override` (NULL for every P5 pair) and the purge and trigger compute `COALESCE(retention_override, audit.d9_retention())` at run time, so redefining the function moves all four cutoffs with no stored value to update; the function is `STABLE` and on the lock-free allowlist; a P5 pair may not carry an override; **(R43)** a run-wide, non-waiting reservation in the single row of `audit.purge_reservation` (renamed from `purge_run_lock`): `reserve_purge_run` fails at once on a live reservation, every purge transaction checks under `NOWAIT` that it holds this run's reservation and renews it, `release_purge_run` frees it, a crashed run's reservation expires after `audit.purge_lease()` (15 minutes) and can be taken over only between the old run's transactions; no advisory locks; R38's page checks remain a second line. Self-review: `purge_candidates` also renews the reservation so a long export cannot lose it (test: an export longer than one lease completes); function signatures aligned; stale "run lock" wording replaced. No owner question arose. |
+| 16 | 2026-10-12 | Review of rev 15 (approve with required revisions). Its findings 1–4 are recorded as **R38–R41**: **(R38)** the purge deletes by exact id — `purge_candidates` is paged by id and returns ids, `purge_expired_events` takes one verified page's ids and digest, re-reads those immutable rows and deletes `WHERE id = ANY(ids)`, so an eligible event that commits late (its `occurred_at` is its transaction's start) is never deleted unexported; late-commit race test; **(R39)** the purger's privileges as one exhaustive table, adding the missing `USAGE ON SCHEMA identity` (today granted only to the app, `20261003000200:7`), the run-lock table and column-level grants; **(R40)** the purge inside the global lock order with no exemption: a category-0 run lock taken `NOWAIT`, audit deletes that nothing else can lock, and field clearing in its own function, tokens (5) before sessions (10), `SKIP LOCKED` — request paths can hold expired, unrevoked sessions (revocations match `revoked_at IS NULL`) — so the purge never waits and cannot join a deadlock; the clearing writes its own event #40 so #38 keeps one writer; **(R41)** "two years" means calendar years, `interval '2 years'`, defined once as `audit.d9_retention()`, with `TimeZone = 'UTC'` pinned and leap-day, boundary and time-zone tests. Self-review: a rev-15 test that expected late rows to make the purge raise corrected; L4 and the D9 summary aligned. No owner question arose. |
+| 15 | 2026-10-12 | Final review of rev 14 (approve with required revisions). Its R1–R4 are recorded as **R34–R37**: **(R34)** one baseline reconciliation table — L1 lock mode in 8 functions (10 clauses, the three P3 functions needing only the mode change), category order in 3 functions (only `set_merchant_status` in both), planned footprint and authority in 8 functions — used by the baseline control ("exactly these entries") and by report mode (baseline entries tolerated, any other finding fails, vanished entries must be removed); enforcing mode defined (empty tolerated list, every P5.5 footprint conforming, tolerance mechanism deleted); **(R35)** exactly-once across pages scoped to rows still present when their page is read; a purged row is missing, never repeated, and a cursor whose row was purged still continues; concurrency test (e); **(R36)** the purge split into `purge_candidates` and `purge_expired_events` with eligibility as of a fixed `p_as_of` (never in the future); a requested report is written, flushed, read back and verified against the database's digest before any deletion, and deletion happens only if the eligible set still has that exact count and digest — every failure before or during deletion leaves all rows in place; failure tests for each case; **(R37)** exact eligibility for clearing session and token fields (sessions ended — revoked or absolutely expired — before the cutoff; tokens sent before the cutoff and consumed or expired), with tests over active, ended, recent and old rows. Self-review: the live token-lifetime citation corrected; the report file format fixed to the database's canonical row text so the digest is reproducible; the purger's RLS also allows `SELECT`; why `purge_candidates` writes no event. No owner question arose. |
+| 14 | 2026-10-12 | Owner confirmation recorded (`docs/business/P5_OWNER_CONFIRMATION.md`, signed by Mayowa Edward Fadahunsi): **CF1** both earlier forms confirmed as written (their blank "Answered by" lines covered by this signature); **CF2a/b** two years for everything, and a copy of the entries to be deleted sent as a report with no copy kept; **CF3** platform and business accounts apart both ways; **CF4** the two-year rule for IP/user agent in sessions and one-time tokens; **CF5** platform actors' IP/user agent hidden from businesses. All fallback text removed; the decision log gains a decision-maker-and-date column. The owner's go-ahead line ("yes, build it, but wait for my final go-ahead after the reviewer approves the plan") is recorded in §12 as his intention, **not** as implementation approval. **Self-review finding:** `bootstrap_super_admin` reuses an existing identity, so it could make a business account a super admin and break CF3; P5.5 replaces it to lock the identity and refuse one with a merchant membership, the migration refuses pre-existing mixed identities, admission and bootstrap serialize on the identity row (two-connection test), and bootstrap gets a planned footprint. A rev-13 rename had mislabelled the O9 answer as CF1; corrected to C1. |
+| 13 | 2026-10-12 | Independent review of rev 12 (not approved as-is; direction approved). Its R1–R7 are recorded as **R27–R33** (the earlier R1–R7 are taken): **(R27)** account setup's nested pattern-A events inside its pattern-B transaction are permitted only through one nested-writer table read by the classifier, writer guard and coverage guard, with zero/one/two-invitation and rollback tests and two guard self-tests; **(R28)** O3 reconciled — owner-only, nothing outstanding (rev 12 had overwritten the decision-log row instead of the open-item row); **(R29)** §13 item 11 no longer asks for a delegation decision; §7.6 history condensed; **(R30)** rollout no longer claims nothing can over-grant: "no automatic expansion", a containment switch (operator-only, event #39) and a five-step over-authorization procedure (§11.1); **(R31)** execute-grant exceptions and an inventory test; purger role privileges enumerated and tested; **(R32)** the transitional-writer removal is a five-part tested gate for P5.5; **(R33)** provenance of relayed answers recorded; owner confirmation form `P5_OWNER_CONFIRMATION.md` (CF1–CF5) added. **Self-review findings fixed:** the event catalog moves into the database with a validation trigger, so the §8.1 behaviour table holds at run time for SQL writers too; footprints no longer lock the actor's role for owner-only operations; L1/L4 and the guard account for P5's deletes (grant rows, purge); the stale staff-vs-staff text and the "audit endpoint opened to staff" text corrected; `platform.ownership_transferred` named correctly; template-built branch/role identifiers named in the transitional list; inventory rows ordered, #39 added; the purge's effect on the exactly-once pagination guarantee stated; three interpretations put to the owner with fallbacks — separation both ways (CF3), sign-in IP retention (CF4), platform actors' IP hidden from businesses (CF5). **Self-review cycles 2–4:** P5.3a gains its migration and a seed of every current pair (no legitimate journey rejected); P5.5 tests list containment and separation, a self-contradictory seed test fixed, and an explicit seven-step internal order with the lock-order guard in report mode until it closes; P5.0's ADR-16 content and P5.1's execute-grant test completed; P5.7 lists the session-permissions field and every staff function; §11 step 1 corrected (P5.2 resolves but does not enforce); the incident procedure ends sessions through existing deactivation instead of an unspecified tool; the validation trigger runs as definer; denial events carry the actor's business; retention is a per-pair catalog value read by an argument-free purge; the exported copy's handling is part of the D9 policy; the confirmation items are named CF1–CF5 (C1 was already the O9 question). |
+| 12 | 2026-10-12 | Owner's answers recorded (`docs/business/P5_OWNER_QUESTIONS.md`, `P5_OWNER_FOLLOWUP.md`; two F4 clarifications from the owner's representative): **D5′** — inviting, cancelling invitations, changing a member's role or branch and (de)activating members are owner-only; `merchant.members.manage` and `merchant.invitations.manage` become reserved, the delegation ceiling (§7.3) and the branch ceiling (O7) are not built and are kept as superseded history; the owner may give one branch or all (T7 unchanged); **D8′** — the business activity record is owner-only (`merchant.audit.read` reserved), with refused attempts and filtering by person (O3); **O8** — existing email refused, reactivation with no grants (new atomic event #37); **O9** — members and invitations pagination in P5.8; **D9** — purpose, visibility (business owners for their own business, the super admin, never platform staff; platform actors' IP/user agent hidden from businesses), two-year retention with whole-entry deletion including existing records, copy on request; the controlled purge exception to append-only (dedicated role, age enforced by the trigger, operator-only execution, summary event #38). Test (b) of §7.2 recast (staff no longer act on each other). Decision log in §14 complete; O4's owner preference recorded. Stale references fixed (labels point to §14; scope line). |
+| 11 | 2026-10-11 | Independent review of rev 10 (conditional approval of direction; not implementation authorization): **(R23)** the approval gate distinguishes implementation (no P5 code, migration or test before approval) from planning and review records, which may be committed; **(R24)** one set of audit-read bounds (O4) for both the merchant and the platform audit read, O3 limited to visibility, and both contracts frozen together in P5.8 step 3; **(R25)** read consistency stated per paginated read as an acceptance criterion — authority locked to commit, one statement per page, exactly-once across pages for rows committed before the first page (immutable keys), no assumption that authority locks freeze the list — with concurrency tests (a)–(d) in P5.7/P5.8 and exit criterion 7; **(R26)** decisions exist only as dated ADR-16 decision-log entries (option, decision-maker, date, source, affected sections, applying commit), and P5.0 is done only when the log and the final approvals are recorded. Owner questionnaire `docs/business/P5_OWNER_QUESTIONS.md` added and mapped to O3, O4 (preference), O7, O8, O9, D9 and the agreed positions. Reviewer recommendations (approve O3, O7, O8, O9; O4 after the spike; D9 policy before closure) noted; they remain the owner's decisions. |
+| 10 | 2026-10-11 | Completeness and placement pass at the owner's request (every P5 obligation accounted for and placed where its dependencies exist). **Placement:** the audit foundation (catalog, `recordBestEffort`, `mutateAudited`, A7, pattern-B identity flows, coverage and writer guards) moves from P5.8 to a new **P5.3a** before P5.4, because the policy middleware and P5.5's guards depend on it, with a closed transitional list for P4's `recordWithin` writers until P5.5; tests that P5.5 listed for later code move to P5.6 (races (c), (k)), P5.7 (race (e), reads #35/#36) and P5.8 (reads #33/#34, R19); P5.5 staff-authority tests use owner-seeded grant fixtures; the lock-order guard checks each footprint once its package is done; the SQL authority guard separates forbidden actor-authority literals from enumerated data rules; query-parameter validation moves to P5.3; the platform audit-read contract is frozen inside P5.8 after the validation spike and the owner's O4 decision, not at P5.0. **Gaps closed:** branch restriction defined for every endpoint opened to staff (§7.6, P4 closure (B)/(C)), with **O7** (branch ceiling for delegation); platform staff lifecycle (§7.4: creation through the account-setup link, deactivation, footprints), with **O8** (existing email; reactivation); the two cross-tenant platform lists paginated; **§1.1** traces every inherited obligation to its package, and members/invitations pagination becomes **O9**. O3 carries the reviewer's rev-9 recommendation. Stale statements corrected (review documents are committed; D9 wording in scope; §2.3/§2.4 citation; §15 index reference). |
+| 9 | 2026-10-11 | Independent review of rev 8 (approve with required revisions): **(R18)** each sensitive read #33–#36 has its own event identifier and exactly one designated function (`audit.read_merchant_events`, `audit.read_platform_events`, `tenancy.platform_list_merchants`, `tenancy.platform_list_merchant_members`); the writer guard rejects a second writer; **(R19)** merchant-scoped definer reads never rely on RLS — merchant taken only from the session, permission re-checked under locks, an explicit `merchant_id` predicate on every query including continuations, RLS kept as a backstop; tested as the real owner and the app role with forged cursors and filters; **(R20)** per-operation lock footprints for the four reads, and their read-consistency semantics stated; **(R21)** audit pagination contract — total order `(occurred_at, id)` (same-transaction ties are routine), window and filters validated on every request, cursor bound to them by digest (`400 INVALID_CURSOR`), indexes chosen by `EXPLAIN (ANALYZE, BUFFERS)` on representative data, which O4 now requires first; **(R22)** transaction classes decided on the complete, statically resolved call graph, unresolvable functions fail, and a nested unapproved write is a new self-test. Fixes: **(A)** P5 D-numbers distinguished from ADR-14 Dn; O6 shown as decided everywhere; **(B)** §8.1 is the only event inventory, §8.2 defines classes; **(C)** an authorization-resolution failure is 500 `INTERNAL_ERROR`, logged and counted, never 401/403 and never a denial event; **(D)** the audit report's threat model is design-stage input; the as-built threat model is outstanding until P5.10. |
+| 8 | 2026-10-11 | Independent review of rev 7 (approve with required revisions): **(R16)** sensitive reads are database-owned only — the designated read function checks authority, inserts exactly one event and returns the rows in one transaction; the `readAudited` wrapper is removed; writer guard and tests updated; the atomic TypeScript entry point is named `mutateAudited` throughout (an earlier table said `recordWithin`); **(R17)** five repository transaction classes (privileged write, pattern-B audited write, read-only, sensitive read, best-effort audit) with an exhaustive list of direct-access exceptions (audit inserts only, only through `mutateAudited`/`recordBestEffort`) and six class self-tests; **O6 decided by the owner** (best effort, with its conditions); O3/O4 carry the reviewer's recommendations, still owner decisions; from a full read of `docs/`: effective permissions exposed for platform sessions too, the authorization middleware fails closed (tested), the threat model moves to `docs/security/` at closure, and §15 records the legacy failure modes P5 rules out. |
+| 7 | 2026-10-11 | Independent review of rev 6 (approve with required revisions): **(R13)** authority acquired by category, not by row — the actor's row is locked at its authority-bearing category's turn inside the same ascending-id acquisition as the targets; "actor row before target row" is explicitly not a rule; the guard checks the category-level and the row-level rule; **(R14)** writer guards compare the full (identifier, outcome, class, pattern) tuple, so valid best-effort failures of identifiers with atomic successes are accepted; three writer-guard mutation tests; **(R15)** schema-level expressions on every table in scope (defaults, generated columns, CHECK/exclusion constraints, FK actions, index expressions, RLS policies, rules, domains, triggers) read from the catalog and restricted to a lock-free function allowlist, fail-closed, with four more self-tests; `ON CONFLICT DO UPDATE` treated as an update; **O6** reviewer supports the proposal, owner decision pending; **§15** legacy context added (background only) at the owner's request; the revision log moves to §16. |
+| 6 | 2026-10-11 | Independent review of rev 5 (approve with required revisions): **(R9)** "authority lock first" defined precisely — the global category order always governs; the authority lock is the first lock overall for platform operations (category 1) and the first category-3 acquisition for merchant operations (after the merchant row), before any later category and any write; capability flows anchor on the capability row; the guard enforces exactly this; **(R10)** exhaustive event inventory: 32 atomic and 3 sensitive-read pairs individually numbered with exact identifier, outcome, pattern, writer and test; every best-effort pair listed (O6 opened for the two link-issuing successes); agent flows share identifiers, tested per audience; the coverage guard compares catalog and inventory in both directions; **(R11)** the lock-order guard's claim is bounded to a closed set of analysable constructs and fails closed on dynamic SQL, unqualified calls, other languages, explicit table/advisory locks, unrecognised statements, unclassified reachable functions and non-literal transaction SQL; triggers enumerated from `pg_trigger`; three fail-closed self-tests added; coverage is no longer claimed from the mutation tests; **(R12)** trusted actor for capability-based pattern A: invitation acceptance attributed to the locked invitation's identity (checked against the consumed setup token on the setup path), `NULL` audience, the new membership; caller-supplied identity only compared, never recorded; request context recorded but never used for decisions; tests on both paths. |
+| 5 | 2026-10-11 | Independent review of rev 4 (approve with required revisions): **(R4)** authoritative atomic-event map — every atomic (identifier, outcome) pair with its writer and coverage test, including all identity events and the split MFA helper; classes are per (identifier, outcome); a coverage guard requires one writer and a co-commit + rollback test (actor, merchant, target, request id) per pair, using an injected insert failure; closes a gap where account setup wrote no per-membership acceptance event; **(R5)** lock model L1–L6: no `FOR UPDATE`, no key updates or deletes of referenced rows (so foreign-key `KEY SHARE` locks never wait), contested inserts last, triggers verified lock-free, whole footprint first, nested `…_locked` functions re-assert preconditions with `NOWAIT`; **(R6)** planned per-operation lock footprints including the actor-authority lock (platform membership first for platform operations; actor membership before invitations); **(R7)** two writer patterns (A database-owned, B repository-owned) with guards against double or missing recording; **(R8)** multi-invitation account setup locks its whole footprint before admitting; the lock-order guard computes recursive waiting footprints and is itself mutation-tested (five injected violation kinds plus the P4 baseline control); new two-connection cases (i)–(k); O3/O4 must be decided before their contracts are frozen. |
+| 4 | 2026-10-11 | Follow-up review of rev 3: **(R1 note)** only recognized refusal outcomes enter the denial path; unexpected errors stay 500 and are never recorded as denials (tested); **(R2)** `recordBestEffort` accepts only catalog best-effort identifiers — unknown or misspelled identifiers fail loudly in every entry point; atomic auditing is enforced at the change site (SQL literals checked against the catalog, `mutateAudited`, a per-event coverage test with rollback injection); **(R3)** lock categories extended to every locked table (invitations, single-purpose identity rows, identities and credential rows, sessions, implicit `UPDATE` locks); token-started flows use unlocked lookup → ordered locks → re-check; acquisition one row at a time in sorted order by helpers, independent of query plans, at `READ COMMITTED`; complete lock inventory at `5d8904b` with three non-conforming functions (`set_merchant_status`, `issue_invitation`, `complete_account_setup`) and a latent P4 deadlock (re-invite during account setup) recorded with a test; a static lock-order guard over every function and repository transaction as the proof obligation, with the two-connection runs as evidence. |
+| 3 | 2026-10-11 | Independent review (verdict: approve with required revisions): **(R1)** execution contract for privileged operations (§8.2a) — refusals returned, never raised; nothing written before the last check; success audit inside the function; denials recorded best-effort in a separate transaction with the response preserved; sensitive reads audit-then-return; tests per case; **(R2)** audit validation decided by entry point first, so an unknown identifier has a deterministic outcome; one entry point per class; class mismatch through `recordBestEffort` fails loudly; full test matrix (§8.1); **(R3)** one global lock order by category then id, actor and target memberships locked together in one ordered statement; reciprocal-operation and cross-row deadlock tests repeated 50 times, with any `40P01` treated as a defect (§7.2). |
+| 2 | 2026-10-11 | Owner review: **(A)** P5.1 is storage only; grant writers move to P5.6/P5.7, after their authorization foundation, and a test proves no app-executable function can write grants; **(B)** the enforcement boundary is one migration that creates the writer functions and revokes direct writes together, with a mixed-version test and the release-failure behaviour stated; **(C)** an owner-approved written D9 policy is mandatory for closure, no exception route; **(D)** platform lock order and grant-revocation races specified and tested in both orders (§7.5); **(E)** strict audit validation with per-class outcomes, and best effort bound to catalog entries (§8.1). O3/O4 labelled as proposals throughout. |

@@ -12,7 +12,8 @@ let server: Server;
 let baseUrl: string;
 
 beforeAll(async () => {
-  server = (await createTestApp()).app.listen(0, '127.0.0.1');
+  // The server as production builds it: its own request ids (P5 plan §8.6, P5.8).
+  server = (await createTestApp({ serverRequestIds: true })).app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.once('listening', resolve));
   baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
@@ -47,9 +48,12 @@ describe('generated client ↔ real API', () => {
     expect(ErrorResponse.parse(error).error.code).toBe('INVALID_CREDENTIALS');
   });
 
-  it('carries a caller request id end to end', async () => {
+  // P5.8 (§8.6): a deviation recorded in the P5 record — a caller's id was carried end to end; now it is ignored and
+  // the server's own id comes back, for the proxy to log.
+  it('ignores a caller request id: the response carries the server’s own', async () => {
     const client = createApiClient({ baseUrl, headers: { 'x-request-id': 'roundtrip-123' } });
     const { response } = await client.GET('/v1/health');
-    expect(response.headers.get('x-request-id')).toBe('roundtrip-123');
+    expect(response.headers.get('x-request-id')).not.toBe('roundtrip-123');
+    expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/);
   });
 });

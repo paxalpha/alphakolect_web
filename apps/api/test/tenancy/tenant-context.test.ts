@@ -1,16 +1,9 @@
 import { describe, expect, inject, it, afterAll } from 'vitest';
 import { createDb } from '../../src/platform/db.js';
 import type { AuthContext } from '../../src/platform/http/authenticate.js';
-import {
-  requireOwner,
-  scopeOf,
-  tenantContextOf,
-  withTenant,
-  type TenantContext,
-  type TenantTx,
-} from '../../src/platform/tenant.js';
+import { scopeOf, tenantContextOf, withTenant, type TenantTx } from '../../src/platform/tenant.js';
 
-// TenantContext and tenant-scoped transactions (ADR-15 T3, T9, T14): the tenant comes only from the authenticated
+// TenantContext and tenant-scoped transactions (ADR-15 T3, T14): the tenant comes only from the authenticated
 // session; a scoped transaction sets app.merchant_id before anything else; scoped repositories refuse any query
 // object that withTenant did not open.
 
@@ -28,6 +21,8 @@ const auth = (overrides: Partial<AuthContext> = {}): AuthContext => ({
   kind: 'staff',
   roleId: '01900000-0000-7000-8000-0000000000a5',
   branchId: null,
+  branchStatus: null,
+  permissions: Object.freeze(['merchant.branches.read', 'merchant.profile.read'] as const),
   transport: 'cookie',
   ...overrides,
 });
@@ -43,9 +38,19 @@ describe('tenantContextOf', () => {
       kind: 'staff',
       roleId: '01900000-0000-7000-8000-0000000000a5',
       branchId: null,
+      branchStatus: null,
+      // P5.2: the request's resolved permissions, carried over unchanged (and still frozen).
+      permissions: ['merchant.branches.read', 'merchant.profile.read'],
     });
     expect(Object.isFrozen(tenantContextOf(auth()))).toBe(true);
+    expect(Object.isFrozen(tenantContextOf(auth()).permissions)).toBe(true);
     expect(tenantContextOf(auth({ audience: 'agent', kind: 'agent', roleId: null })).kind).toBe('agent');
+    // P5.4: the restricting branch's state, carried over for branch-scoped decisions.
+    const restricted = auth({ branchId: '01900000-0000-7000-8000-0000000000a6', branchStatus: 'archived' });
+    expect(tenantContextOf(restricted)).toMatchObject({
+      branchId: '01900000-0000-7000-8000-0000000000a6',
+      branchStatus: 'archived',
+    });
   });
 
   it('refuses a platform session, a missing tenant, an unknown kind and no session at all', () => {
@@ -88,18 +93,5 @@ describe('withTenant and scopeOf', () => {
         throw new Error('boom');
       }),
     ).rejects.toThrow('boom');
-  });
-});
-
-describe('requireOwner (T9 interim check)', () => {
-  const as = (kind: TenantContext['kind']) => tenantContextOf(auth({ kind, roleId: null }));
-
-  it('admits the owner and refuses staff and agents with 403 FORBIDDEN', () => {
-    expect(() => requireOwner(as('owner'))).not.toThrow();
-    for (const kind of ['staff', 'agent'] as const) {
-      expect(() => requireOwner(as(kind))).toThrow(
-        expect.objectContaining({ status: 403, code: 'FORBIDDEN' }),
-      );
-    }
   });
 });

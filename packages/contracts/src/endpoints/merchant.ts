@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ErrorResponse, Id } from '../primitives.js';
+import { ErrorResponse, Id, PageQuery } from '../primitives.js';
 import { defineEndpoint } from '../registry.js';
 import { Email } from './auth.js';
 import { MerchantStatus } from './platform.js';
@@ -11,7 +11,7 @@ import { MerchantStatus } from './platform.js';
 // management (profile, branches, roles) is for the owner only — staff get 403 FORBIDDEN (T9); agents use their own
 // audience and cannot call these at all.
 
-const Timestamp = z.iso.datetime().meta({ id: 'Timestamp', description: 'ISO 8601, UTC' });
+export const Timestamp = z.iso.datetime().meta({ id: 'Timestamp', description: 'ISO 8601, UTC' });
 
 export const MembershipKind = z.enum(['owner', 'staff', 'agent']).meta({ id: 'MembershipKind' });
 
@@ -25,13 +25,21 @@ export const CurrentMembership = z
   .object({
     membershipId: Id,
     kind: MembershipKind,
-    /** Staff only: their role (names only until P5). */
+    /** Staff only: their role, whose grants are their permissions. */
     roleId: Id.nullable(),
     /** Staff only: the one branch they are restricted to; null = all branches. */
     branchId: Id.nullable(),
     merchant: MerchantProfile,
+    /**
+     * The caller's effective merchant permissions, resolved on this request (ADR-16), sorted. They only drive what
+     * the interface shows; the server decides every request again.
+     */
+    permissions: z.array(z.string()),
   })
-  .meta({ id: 'CurrentMembership', description: 'The caller’s own membership, as of this request' });
+  .meta({
+    id: 'CurrentMembership',
+    description: 'The caller’s own membership and effective permissions, as of this request',
+  });
 
 export type CurrentMembership = z.infer<typeof CurrentMembership>;
 
@@ -67,8 +75,13 @@ export const Role = z
     status: CatalogStatus,
     createdAt: Timestamp,
     archivedAt: Timestamp.nullable(),
+    /**
+     * The permissions the role grants its staff, sorted (P5.6, ADR-16). An archived role keeps its set but grants
+     * nothing; restored, it grants the set again at once.
+     */
+    permissions: z.array(z.string()),
   })
-  .meta({ id: 'Role', description: 'A merchant-defined staff role; permissions attach in P5' });
+  .meta({ id: 'Role', description: 'A merchant-defined staff role and the permissions it grants' });
 
 export type Role = z.infer<typeof Role>;
 
@@ -85,6 +98,32 @@ export const RoleList = z
   .meta({ id: 'RoleList' });
 export type RoleList = z.infer<typeof RoleList>;
 
+/** One merchant permission, as the owner chooses a role's permissions (P5.6, ADR-16 PermissionCatalog). */
+export const PermissionCatalogItem = z
+  .object({
+    permission: z.string(),
+    /** What it allows, in the owner-approved wording. */
+    description: z.string(),
+    /** false for the owner-only permissions, which no role can grant. */
+    grantable: z.boolean(),
+  })
+  .meta({ id: 'PermissionCatalogItem' });
+export const PermissionCatalog = z
+  .object({ items: z.array(PermissionCatalogItem) })
+  .meta({ id: 'PermissionCatalog', description: 'The active merchant permissions, by identifier' });
+export type PermissionCatalog = z.infer<typeof PermissionCatalog>;
+
+/** A role's whole new permission set: unique identifiers, at most 32; may be empty. The server checks each one. */
+export const SetRolePermissionsRequest = z
+  .object({
+    permissions: z
+      .array(z.string().min(1).max(100))
+      .max(32)
+      .refine((p) => new Set(p).size === p.length, 'each permission at most once'),
+  })
+  .meta({ id: 'SetRolePermissionsRequest' });
+export type SetRolePermissionsRequest = z.infer<typeof SetRolePermissionsRequest>;
+
 export const CreateCatalogItemRequest = z.object({ name: Name }).meta({ id: 'CreateCatalogItemRequest' });
 
 export type CreateCatalogItemRequest = z.infer<typeof CreateCatalogItemRequest>;
@@ -97,7 +136,12 @@ export const UpdateCatalogItemRequest = z
 export type UpdateCatalogItemRequest = z.infer<typeof UpdateCatalogItemRequest>;
 
 const error = (description: string) => ({ description, schema: ErrorResponse });
-const ownerOnly = { 403: error('FORBIDDEN — only the business owner (until P5 permissions)') };
+/** A permission the owner can give through a role (the refusal says whom to ask, P5.6). */
+const needsGrant = {
+  403: error('FORBIDDEN — the caller’s role does not include the permission; the business owner can give it'),
+};
+/** A permission reserved to the owner (merchant.roles.manage, members.manage, invitations.manage, audit.read). */
+const ownerOnly = { 403: error('FORBIDDEN — only the business owner') };
 const notFound = { 404: error('NOT_FOUND — also for another business’s items') };
 const nameTaken = { 409: error('NAME_TAKEN — an active item already has this name (case-insensitive)') };
 const invalid = { 400: error('VALIDATION_ERROR') };
@@ -109,6 +153,7 @@ export const getCurrentMembership = defineEndpoint({
   id: 'getCurrentMembership',
   method: 'get',
   path: '/v1/merchant/membership',
+  authorization: { class: 'self' },
   ...merchantSession,
   summary: 'The caller’s membership and business (owners and staff)',
   responses: { 200: { description: 'The current membership', schema: CurrentMembership } },
@@ -118,22 +163,24 @@ export const getMerchantProfile = defineEndpoint({
   id: 'getMerchantProfile',
   method: 'get',
   path: '/v1/merchant/profile',
+  authorization: { class: 'permission', permission: 'merchant.profile.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business profile (owner)',
-  responses: { 200: { description: 'The profile', schema: MerchantProfile }, ...ownerOnly },
+  responses: { 200: { description: 'The profile', schema: MerchantProfile }, ...needsGrant },
 });
 
 export const updateMerchantProfile = defineEndpoint({
   id: 'updateMerchantProfile',
   method: 'patch',
   path: '/v1/merchant/profile',
+  authorization: { class: 'permission', permission: 'merchant.profile.update', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Rename the business (owner)',
   request: { body: UpdateMerchantProfileRequest },
   responses: {
     200: { description: 'The updated profile', schema: MerchantProfile },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
   },
 });
 
@@ -144,22 +191,28 @@ export const listBranches = defineEndpoint({
   id: 'listBranches',
   method: 'get',
   path: '/v1/merchant/branches',
+  authorization: { class: 'permission', permission: 'merchant.branches.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business’s branches, active and archived (owner)',
-  responses: { 200: { description: 'All branches', schema: BranchList }, ...ownerOnly },
+  responses: { 200: { description: 'All branches', schema: BranchList }, ...needsGrant },
 });
 
 export const createBranch = defineEndpoint({
   id: 'createBranch',
   method: 'post',
   path: '/v1/merchant/branches',
+  authorization: {
+    class: 'permission',
+    permission: 'merchant.branches.manage',
+    branchScope: 'merchant_wide',
+  },
   ...merchantSession,
   summary: 'Add a branch (owner)',
   request: { body: CreateCatalogItemRequest },
   responses: {
     201: { description: 'Created', schema: Branch },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
     ...nameTaken,
   },
 });
@@ -168,23 +221,29 @@ export const getBranch = defineEndpoint({
   id: 'getBranch',
   method: 'get',
   path: '/v1/merchant/branches/{branchId}',
+  authorization: { class: 'permission', permission: 'merchant.branches.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'One branch (owner)',
   request: { params: BranchParams },
-  responses: { 200: { description: 'The branch', schema: Branch }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The branch', schema: Branch }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const updateBranch = defineEndpoint({
   id: 'updateBranch',
   method: 'patch',
   path: '/v1/merchant/branches/{branchId}',
+  authorization: {
+    class: 'permission',
+    permission: 'merchant.branches.manage',
+    branchScope: 'merchant_wide',
+  },
   ...merchantSession,
   summary: 'Rename, archive or restore a branch (owner)',
   request: { params: BranchParams, body: UpdateCatalogItemRequest },
   responses: {
     200: { description: 'The updated branch', schema: Branch },
     ...invalid,
-    ...ownerOnly,
+    ...needsGrant,
     ...notFound,
     ...nameTaken,
   },
@@ -194,15 +253,17 @@ export const listRoles = defineEndpoint({
   id: 'listRoles',
   method: 'get',
   path: '/v1/merchant/roles',
+  authorization: { class: 'permission', permission: 'merchant.roles.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'The business’s staff roles, active and archived (owner)',
-  responses: { 200: { description: 'All roles', schema: RoleList }, ...ownerOnly },
+  responses: { 200: { description: 'All roles', schema: RoleList }, ...needsGrant },
 });
 
 export const createRole = defineEndpoint({
   id: 'createRole',
   method: 'post',
   path: '/v1/merchant/roles',
+  authorization: { class: 'permission', permission: 'merchant.roles.manage', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Add a staff role (owner)',
   request: { body: CreateCatalogItemRequest },
@@ -218,16 +279,18 @@ export const getRole = defineEndpoint({
   id: 'getRole',
   method: 'get',
   path: '/v1/merchant/roles/{roleId}',
+  authorization: { class: 'permission', permission: 'merchant.roles.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'One staff role (owner)',
   request: { params: RoleParams },
-  responses: { 200: { description: 'The role', schema: Role }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The role', schema: Role }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const updateRole = defineEndpoint({
   id: 'updateRole',
   method: 'patch',
   path: '/v1/merchant/roles/{roleId}',
+  authorization: { class: 'permission', permission: 'merchant.roles.manage', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Rename, archive or restore a staff role (owner)',
   request: { params: RoleParams, body: UpdateCatalogItemRequest },
@@ -237,6 +300,35 @@ export const updateRole = defineEndpoint({
     ...ownerOnly,
     ...notFound,
     ...nameTaken,
+  },
+});
+
+export const listPermissionCatalog = defineEndpoint({
+  id: 'listPermissionCatalog',
+  method: 'get',
+  path: '/v1/merchant/permissions',
+  authorization: { class: 'permission', permission: 'merchant.roles.read', branchScope: 'merchant_wide' },
+  ...merchantSession,
+  summary: 'The merchant permissions a role can be given, with their descriptions',
+  responses: {
+    200: { description: 'The active merchant permissions', schema: PermissionCatalog },
+    ...needsGrant,
+  },
+});
+
+export const setRolePermissions = defineEndpoint({
+  id: 'setRolePermissions',
+  method: 'put',
+  path: '/v1/merchant/roles/{roleId}/permissions',
+  authorization: { class: 'permission', permission: 'merchant.roles.manage', branchScope: 'merchant_wide' },
+  ...merchantSession,
+  summary: 'Replace a role’s permission set (owner)',
+  request: { params: RoleParams, body: SetRolePermissionsRequest },
+  responses: {
+    200: { description: 'The role with its new permission set', schema: Role },
+    400: error('VALIDATION_ERROR — also an unknown, owner-only, platform or repeated permission'),
+    ...ownerOnly,
+    ...notFound,
   },
 });
 
@@ -263,7 +355,7 @@ export type Member = z.infer<typeof Member>;
 
 export const MemberList = z
   .object({ items: z.array(Member), nextCursor: z.string().nullable() })
-  .meta({ id: 'MemberList', description: 'Every member, oldest first; nextCursor is always null for now' });
+  .meta({ id: 'MemberList', description: 'The members, oldest first, one page at a time (P5.8, O9)' });
 
 export type MemberList = z.infer<typeof MemberList>;
 
@@ -289,25 +381,33 @@ export const listMembers = defineEndpoint({
   id: 'listMembers',
   method: 'get',
   path: '/v1/merchant/members',
+  authorization: { class: 'permission', permission: 'merchant.members.read', branchScope: 'merchant_wide' },
   ...merchantSession,
-  summary: 'The business’s members, active and deactivated (owner)',
-  responses: { 200: { description: 'All members', schema: MemberList }, ...ownerOnly },
+  summary: 'The business’s members, active and deactivated, oldest first',
+  request: { query: PageQuery },
+  responses: {
+    200: { description: 'One page of members', schema: MemberList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list'),
+    ...needsGrant,
+  },
 });
 
 export const getMember = defineEndpoint({
   id: 'getMember',
   method: 'get',
   path: '/v1/merchant/members/{membershipId}',
+  authorization: { class: 'permission', permission: 'merchant.members.read', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'One member (owner)',
   request: { params: MemberParams },
-  responses: { 200: { description: 'The member', schema: Member }, ...invalid, ...ownerOnly, ...notFound },
+  responses: { 200: { description: 'The member', schema: Member }, ...invalid, ...needsGrant, ...notFound },
 });
 
 export const assignMember = defineEndpoint({
   id: 'assignMember',
   method: 'post',
   path: '/v1/merchant/members/{membershipId}/assignment',
+  authorization: { class: 'permission', permission: 'merchant.members.manage', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Set a staff member’s role and branch (owner); applies from their next request',
   request: { params: MemberParams, body: AssignMemberRequest },
@@ -324,6 +424,7 @@ export const deactivateMember = defineEndpoint({
   id: 'deactivateMember',
   method: 'post',
   path: '/v1/merchant/members/{membershipId}/deactivate',
+  authorization: { class: 'permission', permission: 'merchant.members.manage', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Deactivate a staff member or agent (owner): signed out at once',
   request: { params: MemberParams },
@@ -338,6 +439,7 @@ export const reactivateMember = defineEndpoint({
   id: 'reactivateMember',
   method: 'post',
   path: '/v1/merchant/members/{membershipId}/reactivate',
+  authorization: { class: 'permission', permission: 'merchant.members.manage', branchScope: 'merchant_wide' },
   ...merchantSession,
   summary: 'Reactivate a staff member or agent (owner); they sign in again',
   request: { params: MemberParams },
@@ -373,10 +475,14 @@ export const InvitationList = z
   .object({ items: z.array(Invitation), nextCursor: z.string().nullable() })
   .meta({
     id: 'InvitationList',
-    description: 'Every invitation, newest first; nextCursor is always null for now',
+    description: 'The invitations, newest first, one page at a time (P5.8, O9)',
   });
 
 export type InvitationList = z.infer<typeof InvitationList>;
+
+/** O9 (decided): `open` — pending and unexpired — by default, or `all`; and the page. */
+export const InvitationListQuery = PageQuery.extend({ status: z.enum(['open', 'all']).default('open') });
+export type InvitationListQuery = z.infer<typeof InvitationListQuery>;
 
 export const CreateInvitationRequest = z
   .object({
@@ -400,15 +506,31 @@ export const listInvitations = defineEndpoint({
   id: 'listInvitations',
   method: 'get',
   path: '/v1/merchant/invitations',
+  authorization: {
+    class: 'permission',
+    permission: 'merchant.invitations.read',
+    branchScope: 'merchant_wide',
+  },
   ...merchantSession,
-  summary: 'The business’s invitations (owner)',
-  responses: { 200: { description: 'All invitations', schema: InvitationList }, ...ownerOnly },
+  summary:
+    'The business’s invitations, newest first: the open ones (pending and unexpired) unless status=all',
+  request: { query: InvitationListQuery },
+  responses: {
+    200: { description: 'One page of invitations', schema: InvitationList },
+    400: error('VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list and status'),
+    ...needsGrant,
+  },
 });
 
 export const createInvitation = defineEndpoint({
   id: 'createInvitation',
   method: 'post',
   path: '/v1/merchant/invitations',
+  authorization: {
+    class: 'permission',
+    permission: 'merchant.invitations.manage',
+    branchScope: 'merchant_wide',
+  },
   ...merchantSession,
   summary: 'Invite a staff member or agent by email (owner); replaces an open invitation to the same email',
   request: { body: CreateInvitationRequest },
@@ -427,6 +549,11 @@ export const revokeInvitation = defineEndpoint({
   id: 'revokeInvitation',
   method: 'post',
   path: '/v1/merchant/invitations/{invitationId}/revoke',
+  authorization: {
+    class: 'permission',
+    permission: 'merchant.invitations.manage',
+    branchScope: 'merchant_wide',
+  },
   ...merchantSession,
   summary: 'Withdraw a pending invitation (owner)',
   request: { params: InvitationParams },

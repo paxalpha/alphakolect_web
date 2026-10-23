@@ -4,6 +4,7 @@ import request from 'supertest';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
+import { requiredQuery } from '../support/required-query.js';
 
 // The tenant-isolation matrix (P4 exit criterion; ADR-15 T3, T9, T14, T15), driven by the contract registry: every
 // merchant- and agent-audience endpoint, as it is registered — not a hand-picked list. A new tenant endpoint is in
@@ -13,8 +14,8 @@ import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 //   1. another tenant's resource, addressed by its real id → 404 NOT_FOUND, the same answer as for an id that does
 //      not exist, and the other tenant's data is unchanged afterwards;
 //   2. collection endpoints answer with nothing of the other tenant;
-//   3. same tenant, wrong kind: staff get 403 FORBIDDEN wherever the contract documents it (T9), and success
-//      elsewhere;
+//   3. same tenant, wrong kind: staff get 403 FORBIDDEN wherever the declaration requires a permission (T9), and
+//      success elsewhere;
 //   4. wrong audience or transport: agent tokens on merchant endpoints, merchant cookies on agent endpoints, and
 //      platform sessions are all refused.
 
@@ -51,6 +52,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (t: Tenant) => object>> = {
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   createRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
   updateRole: () => ({ name: `Role ${randomBytes(3).toString('hex')}` }),
+  setRolePermissions: () => ({ permissions: [] }),
   assignMember: (t) => ({ roleId: t.roleId, branchId: null }),
   createInvitation: () => ({ email: uniqueEmail('matrix'), kind: 'agent' }),
 };
@@ -72,7 +74,7 @@ function send(
   ids: (p: string) => string,
   t: Tenant,
 ) {
-  const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => ids(p));
+  const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => ids(p)) + requiredQuery(id);
   let req = request(app)[e.method](path);
   if (caller.kind === 'bearer') {
     req = req.set('Authorization', `Bearer ${caller.token}`);
@@ -189,13 +191,36 @@ describe('collections show nothing of another tenant', () => {
       B.invitationId,
       'Matrix Beta',
     ];
+    if (id === 'listMerchantAuditEvents') {
+      // A's record holds A's own attempts on B's identifiers (the 404 cases above): each such event names the id A
+      // itself sent as its target, was refused as not found, and holds nothing else of B.
+      type Item = {
+        actor: { membershipId: string | null } | null;
+        outcome: string;
+        target: { id: string } | null;
+      };
+      for (const item of (res.body as { items: Item[] }).items) {
+        const found = markers.filter((m) => JSON.stringify(item).includes(m));
+        if (found.length === 0) continue;
+        expect(item, JSON.stringify(item)).toMatchObject({
+          actor: { membershipId: A.owner.membershipId },
+          outcome: 'failure',
+          target: { id: found[0] },
+          summary: { reason: 'not_found' },
+        });
+        expect(found).toHaveLength(1);
+      }
+      return;
+    }
     expect(markers.filter((m) => text.includes(m))).toEqual([]);
   });
 });
 
 describe('same tenant, wrong kind (T9)', () => {
   const merchantEndpoints = TENANT_ENDPOINTS.filter(([, e]) => e.audience === 'merchant');
-  const forbids = (e: EndpointContract) => /^FORBIDDEN/.test(e.responses[403]?.description ?? '');
+  // From the declaration, never the description (P5.9): this staff member holds no grant, so every endpoint that
+  // requires a permission refuses them. The full actor matrix is authorization-matrix.test.ts.
+  const forbids = (e: EndpointContract) => e.authorization.class === 'permission';
 
   // ADR-15 T5/T7: a staff branch restriction is stored and re-read per request, but no branch-scoped data exists in
   // P4, so nothing reads it yet. That is safe only while staff and agents can reach their own membership and nothing
@@ -210,7 +235,7 @@ describe('same tenant, wrong kind (T9)', () => {
   });
 
   it.each(merchantEndpoints)(
-    '%s: staff get 403 where the contract documents FORBIDDEN, success otherwise',
+    '%s: staff without a grant get 403 where the declaration requires a permission, success otherwise',
     async (id, e) => {
       const before = await snapshot(A.merchantId);
       const res = await send(id, e, { kind: 'cookie', token: A.staff.token }, (p) => RESOLVERS[p]!(A), A);

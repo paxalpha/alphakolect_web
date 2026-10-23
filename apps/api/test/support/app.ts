@@ -8,6 +8,7 @@ import { InMemoryEmailSender } from '../../src/platform/email.js';
 import type { AuthDeps } from '../../src/platform/http/authenticate.js';
 import { createApp, type AppDeps } from '../../src/platform/http/app.js';
 import { newSigningJwk } from './keys.js';
+import { honourRequestId } from './request-id.js';
 
 export const TEST_WEB_ORIGIN = 'https://app.alphakolect.test';
 export const TEST_WEB_APP_URL = TEST_WEB_ORIGIN;
@@ -16,11 +17,16 @@ export const TEST_MFA_KEY = { kid: 'test-mfa', key: randomBytes(32) };
 
 /**
  * The real app wired to the run's test database (as alphakolect_app) and a throwaway signing key.
- * Call at module level in a test file; the pool is closed after the file's tests.
+ * Call at module level in a test file; the pool is closed after the file's tests. It takes a plain caller-supplied
+ * X-Request-ID, so a test can find its request's activity rows (support/request-id.ts); `serverRequestIds` builds it
+ * as production does, ignoring the header (§8.6).
  */
-export async function createTestApp(
-  options: Partial<Pick<AppDeps, 'trustProxy' | 'signupGuard' | 'email' | 'logger'>> = {},
-) {
+export async function createTestApp({
+  serverRequestIds = false,
+  ...options
+}: Partial<Pick<AppDeps, 'trustProxy' | 'signupGuard' | 'email' | 'logger'>> & {
+  serverRequestIds?: boolean;
+} = {}) {
   const db = createDb(inject('apiDatabaseUrl'));
   afterAll(() => db.close());
   const auth: AuthDeps = {
@@ -40,6 +46,7 @@ export async function createTestApp(
     email,
     webAppUrl: TEST_WEB_APP_URL,
     mfaEncryption: { current: TEST_MFA_KEY },
+    ...(serverRequestIds ? {} : { requestId: honourRequestId }),
     ...options,
   });
   return { app, db, auth, email };

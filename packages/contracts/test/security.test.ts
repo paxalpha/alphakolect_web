@@ -12,6 +12,7 @@ const registry = {
     method: 'get',
     path: '/v1/auth/example',
     audience: 'merchant',
+    authorization: { class: 'self' },
     summary: 'Cookie-authenticated read',
     security: ['cookieSession', 'bearer'],
     responses: { 200: { description: 'ok', schema: z.object({ ok: z.boolean() }) } },
@@ -21,6 +22,7 @@ const registry = {
     method: 'post',
     path: '/v1/auth/example',
     audience: 'merchant',
+    authorization: { class: 'self' },
     summary: 'Cookie-authenticated state change',
     security: ['cookieSession'],
     responses: {

@@ -1,5 +1,11 @@
 import { randomBytes } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, defineEndpoint, type EndpointContract } from '@alphakolect/contracts';
+import {
+  AUTH_COOKIES,
+  CSRF_HEADER,
+  defineEndpoint,
+  PERMISSIONS,
+  type EndpointContract,
+} from '@alphakolect/contracts';
 import express from 'express';
 import pg from 'pg';
 import { pino } from 'pino';
@@ -9,9 +15,9 @@ import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import type { AccessClaims } from '../../src/modules/identity/access-tokens.js';
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
-import { authenticate } from '../../src/platform/http/authenticate.js';
+import { authenticate, knownPermissions } from '../../src/platform/http/authenticate.js';
 import { errorHandler } from '../../src/platform/http/error-handler.js';
-import { resolveRequestId } from '../../src/platform/http/request-id.js';
+import { honourRequestId } from '../support/request-id.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 
 // The authentication middleware (ADR-14 D6, D7; P3 exit criteria 6, 9, 10) against real sessions in the real
@@ -21,8 +27,12 @@ const { auth } = await createTestApp();
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
 afterAll(() => owner.end());
 
-const ep = (e: Omit<EndpointContract, 'id' | 'path' | 'summary' | 'responses'> & { id: string }) =>
+// Secured synthetic endpoints: authentication is what they test, so each is declared 'self' (P5.3).
+const ep = (
+  e: Omit<EndpointContract, 'id' | 'path' | 'summary' | 'responses' | 'authorization'> & { id: string },
+) =>
   defineEndpoint({
+    authorization: { class: 'self' },
     ...e,
     path: `/v1/test/${e.id}`,
     summary: e.id,
@@ -61,9 +71,9 @@ const E = {
 
 const app = express();
 app.use(express.json());
-app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: resolveRequestId }));
+app.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
 for (const e of Object.values(E)) {
-  app[e.method](e.path, authenticate(e, auth), (req, res) => {
+  app[e.method](e.path, authenticate(e, { ...auth, logger: pino({ level: 'silent' }) }), (req, res) => {
     res.json(req.auth);
   });
 }
@@ -218,6 +228,64 @@ describe('who gets in', () => {
     expect((await get(E.merchantRead).set('Cookie', cookie(staff.token))).body.branchId).toBeNull();
   });
 
+  it('its effective permissions, resolved by the database on this request — a revocation applies to the next (P5.2)', async () => {
+    const merchantPermissions = PERMISSIONS.filter((p) => p.startsWith('merchant.')).sort();
+    const owned = await get(E.merchantRead).set('Cookie', cookie(merchant.token));
+    expect([...owned.body.permissions].sort()).toEqual(merchantPermissions);
+
+    const {
+      rows: [{ merchant_id: merchantId }],
+    } = await owner.query(`SELECT merchant_id FROM tenancy.merchant_memberships WHERE id = $1`, [
+      merchant.claims.mid,
+    ]);
+    const {
+      rows: [role],
+    } = await owner.query(`INSERT INTO tenancy.roles (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+      merchantId,
+      `Clerk ${randomBytes(3).toString('hex')}`,
+    ]);
+    // Grant rows are written as the table owner: no writer function exists before P5.6.
+    for (const p of ['merchant.profile.read', 'merchant.branches.read']) {
+      await owner.query(
+        `INSERT INTO tenancy.role_permissions (merchant_id, role_id, permission) VALUES ($1, $2, $3)`,
+        [merchantId, role.id, p],
+      );
+    }
+    const {
+      rows: [identity],
+    } = await owner.query(
+      `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
+      [`clerk-${randomBytes(4).toString('hex')}@example.test`],
+    );
+    const {
+      rows: [m],
+    } = await owner.query(
+      `INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id) VALUES ($1, $2, 'staff', $3) RETURNING id`,
+      [merchantId, identity.id, role.id],
+    );
+    const clerk = await session(identity.id, 'merchant', m.id, 'full', {
+      idleSeconds: 86400,
+      absoluteSeconds: 1209600,
+    });
+    const permissionsNow = async () =>
+      [...(await get(E.merchantRead).set('Cookie', cookie(clerk.token))).body.permissions].sort();
+
+    expect(await permissionsNow()).toEqual(['merchant.branches.read', 'merchant.profile.read']);
+    await owner.query(
+      `DELETE FROM tenancy.role_permissions WHERE role_id = $1 AND permission = 'merchant.profile.read'`,
+      [role.id],
+    );
+    expect(await permissionsNow()).toEqual(['merchant.branches.read']);
+    await owner.query(`UPDATE tenancy.roles SET status = 'archived', archived_at = now() WHERE id = $1`, [
+      role.id,
+    ]);
+    expect(await permissionsNow()).toEqual([]);
+
+    expect((await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`)).body.permissions).toEqual(
+      [],
+    );
+  });
+
   it('an agent bearer session on an agent endpoint', async () => {
     const res = await get(E.agentRead).set('Authorization', `Bearer ${agent.token}`);
     expect(res.status).toBe(200);
@@ -227,6 +295,17 @@ describe('who gets in', () => {
   it("any audience on an 'authenticated' endpoint", async () => {
     expect((await get(E.anyRead).set('Cookie', cookie(merchant.token))).status).toBe(200);
     expect((await get(E.anyRead).set('Authorization', `Bearer ${agent.token}`)).status).toBe(200);
+  });
+});
+
+describe('permission identifiers at the boundary (P5.2 gate review)', () => {
+  it('keeps every catalog identifier and drops one this version does not know — never adds', () => {
+    const resolved = ['merchant.profile.read', 'merchant.future.read', 'platform.audit.read'];
+    const kept = knownPermissions(resolved);
+    expect(kept).toEqual(['merchant.profile.read', 'platform.audit.read']);
+    expect(Object.isFrozen(kept)).toBe(true);
+    expect(knownPermissions([...PERMISSIONS])).toEqual(PERMISSIONS);
+    expect(knownPermissions([])).toEqual([]);
   });
 });
 

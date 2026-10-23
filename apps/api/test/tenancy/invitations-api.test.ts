@@ -242,7 +242,14 @@ describe('the owner’s side', () => {
     );
     const theirs = await invite(b.owner.token, { email: uniqueEmail('three'), kind: 'agent' });
 
-    const list = InvitationList.parse((await call(a.owner.token, 'get', '/v1/merchant/invitations')).body);
+    // O9 (P5.8): by default the open ones only — pending and unexpired; status=all lists every one.
+    const open = InvitationList.parse((await call(a.owner.token, 'get', '/v1/merchant/invitations')).body);
+    expect(open.items.map((i) => [i.invitationId, i.status])).toEqual([
+      [second.body.invitationId, 'pending'],
+    ]);
+    const list = InvitationList.parse(
+      (await call(a.owner.token, 'get', '/v1/merchant/invitations?status=all')).body,
+    );
     expect(list.items.map((i) => [i.invitationId, i.status])).toEqual([
       [second.body.invitationId, 'pending'],
       [first.body.invitationId, 'revoked'],
@@ -265,7 +272,7 @@ describe('the owner’s side', () => {
     expectError(await revoke(mine.body.invitationId), 409, 'INVALID_LIFECYCLE_TRANSITION');
   });
 
-  it('refuses a bad assignment, an existing member, and staff (403, audited as denied)', async () => {
+  it('refuses a bad assignment, an existing member, and staff (403, recorded as authz.denied)', async () => {
     const a = await business();
     const b = await business();
     const staff = await member(a, 'staff');
@@ -281,9 +288,25 @@ describe('the owner’s side', () => {
     );
     expectError(await invite(a.owner.token, { email: staff.email, kind: 'agent' }), 409, 'ALREADY_MEMBER');
 
+    // P5.4: refused by the policy middleware, before the handler — recorded as authz.denied.
     const denied = await invite(staff.token, { email: uniqueEmail('s'), kind: 'agent' });
     expectError(denied, 403, 'FORBIDDEN');
-    expect(await auditFor(denied)).toMatchObject([{ outcome: 'denied', summary: { reason: 'not_owner' } }]);
-    expectError(await call(staff.token, 'get', '/v1/merchant/invitations'), 403, 'FORBIDDEN');
+    expect(await auditFor(denied)).toMatchObject([
+      {
+        action: 'authz.denied',
+        outcome: 'denied',
+        merchant_id: a.merchantId,
+        actor_identity_id: staff.identityId,
+        summary: { operation: 'createInvitation', permission: 'merchant.invitations.manage' },
+      },
+    ]);
+    const listed = await call(staff.token, 'get', '/v1/merchant/invitations');
+    expectError(listed, 403, 'FORBIDDEN');
+    expect(await auditFor(listed)).toMatchObject([
+      {
+        action: 'authz.denied',
+        summary: { operation: 'listInvitations', permission: 'merchant.invitations.read' },
+      },
+    ]);
   });
 });

@@ -8,6 +8,12 @@
     ".": "./src/index.ts",
     "./testing": {
       "@alphakolect/source": "./test/support/setup-db.ts"
+    },
+    "./lock-analysis": {
+      "@alphakolect/source": "./test/support/lock-analysis.ts"
+    },
+    "./lock-plan": {
+      "@alphakolect/source": "./test/support/lock-plan.ts"
     }
   },
   "scripts": {
@@ -16,7 +22,8 @@
     "typecheck": "prisma generate && tsc -p tsconfig.json --noEmit",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:status": "prisma migrate status",
-    "test": "prisma generate && vitest run"
+    "test": "prisma generate && vitest run",
+    "test:concurrency": "prisma generate && vitest run --config vitest.concurrency.config.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

@@ -121,6 +121,59 @@ describe('identity.bootstrap_super_admin (ADR-14 D9)', () => {
     }
   });
 
+  // The coverage guard's tests for this pattern-A pair (P5.3a, plan §8.1): written by the operator function itself, the
+  // actor is no one (operator), the target the new identity; it commits with the bootstrap, and without it nothing does.
+  it('[coverage platform.super_admin_bootstrapped/success] one row, operator actor, the new identity as target, committed with it', async () => {
+    const email = `cov-${process.pid}-${randomBytes(3).toString('hex')}@example.test`;
+    const {
+      rows: [created],
+    } = await owner.query(`SELECT identity.bootstrap_super_admin($1, true) AS id`, [email]);
+    const { rows } = await owner.query(
+      `SELECT merchant_id, actor_identity_id, actor_audience, actor_membership_id, target_type, target_id, request_id, summary
+         FROM audit.audit_events WHERE action = 'platform.super_admin_bootstrapped' AND outcome = 'success' AND target_id = $1`,
+      [created.id],
+    );
+    expect(rows).toEqual([
+      {
+        merchant_id: null,
+        actor_identity_id: null,
+        actor_audience: 'platform',
+        actor_membership_id: null,
+        target_type: 'identity',
+        target_id: created.id,
+        request_id: null,
+        summary: { additional: true },
+      },
+    ]);
+  });
+
+  it("[coverage platform.super_admin_bootstrapped/success] with that pair's insert failing, the bootstrap is absent", async () => {
+    const email = `cov-fail-${process.pid}-${randomBytes(3).toString('hex')}@example.test`;
+    await owner.query('BEGIN');
+    try {
+      // A test-only trigger, created and dropped inside this transaction (the database tests run one file at a time).
+      await owner.query(
+        `CREATE FUNCTION audit.test_fail_bootstrap() RETURNS trigger LANGUAGE plpgsql AS $fn$
+         BEGIN
+           IF NEW.action = 'platform.super_admin_bootstrapped' AND NEW.outcome = 'success' THEN
+             RAISE EXCEPTION 'injected audit storage failure' USING ERRCODE = 'XX000';
+           END IF;
+           RETURN NEW;
+         END $fn$`,
+      );
+      await owner.query(
+        `CREATE TRIGGER test_fail_bootstrap BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION audit.test_fail_bootstrap()`,
+      );
+      await owner.query('SAVEPOINT bootstrap');
+      await expectSqlState(owner.query(`SELECT identity.bootstrap_super_admin($1, true)`, [email]), 'XX000');
+      await owner.query('ROLLBACK TO SAVEPOINT bootstrap');
+      const { rows } = await owner.query(`SELECT 1 FROM identity.identities WHERE email = $1`, [email]);
+      expect(rows).toEqual([]);
+    } finally {
+      await owner.query('ROLLBACK');
+    }
+  });
+
   it('refuses to give one identity two platform memberships', async () => {
     const email = `dup-${process.pid}-${randomBytes(3).toString('hex')}@example.test`;
     await owner.query(`SELECT identity.bootstrap_super_admin($1, true)`, [email]);

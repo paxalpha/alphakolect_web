@@ -164,18 +164,21 @@ describe('assignment, deactivation and reactivation (owner)', () => {
     expect((await membership(theirs.token)).status).toBe(200);
   });
 
-  it('staff and agents cannot manage members (403, audited as denied)', async () => {
+  it('staff and agents cannot manage members (403, recorded as authz.denied)', async () => {
     const b = await business();
     const staff = await member(b, 'staff');
     const other = await member(b, 'staff');
     expectError(await call(staff.token, 'get', '/v1/merchant/members'), 403, 'FORBIDDEN');
     const res = await call(staff.token, 'post', `/v1/merchant/members/${other.membershipId}/deactivate`);
     expectError(res, 403, 'FORBIDDEN');
+    // P5.4: refused by the policy middleware before the handler; the operation and permission name what was refused.
     expect(await auditFor(res)).toMatchObject([
       {
-        action: 'merchant.member_deactivated',
+        action: 'authz.denied',
         outcome: 'denied',
-        summary: { reason: 'not_owner', kind: 'staff' },
+        merchant_id: b.merchantId,
+        actor_identity_id: staff.identityId,
+        summary: { operation: 'deactivateMember', permission: 'merchant.members.manage' },
       },
     ]);
     expect((await membership(other.token)).status).toBe(200);
@@ -277,7 +280,15 @@ describe('ownership transfer (platform super admin, T17)', () => {
     const support = await platformAdmin('support');
     const r2 = await transfer(support.token, b.merchantId, body(staff.membershipId, b.roleId));
     expectError(r2, 403, 'FORBIDDEN');
-    expect(await auditFor(r2)).toMatchObject([{ outcome: 'denied' }]);
+    expect(await auditFor(r2)).toMatchObject([
+      {
+        action: 'authz.denied',
+        outcome: 'denied',
+        merchant_id: null,
+        actor_identity_id: support.identityId,
+        summary: { operation: 'transferOwnership', permission: 'platform.merchants.transfer_ownership' },
+      },
+    ]);
     expectError(
       await transfer(b.owner.token, b.merchantId, body(staff.membershipId, b.roleId)),
       403,

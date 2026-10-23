@@ -21,7 +21,7 @@ const TENANT_SELF_SCOPING = ['modules/audit/audit-log.ts'];
 const SETS_TENANT = [
   'platform/tenant.ts', // withTenant
   'modules/audit/audit-log.ts', // a tenant event recorded on its own
-  'modules/tenancy/merchant-lifecycle.ts', // platform action: audit row of the target merchant (P4.1)
+  // (P5.5 step 5: the invitation-link acceptance no longer sets it — admission records #14 in the database.)
 ];
 
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
@@ -81,7 +81,8 @@ describe('tenant data only through scoped repositories (T14)', () => {
     for (const [file, repository] of Object.entries(SCOPED_REPOSITORIES)) {
       const text = files.find((f) => f.file === file)!.text;
       // Each `async name(tx: TenantTx, …) { … }` body starts with scopeOf(tx); no other query handle exists.
-      const functions = [...text.matchAll(/async (\w+)\(\s*tx: TenantTx[^)]*\)[^{]*\{\n\s*(.*)/g)];
+      // \r?\n: a Windows checkout (core.autocrlf) has CRLF line endings; CI checks out LF.
+      const functions = [...text.matchAll(/async (\w+)\(\s*tx: TenantTx[^)]*\)[^{]*\{\r?\n\s*(.*)/g)];
       expect(functions.map(([, name]) => name).sort(), file).toEqual(Object.keys(repository).sort());
       for (const [, name, firstLine] of functions)
         expect(firstLine, `${file}: ${name}`).toMatch(/scopeOf\(tx\)/);
@@ -89,7 +90,7 @@ describe('tenant data only through scoped repositories (T14)', () => {
     }
   });
 
-  it('only withTenant, the audit log and the lifecycle service set app.merchant_id', () => {
+  it('only withTenant and the audit log set app.merchant_id', () => {
     const setters = files.filter(({ text }) => text.includes(`'app.merchant_id'`)).map((f) => f.file);
     expect(setters.sort()).toEqual([...SETS_TENANT].sort());
   });

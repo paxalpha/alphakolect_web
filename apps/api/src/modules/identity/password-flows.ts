@@ -3,6 +3,7 @@ import type {
   ForgotPasswordRequest,
   SetPasswordRequest,
 } from '@alphakolect/contracts';
+import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { Mailer } from '../../platform/email.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
@@ -23,6 +24,8 @@ import { hashReceivedToken, newOpaqueToken } from './tokens.js';
 // Forgot / reset / first-password setup / change (TARGET_ARCHITECTURE §3.2; ADR-14 D5, D9, D10, D12, and the
 // 2026-10-04 clarifications). Reset and change revoke every session of the identity (in the database). A reset
 // never verifies an email; only the setup link (or the verification link) does.
+// Audit (P5.3a, plan §8.4): a password change, reset or setup commits together with its event (pattern B); refusals,
+// and the link-issuing forgot request (O6), are best effort.
 
 const weakPassword = (problem: string) =>
   new AppError(422, 'WEAK_PASSWORD', 'Choose a longer or less common password', { problem });
@@ -35,6 +38,7 @@ function assertPolicy(password: string) {
 export class PasswordService {
   constructor(
     private readonly deps: {
+      db: Db;
       identity: IdentityRepository;
       audit: AuditLog;
       limiter: RateLimiter;
@@ -55,7 +59,7 @@ export class PasswordService {
 
     const account = await identity.accountForEmail(input.email);
     if (!account || account.identity_status !== 'active') {
-      await audit.record({
+      await audit.recordBestEffort({
         action: 'auth.password_forgot',
         outcome: 'failure',
         actorIdentityId: account?.identity_id ?? null,
@@ -84,7 +88,8 @@ export class PasswordService {
         ctx.ip,
       );
     }
-    await audit.record({
+    // O6: the link-issuing success is best effort; the link's use is itself atomic (#9, #10).
+    await audit.recordBestEffort({
       action: 'auth.password_forgot',
       outcome: 'success',
       actorIdentityId: account.identity_id,
@@ -100,15 +105,17 @@ export class PasswordService {
 
   /** Exit criterion 4: single use, 30 minutes, superseded by a newer request; every session ends. */
   async reset(input: SetPasswordRequest, ctx: RequestContext): Promise<void> {
-    await this.useLink(input, ctx, 'auth.password_reset', (tokenHash, passwordHash) =>
-      this.deps.identity.resetPassword(tokenHash, passwordHash),
+    await this.useLink(input, ctx, 'auth.password_reset', (repo, tokenHash, passwordHash) =>
+      repo.resetPassword(tokenHash, passwordHash),
     );
   }
 
   /** First password through the setup link; also verifies the email (D9, option A). */
   async completeSetup(input: SetPasswordRequest, ctx: RequestContext): Promise<void> {
-    await this.useLink(input, ctx, 'auth.account_setup', (tokenHash, passwordHash) =>
-      this.deps.identity.completeAccountSetup(tokenHash, passwordHash),
+    // The admissions inside record their own acceptances (#14, pattern A) in this transaction: the one nested
+    // pattern-A writer of a pattern-B flow (P5 plan §7.2 R27).
+    await this.useLink(input, ctx, 'auth.account_setup', (repo, tokenHash, passwordHash) =>
+      repo.completeAccountSetup(tokenHash, passwordHash, ctx),
     );
   }
 
@@ -116,7 +123,7 @@ export class PasswordService {
     const { identity, audit, limiter } = this.deps;
     await limiter.enforce('password_change', ctx.ip, auth.identityId);
     const event = {
-      action: 'auth.password_change',
+      action: 'auth.password_change' as const,
       merchantId: auth.merchantId,
       actorIdentityId: auth.identityId,
       actorAudience: auth.audience,
@@ -128,30 +135,55 @@ export class PasswordService {
 
     const credentials = await identity.credentialsFor(auth.identityId);
     if (!(await verifyPassword(input.currentPassword, credentials?.password_hash))) {
-      await audit.record({ ...event, outcome: 'failure', summary: { reason: 'wrong_current_password' } });
+      await audit.recordBestEffort({
+        ...event,
+        outcome: 'failure',
+        summary: { reason: 'wrong_current_password' },
+      });
       throw new AppError(401, 'INVALID_CREDENTIALS', 'The current password is incorrect');
     }
     assertPolicy(input.newPassword);
 
-    await identity.changePassword(auth.identityId, await hashPassword(input.newPassword));
-    await audit.record({ ...event, outcome: 'success', summary: { sessionsRevoked: true } });
+    const newHash = await hashPassword(input.newPassword);
+    // #8: the change (every session revoked) and its event commit together.
+    await this.deps.db.transaction(async (tx) => {
+      await identity.within(tx).changePassword(auth.identityId, newHash);
+      await audit.mutateAudited(tx, { ...event, outcome: 'success', summary: { sessionsRevoked: true } });
+    });
   }
 
   /** Shared by reset and setup. The policy is checked first, so a weak password does not use the link up. */
   private async useLink(
     input: SetPasswordRequest,
     ctx: RequestContext,
-    action: string,
-    apply: (tokenHash: string, passwordHash: string) => Promise<string | null>,
+    action: 'auth.password_reset' | 'auth.account_setup',
+    apply: (repo: IdentityRepository, tokenHash: string, passwordHash: string) => Promise<string | null>,
   ): Promise<void> {
+    const { db, identity, audit } = this.deps;
     await this.deps.limiter.enforce('password_reset', ctx.ip);
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };
     assertPolicy(input.password);
 
     const tokenHash = hashReceivedToken(input.token);
-    const identityId = tokenHash ? await apply(tokenHash, await hashPassword(input.password)) : null;
+    const passwordHash = await hashPassword(input.password);
+    // #9 / #10: the link's use (the password set, every session revoked) and its event commit together.
+    const identityId = tokenHash
+      ? await db.transaction(async (tx) => {
+          const used = await apply(identity.within(tx), tokenHash, passwordHash);
+          if (used) {
+            await audit.mutateAudited(tx, {
+              action,
+              outcome: 'success',
+              actorIdentityId: used,
+              ...request,
+              summary: { sessionsRevoked: true },
+            });
+          }
+          return used;
+        })
+      : null;
     if (!identityId) {
-      await this.deps.audit.record({
+      await audit.recordBestEffort({
         action,
         outcome: 'failure',
         ...request,
@@ -159,12 +191,5 @@ export class PasswordService {
       });
       throw invalidOrExpiredToken();
     }
-    await this.deps.audit.record({
-      action,
-      outcome: 'success',
-      actorIdentityId: identityId,
-      ...request,
-      summary: { sessionsRevoked: true },
-    });
   }
 }

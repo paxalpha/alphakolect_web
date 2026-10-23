@@ -1,9 +1,15 @@
 import { scopeOf, type TenantTx } from '../../platform/tenant.js';
+import { POSITION_AT, type Position, type Positioned } from '../../platform/pagination.js';
+import type { RequestContext } from '../identity/sessions.js';
 
 // The tenancy module's scoped repository (TARGET_ARCHITECTURE §4, ADR-15 T13–T15). Every function takes a TenantTx
 // — a transaction opened by withTenant, with app.merchant_id set — and calls scopeOf(tx) before any query, so it
-// cannot be used outside a tenant scope. Each query also filters on that merchant explicitly: RLS is the last line
-// of defence, not the only one. A row of another merchant is simply not found.
+// cannot be used outside a tenant scope. A row of another merchant is simply not found.
+//
+// Since P5.5 (the enforcement boundary, ADR-16 B1) the app has no direct access to the business, its branches, roles
+// or invitations: every read and write here is a database function called with the caller's session, which takes
+// the business from the session and decides the permission itself from the resolver. The router's policy middleware
+// decided it first; the database is the second layer, not the only one.
 
 export type MerchantRow = {
   id: string;
@@ -11,12 +17,21 @@ export type MerchantRow = {
   status: 'pending_verification' | 'active' | 'deactivated';
 };
 
-export type MembershipRow = {
-  id: string;
+/** The caller's own membership and business (tenancy.read_own_membership: any member, no permission). */
+export type OwnMembershipRow = {
+  membership_id: string;
   kind: 'owner' | 'staff' | 'agent';
   role_id: string | null;
   branch_id: string | null;
+  merchant_id: string;
+  merchant_name: string;
+  merchant_status: MerchantRow['status'];
 };
+
+/** A settings write's answer: refusals are returned, not raised (§8.2a); the row comes only with 'ok'. */
+export type SettingsOutcome = 'ok' | 'forbidden' | 'not_found';
+export type SettingsWrite<R> =
+  { outcome: 'ok'; row: R } | { outcome: Exclude<SettingsOutcome, 'ok'>; row: null };
 
 export type CatalogRow = {
   id: string;
@@ -24,7 +39,15 @@ export type CatalogRow = {
   status: 'active' | 'archived';
   created_at: Date;
   archived_at: Date | null;
+  /** Roles only (P5.6): the permissions the role grants, sorted; present on every role read. */
+  permissions?: string[];
 };
+
+/** One merchant permission of the catalog (tenancy.list_permission_catalog). */
+export type PermissionRow = { identifier: string; description: string; grantable: boolean };
+
+/** tenancy.set_role_permissions' answer: refusals are returned, not raised (§8.2a). */
+export type RolePermissionsOutcome = 'ok' | 'forbidden' | 'not_found' | 'invalid_permissions';
 
 export type CatalogTable = 'branches' | 'roles';
 
@@ -40,6 +63,9 @@ export type MemberRow = {
 };
 
 export type MembershipAction = 'assign' | 'deactivate' | 'reactivate';
+
+/** A page of a list (P5.8, O9): its size, and the position a cursor gave (null for the first page). */
+export type Page = { limit: number; after: Position | null };
 
 export type InvitationRow = {
   id: string;
@@ -59,9 +85,6 @@ export type IssuedInvitation = {
   /** For the API only — never shown to the owner (D12). */
   delivery: 'setup' | 'accept' | 'none' | null;
 };
-
-const INVITATION_COLUMNS =
-  'id, email, kind, role_id, branch_id, expires_at, accepted_at, revoked_at, created_at';
 
 export type MembershipChange = {
   outcome:
@@ -84,12 +107,30 @@ export class NameTakenError extends Error {
 }
 
 const CATALOG_COLUMNS = 'id, name, status, created_at, archived_at';
-
-// The table name is never client input: it comes from this closed set and is interpolated only from it.
-const CATALOG_TABLES: Readonly<Record<CatalogTable, string>> = {
-  branches: 'tenancy.branches',
-  roles: 'tenancy.roles',
+/** What a read returns: a role also its permissions (P5.6). */
+const READ_COLUMNS: Readonly<Record<CatalogTable, string>> = {
+  branches: 'id, name, status, created_at, archived_at',
+  roles: 'id, name, status, created_at, archived_at, permissions',
 };
+
+// The function names are never client input: they come from these closed sets and are interpolated only from them.
+const LIST_FUNCTION: Readonly<Record<CatalogTable, string>> = {
+  branches: 'tenancy.list_branches',
+  roles: 'tenancy.list_roles',
+};
+const CREATE_FUNCTION: Readonly<Record<CatalogTable, string>> = {
+  branches: 'tenancy.create_branch',
+  roles: 'tenancy.create_role',
+};
+const UPDATE_FUNCTION: Readonly<Record<CatalogTable, string>> = {
+  branches: 'tenancy.update_branch',
+  roles: 'tenancy.update_role',
+};
+
+function settingsWrite<R>(result: R & { outcome: SettingsOutcome }): SettingsWrite<R> {
+  const { outcome, ...row } = result;
+  return outcome === 'ok' ? { outcome, row: row as R } : { outcome, row: null };
+}
 
 function nameTaken(err: unknown, table: CatalogTable): boolean {
   const e = err as { code?: string; constraint?: string };
@@ -97,92 +138,124 @@ function nameTaken(err: unknown, table: CatalogTable): boolean {
 }
 
 export const tenancyRepository = {
-  async merchant(tx: TenantTx): Promise<MerchantRow | null> {
-    const { merchantId } = scopeOf(tx);
-    const [row] = await tx.query<MerchantRow>(
-      `SELECT id, name, status FROM tenancy.merchants WHERE id = $1`,
-      [merchantId],
+  /** tenancy.read_profile: the business, if the session holds merchant.profile.read; otherwise null. */
+  async profile(tx: TenantTx): Promise<MerchantRow | null> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<MerchantRow>(`SELECT id, name, status FROM tenancy.read_profile($1)`, [
+      sessionId,
+    ]);
+    return row ?? null;
+  },
+
+  /**
+   * tenancy.update_profile (P5.5): authority (merchant.profile.update) is decided in the database, which also writes
+   * the change's audit row (pattern A); the request context is recorded as given.
+   */
+  async updateProfile(tx: TenantTx, name: string, ctx: RequestContext): Promise<SettingsWrite<MerchantRow>> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<MerchantRow & { outcome: SettingsOutcome }>(
+      `SELECT outcome, id, name, status FROM tenancy.update_profile($1, $2, $3, $4, $5)`,
+      [sessionId, name, ctx.ip, ctx.userAgent, ctx.requestId],
+    );
+    return settingsWrite(row!);
+  },
+
+  /** tenancy.read_own_membership: the caller's own membership and business (validate_session established both). */
+  async ownMembership(tx: TenantTx): Promise<OwnMembershipRow | null> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<OwnMembershipRow>(
+      `SELECT membership_id, kind, role_id, branch_id, merchant_id, merchant_name, merchant_status
+         FROM tenancy.read_own_membership($1)`,
+      [sessionId],
     );
     return row ?? null;
   },
 
-  async renameMerchant(tx: TenantTx, name: string): Promise<MerchantRow | null> {
-    const { merchantId } = scopeOf(tx);
-    const [row] = await tx.query<MerchantRow>(
-      `UPDATE tenancy.merchants SET name = $2, updated_at = now() WHERE id = $1 RETURNING id, name, status`,
-      [merchantId, name],
-    );
-    return row ?? null;
-  },
-
-  /** The caller's own membership (read under RLS; validate_session has already established it is active). */
-  async membership(tx: TenantTx): Promise<MembershipRow | null> {
-    const { merchantId, membershipId } = scopeOf(tx);
-    const [row] = await tx.query<MembershipRow>(
-      `SELECT id, kind, role_id, branch_id FROM tenancy.merchant_memberships WHERE merchant_id = $1 AND id = $2`,
-      [merchantId, membershipId],
-    );
-    return row ?? null;
-  },
-
+  /** tenancy.list_branches / list_roles: empty unless the session holds the read permission. */
   async listCatalog(tx: TenantTx, table: CatalogTable): Promise<CatalogRow[]> {
-    const { merchantId } = scopeOf(tx);
-    return tx.query<CatalogRow>(
-      `SELECT ${CATALOG_COLUMNS} FROM ${CATALOG_TABLES[table]} WHERE merchant_id = $1 ORDER BY created_at, id`,
-      [merchantId],
-    );
+    const { sessionId } = scopeOf(tx);
+    return tx.query<CatalogRow>(`SELECT ${READ_COLUMNS[table]} FROM ${LIST_FUNCTION[table]}($1)`, [
+      sessionId,
+    ]);
   },
 
   async getCatalogItem(tx: TenantTx, table: CatalogTable, id: string): Promise<CatalogRow | null> {
-    const { merchantId } = scopeOf(tx);
+    const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<CatalogRow>(
-      `SELECT ${CATALOG_COLUMNS} FROM ${CATALOG_TABLES[table]} WHERE merchant_id = $1 AND id = $2`,
-      [merchantId, id],
+      `SELECT ${READ_COLUMNS[table]} FROM ${LIST_FUNCTION[table]}($1, $2)`,
+      [sessionId, id],
     );
     return row ?? null;
   },
 
-  /** @throws NameTakenError */
-  async createCatalogItem(tx: TenantTx, table: CatalogTable, name: string): Promise<CatalogRow> {
-    const { merchantId } = scopeOf(tx);
+  /** tenancy.list_permission_catalog: the active merchant permissions; empty unless the session holds roles.read. */
+  async permissionCatalog(tx: TenantTx): Promise<PermissionRow[]> {
+    const { sessionId } = scopeOf(tx);
+    return tx.query<PermissionRow>(
+      `SELECT identifier, description, grantable FROM tenancy.list_permission_catalog($1)`,
+      [sessionId],
+    );
+  },
+
+  /**
+   * tenancy.set_role_permissions (P5.6): replaces the role's permission set. Authority (merchant.roles.manage, the
+   * owner's alone), the tenant and every identifier are decided in the database, which writes #21 (pattern A).
+   */
+  async setRolePermissions(
+    tx: TenantTx,
+    roleId: string,
+    permissions: readonly string[],
+    ctx: RequestContext,
+  ): Promise<RolePermissionsOutcome> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<{ outcome: RolePermissionsOutcome }>(
+      `SELECT outcome FROM tenancy.set_role_permissions($1, $2, $3, $4, $5, $6)`,
+      [sessionId, roleId, permissions, ctx.ip, ctx.userAgent, ctx.requestId],
+    );
+    return row!.outcome;
+  },
+
+  /**
+   * tenancy.create_branch / create_role (P5.5): authority is decided in the database, which writes the audit row
+   * (pattern A). @throws NameTakenError
+   */
+  async createCatalogItem(
+    tx: TenantTx,
+    table: CatalogTable,
+    name: string,
+    ctx: RequestContext,
+  ): Promise<SettingsWrite<CatalogRow>> {
+    const { sessionId } = scopeOf(tx);
     try {
-      const [row] = await tx.query<CatalogRow>(
-        `INSERT INTO ${CATALOG_TABLES[table]} (merchant_id, name) VALUES ($1, $2) RETURNING ${CATALOG_COLUMNS}`,
-        [merchantId, name],
+      const [row] = await tx.query<CatalogRow & { outcome: SettingsOutcome }>(
+        `SELECT outcome, ${CATALOG_COLUMNS} FROM ${CREATE_FUNCTION[table]}($1, $2, $3, $4, $5)`,
+        [sessionId, name, ctx.ip, ctx.userAgent, ctx.requestId],
       );
-      return row!;
+      return settingsWrite(row!);
     } catch (err) {
       throw nameTaken(err, table) ? new NameTakenError(table) : err;
     }
   },
 
   /**
-   * Rename and/or archive/restore; null if no such item in this tenant. Archiving sets archived_at, restoring
-   * clears it (the table's CHECK keeps the two consistent). @throws NameTakenError
+   * tenancy.update_branch / update_role (P5.5): rename and/or archive or restore, decided in the database, which
+   * writes the audit row (pattern A); 'not_found' for an item that is not this business's. Archiving sets
+   * archived_at, restoring clears it (the table's CHECK keeps the two consistent). @throws NameTakenError
    */
   async updateCatalogItem(
     tx: TenantTx,
     table: CatalogTable,
     id: string,
     change: { name?: string | undefined; status?: 'active' | 'archived' | undefined },
-  ): Promise<CatalogRow | null> {
-    const { merchantId } = scopeOf(tx);
+    ctx: RequestContext,
+  ): Promise<SettingsWrite<CatalogRow>> {
+    const { sessionId } = scopeOf(tx);
     try {
-      const [row] = await tx.query<CatalogRow>(
-        `UPDATE ${CATALOG_TABLES[table]}
-            SET name = coalesce($3, name),
-                status = coalesce($4, status),
-                archived_at = CASE
-                  WHEN coalesce($4, status) = 'active' THEN NULL
-                  WHEN status = 'archived' THEN archived_at
-                  ELSE now()
-                END,
-                updated_at = now()
-          WHERE merchant_id = $1 AND id = $2
-          RETURNING ${CATALOG_COLUMNS}`,
-        [merchantId, id, change.name ?? null, change.status ?? null],
+      const [row] = await tx.query<CatalogRow & { outcome: SettingsOutcome }>(
+        `SELECT outcome, ${CATALOG_COLUMNS} FROM ${UPDATE_FUNCTION[table]}($1, $2, $3, $4, $5, $6, $7)`,
+        [sessionId, id, change.name ?? null, change.status ?? null, ctx.ip, ctx.userAgent, ctx.requestId],
       );
-      return row ?? null;
+      return settingsWrite(row!);
     } catch (err) {
       throw nameTaken(err, table) ? new NameTakenError(table) : err;
     }
@@ -192,52 +265,90 @@ export const tenancyRepository = {
    * The business's members with their email (tenancy.list_members, P4.5). Authority is decided in the database from
    * the session: only the active owner's session sees anything.
    */
-  async members(tx: TenantTx, membershipId: string | null = null): Promise<MemberRow[]> {
+  async members(
+    tx: TenantTx,
+    membershipId: string | null = null,
+    page: Page | null = null,
+  ): Promise<(MemberRow & Positioned)[]> {
     const { sessionId } = scopeOf(tx);
-    return tx.query<MemberRow>(
-      `SELECT membership_id, kind, status, role_id, branch_id, email, created_at, deactivated_at
-         FROM tenancy.list_members($1, $2)`,
-      [sessionId, membershipId],
+    // With a page, one row more than the page when another follows (P5.8, O9); without, every member.
+    return tx.query<MemberRow & Positioned>(
+      `SELECT membership_id AS id, membership_id, kind, status, role_id, branch_id, email, created_at, deactivated_at,
+              ${POSITION_AT}
+         FROM tenancy.list_members($1, $2, $3, $4::timestamptz, $5)`,
+      [sessionId, membershipId, page?.limit ?? null, page?.after?.at ?? null, page?.after?.id ?? null],
     );
   },
 
-  /** tenancy.update_membership (P4.5): authority, tenant and every rule are decided in the database. */
+  /**
+   * tenancy.update_membership (P4.5; P5.5): authority, tenant and every rule are decided in the database, which also
+   * writes the change's audit row (pattern A); the request context is recorded as given.
+   */
   async changeMembership(
     tx: TenantTx,
     membershipId: string,
     action: MembershipAction,
     assignment: { roleId: string; branchId: string | null } | null,
+    ctx: RequestContext,
   ): Promise<MembershipChange> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<MembershipChange>(
-      `SELECT outcome, membership_id FROM tenancy.update_membership($1, $2, $3, $4, $5)`,
-      [sessionId, membershipId, action, assignment?.roleId ?? null, assignment?.branchId ?? null],
+      `SELECT outcome, membership_id FROM tenancy.update_membership($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        sessionId,
+        membershipId,
+        action,
+        assignment?.roleId ?? null,
+        assignment?.branchId ?? null,
+        ctx.ip,
+        ctx.userAgent,
+        ctx.requestId,
+      ],
     );
     return row!;
   },
 
-  /** The business's invitations, newest first (the token hash is not readable by the app at all). */
-  async invitations(tx: TenantTx, invitationId: string | null = null): Promise<InvitationRow[]> {
-    const { merchantId } = scopeOf(tx);
-    return tx.query<InvitationRow>(
-      `SELECT ${INVITATION_COLUMNS} FROM tenancy.invitations
-        WHERE merchant_id = $1 AND ($2::uuid IS NULL OR id = $2)
-        ORDER BY created_at DESC, id DESC`,
-      [merchantId, invitationId],
+  /**
+   * tenancy.list_invitations: the business's invitations, newest first; empty unless the session holds
+   * merchant.invitations.read. The token hash is never returned.
+   */
+  async invitations(
+    tx: TenantTx,
+    invitationId: string | null = null,
+    filter: { status: 'open' | 'all'; page: Page } | null = null,
+  ): Promise<(InvitationRow & Positioned)[]> {
+    const { sessionId } = scopeOf(tx);
+    // With a filter, one page of the open or all invitations (P5.8, O9); without, every invitation (or the one asked).
+    return tx.query<InvitationRow & Positioned>(
+      `SELECT id, email, kind, role_id, branch_id, expires_at, accepted_at, revoked_at, created_at, ${POSITION_AT}
+         FROM tenancy.list_invitations($1, $2, $3, $4, $5::timestamptz, $6)`,
+      [
+        sessionId,
+        invitationId,
+        filter?.status ?? 'all',
+        filter?.page.limit ?? null,
+        filter?.page.after?.at ?? null,
+        filter?.page.after?.id ?? null,
+      ],
     );
   },
 
-  /** tenancy.issue_invitation (P4.6): authority, tenant and every rule are decided in the database. */
+  /**
+   * tenancy.issue_invitation (P4.6; P5.5): authority, tenant and every rule are decided in the database, which also
+   * writes the invitation's audit row (pattern A); the request context is recorded as given.
+   */
   async issueInvitation(
     tx: TenantTx,
     invite: { email: string; kind: 'staff' | 'agent'; roleId: string | null; branchId: string | null },
     tokenHash: string,
     setupTokenHash: string,
     ttlSeconds: number,
+    ctx: RequestContext,
   ): Promise<IssuedInvitation> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<IssuedInvitation>(
-      `SELECT outcome, invitation_id, delivery FROM tenancy.issue_invitation($1, $2, $3, $4, $5, $6, $7, $8)`,
+      `SELECT outcome, invitation_id, delivery
+         FROM tenancy.issue_invitation($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         sessionId,
         invite.email,
@@ -247,19 +358,24 @@ export const tenancyRepository = {
         tokenHash,
         setupTokenHash,
         ttlSeconds,
+        ctx.ip,
+        ctx.userAgent,
+        ctx.requestId,
       ],
     );
     return row!;
   },
 
+  /** tenancy.revoke_invitation (P4.6; P5.5): decided in the database, which writes the audit row (pattern A). */
   async revokeInvitation(
     tx: TenantTx,
     invitationId: string,
+    ctx: RequestContext,
   ): Promise<'ok' | 'forbidden' | 'not_found' | 'invalid_transition'> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<{ outcome: 'ok' | 'forbidden' | 'not_found' | 'invalid_transition' }>(
-      `SELECT outcome FROM tenancy.revoke_invitation($1, $2)`,
-      [sessionId, invitationId],
+      `SELECT outcome FROM tenancy.revoke_invitation($1, $2, $3, $4, $5)`,
+      [sessionId, invitationId, ctx.ip, ctx.userAgent, ctx.requestId],
     );
     return row!.outcome;
   },

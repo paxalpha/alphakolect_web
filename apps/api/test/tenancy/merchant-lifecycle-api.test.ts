@@ -1,14 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { AUTH_COOKIES, CSRF_HEADER, MerchantLifecycle } from '@alphakolect/contracts';
+import { AUTH_COOKIES, CSRF_HEADER, MerchantLifecycle, PERMISSIONS } from '@alphakolect/contracts';
 import pg from 'pg';
+import { pino } from 'pino';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { AuditLog } from '../../src/modules/audit/audit-log.js';
 import type { SessionAudience } from '../../src/modules/identity/access-tokens.js';
 import { hashPassword } from '../../src/modules/identity/passwords.js';
 import { newOpaqueToken } from '../../src/modules/identity/tokens.js';
 import { MerchantLifecycleService } from '../../src/modules/tenancy/merchant-lifecycle.js';
 import type { AuthContext } from '../../src/platform/http/authenticate.js';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
+import { failAuditInsert, markerRequestId } from '../support/audit.js';
 
 // P4.1 merchant lifecycle through the real app and database (ADR-15 T5, T6, T9; P4 exit criteria 5, 10): the
 // platform endpoints, their effect on a member's very next request, refresh and login, reactivation, every refusal,
@@ -254,35 +257,76 @@ describe('refusals', () => {
     expect(await status(m.merchantId)).toBe('active');
   });
 
-  it('refuses a fully signed-in platform member who is not a super admin — decided in the database — and audits it', async () => {
+  it('refuses a fully signed-in platform member who is not a super admin — at the policy middleware — and records it', async () => {
     const support = await platformAdmin({ role: 'support' });
     const m = await merchant();
     const res = await platform(support.token, m.merchantId, 'deactivate', { reason: 'x' });
     expect(res.status).toBe(403);
-    expect(res.body.error.code).toBe('FORBIDDEN');
+    expect(res.body.error).toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Only a platform super admin may change a merchant’s status',
+    });
     expect(await status(m.merchantId)).toBe('active');
     expect(await auditFor(res)).toEqual([
       expect.objectContaining({
-        action: 'platform.merchant_deactivated',
+        action: 'authz.denied',
         outcome: 'denied',
         merchant_id: null,
         actor_identity_id: support.identityId,
-        summary: { reason: 'forbidden' },
+        target_id: null,
+        summary: { operation: 'deactivateMerchant', permission: 'platform.merchants.lifecycle' },
       }),
+    ]);
+  });
+
+  it('the database still refuses that member when the middleware is bypassed, and audits it (defence in depth)', async () => {
+    const support = await platformAdmin({ role: 'support' });
+    const m = await merchant();
+    const service = new MerchantLifecycleService({ db, audit: new AuditLog(db, pino({ level: 'silent' })) });
+    const requestId = `lifecycle-bypass-${randomBytes(4).toString('hex')}`;
+    const supportContext: AuthContext = {
+      identityId: support.identityId,
+      sessionId: support.sessionId,
+      audience: 'platform',
+      membershipId: support.membershipId,
+      merchantId: null,
+      scope: 'full',
+      kind: 'support',
+      roleId: null,
+      branchId: null,
+      branchStatus: null,
+      permissions: [],
+      transport: 'cookie',
+    };
+    await expect(
+      service.change(supportContext, m.merchantId, 'deactivate', 'Bypass check', {
+        ip: '127.0.0.1',
+        userAgent: null,
+        requestId,
+      }),
+    ).rejects.toMatchObject({ status: 403, code: 'FORBIDDEN' });
+    expect(await status(m.merchantId)).toBe('active');
+    const { rows } = await owner.query(
+      `SELECT action, outcome, merchant_id, summary FROM audit.audit_events WHERE request_id = $1`,
+      [requestId],
+    );
+    expect(rows).toEqual([
+      {
+        action: 'platform.merchant_deactivated',
+        outcome: 'denied',
+        merchant_id: null,
+        summary: { reason: 'forbidden' },
+      },
     ]);
   });
 });
 
 describe('atomicity', () => {
-  it('a failed audit write rolls the status change back', async () => {
+  it('a failed audit write rolls the status change back (the function writes its own row, P5.5)', async () => {
     const m = await merchant();
-    const failingAudit = {
-      record: async () => undefined,
-      recordWithin: async () => {
-        throw new Error('audit store unavailable');
-      },
-    };
-    const service = new MerchantLifecycleService({ db, audit: failingAudit });
+    const requestId = markerRequestId('lifecycle-atomicity');
+    const restore = await failAuditInsert(owner, 'platform.merchant_deactivated', 'success', requestId);
+    const service = new MerchantLifecycleService({ db, audit: new AuditLog(db, pino({ level: 'silent' })) });
     const authContext: AuthContext = {
       identityId: admin.identityId,
       sessionId: admin.sessionId,
@@ -293,15 +337,21 @@ describe('atomicity', () => {
       kind: 'super_admin',
       roleId: null,
       branchId: null,
+      branchStatus: null,
+      permissions: PERMISSIONS.filter((p) => p.startsWith('platform.')),
       transport: 'cookie',
     };
-    await expect(
-      service.change(authContext, m.merchantId, 'deactivate', 'Atomicity check', {
-        ip: '127.0.0.1',
-        userAgent: null,
-        requestId: 'atomicity',
-      }),
-    ).rejects.toThrow('audit store unavailable');
+    try {
+      await expect(
+        service.change(authContext, m.merchantId, 'deactivate', 'Atomicity check', {
+          ip: '127.0.0.1',
+          userAgent: null,
+          requestId,
+        }),
+      ).rejects.toMatchObject({ code: 'XX000' });
+    } finally {
+      await restore();
+    }
     expect(await status(m.merchantId)).toBe('active');
   });
 });

@@ -28,6 +28,19 @@ export const Session = z
 
 export type Session = z.infer<typeof Session>;
 
+/**
+ * GET /v1/auth/session: the session with its effective permissions (P5.7; ADR-16's "Session.permissions"),
+ * resolved by the database on this request and sorted. The platform console and the dashboard build their
+ * navigation from them; the server still decides every request. Empty for agents and for an mfa_enrollment session.
+ * The responses that create or refresh a session carry the plain Session, unchanged.
+ */
+export const CurrentSession = Session.extend({ permissions: z.array(z.string()) }).meta({
+  id: 'CurrentSession',
+  description: 'The signed-in session and its effective permissions, as of this request',
+});
+
+export type CurrentSession = z.infer<typeof CurrentSession>;
+
 export const LoginRequest = z
   .object({
     email: Email,
@@ -68,6 +81,7 @@ export const login = defineEndpoint({
   id: 'login',
   method: 'post',
   path: '/v1/auth/login',
+  authorization: { class: 'capability', capability: 'credentials' },
   audience: 'public',
   summary: 'Sign in with email and password',
   request: { body: LoginRequest },
@@ -94,6 +108,7 @@ export const refreshSession = defineEndpoint({
   id: 'refreshSession',
   method: 'post',
   path: '/v1/auth/refresh',
+  authorization: { class: 'capability', capability: 'refresh_token' },
   audience: 'public',
   summary: `Rotate the session (refresh cookie; send the ${CSRF_HEADER} header)`,
   responses: {
@@ -108,6 +123,7 @@ export const logout = defineEndpoint({
   id: 'logout',
   method: 'post',
   path: '/v1/auth/logout',
+  authorization: { class: 'self' },
   audience: 'authenticated',
   summary: 'End the current session',
   security: ['cookieSession', 'bearer'],
@@ -142,6 +158,7 @@ export const listLoginMemberships = defineEndpoint({
   id: 'listLoginMemberships',
   method: 'get',
   path: '/v1/auth/login/memberships',
+  authorization: { class: 'capability', capability: 'selection_challenge' },
   audience: 'public',
   summary: 'The businesses to choose from (needs the selection challenge cookie set by a 409 login answer)',
   responses: {
@@ -170,6 +187,7 @@ export const selectLoginMembership = defineEndpoint({
   id: 'selectLoginMembership',
   method: 'post',
   path: '/v1/auth/login/select',
+  authorization: { class: 'capability', capability: 'selection_challenge' },
   audience: 'public',
   summary: 'Sign in to the chosen business (uses the selection challenge cookie; JSON only)',
   request: { body: SelectMembershipRequest },
@@ -191,12 +209,13 @@ export const getSession = defineEndpoint({
   id: 'getSession',
   method: 'get',
   path: '/v1/auth/session',
+  authorization: { class: 'self' },
   audience: 'authenticated',
   summary: 'The current session',
   security: ['cookieSession', 'bearer'],
   sessionScope: 'mfa_enrollment',
   responses: {
-    200: { description: 'The current session', schema: Session },
+    200: { description: 'The current session', schema: CurrentSession },
   },
 });
 
@@ -243,6 +262,7 @@ export const signup = defineEndpoint({
   id: 'signup',
   method: 'post',
   path: '/v1/auth/signup',
+  authorization: { class: 'public' },
   audience: 'public',
   summary: 'Create a business and its owner account; a verification email follows',
   request: { body: SignupRequest },
@@ -258,6 +278,7 @@ export const verifyEmail = defineEndpoint({
   id: 'verifyEmail',
   method: 'post',
   path: '/v1/auth/email/verify',
+  authorization: { class: 'capability', capability: 'email_verification_token' },
   audience: 'public',
   summary: 'Confirm an email address with the token from the verification email',
   request: { body: VerifyEmailRequest },
@@ -272,6 +293,7 @@ export const resendVerification = defineEndpoint({
   id: 'resendVerification',
   method: 'post',
   path: '/v1/auth/email/resend',
+  authorization: { class: 'public' },
   audience: 'public',
   summary: 'Send a new verification email',
   request: { body: ResendVerificationRequest },
@@ -312,6 +334,7 @@ export const forgotPassword = defineEndpoint({
   id: 'forgotPassword',
   method: 'post',
   path: '/v1/auth/password/forgot',
+  authorization: { class: 'public' },
   audience: 'public',
   summary: 'Email a password reset link (or, for an account that has never had a password, a setup link)',
   request: { body: ForgotPasswordRequest },
@@ -326,6 +349,7 @@ export const resetPassword = defineEndpoint({
   id: 'resetPassword',
   method: 'post',
   path: '/v1/auth/password/reset',
+  authorization: { class: 'capability', capability: 'password_reset_token' },
   audience: 'public',
   summary: 'Set a new password with a reset link; every session of the account ends',
   request: { body: SetPasswordRequest },
@@ -344,6 +368,7 @@ export const completeAccountSetup = defineEndpoint({
   id: 'completeAccountSetup',
   method: 'post',
   path: '/v1/auth/password/setup',
+  authorization: { class: 'capability', capability: 'account_setup_token' },
   audience: 'public',
   summary: 'Set the first password of an account with its setup link (this also confirms the email)',
   request: { body: SetPasswordRequest },
@@ -372,6 +397,7 @@ export const acceptInvitation = defineEndpoint({
   id: 'acceptInvitation',
   method: 'post',
   path: '/v1/auth/invitations/accept',
+  authorization: { class: 'capability', capability: 'invitation_token' },
   audience: 'public',
   summary:
     'Join a business with an invitation link and the password of the invited account (then sign in as usual)',
@@ -389,6 +415,7 @@ export const changePassword = defineEndpoint({
   id: 'changePassword',
   method: 'post',
   path: '/v1/auth/password/change',
+  authorization: { class: 'self' },
   audience: 'authenticated',
   summary: 'Change the password; every session of the account ends, including this one',
   security: ['cookieSession', 'bearer'],
@@ -456,6 +483,7 @@ export const beginTotpEnrollment = defineEndpoint({
   id: 'beginTotpEnrollment',
   method: 'post',
   path: '/v1/auth/mfa/totp/enrollment',
+  authorization: { class: 'self' },
   audience: 'platform',
   summary: 'Start TOTP enrolment: a new secret for an authenticator app',
   security: ['cookieSession'],
@@ -474,6 +502,7 @@ export const confirmTotpEnrollment = defineEndpoint({
   id: 'confirmTotpEnrollment',
   method: 'post',
   path: '/v1/auth/mfa/totp/confirm',
+  authorization: { class: 'self' },
   audience: 'platform',
   summary: 'Confirm TOTP enrolment with a code; the enrolment session becomes a full session',
   security: ['cookieSession'],
@@ -506,6 +535,7 @@ export const verifyMfa = defineEndpoint({
   id: 'verifyMfa',
   method: 'post',
   path: '/v1/auth/mfa/verify',
+  authorization: { class: 'capability', capability: 'mfa_challenge' },
   audience: 'public',
   summary: 'Second login step for platform accounts (uses the MFA challenge cookie set by login)',
   request: { body: VerifyMfaRequest },

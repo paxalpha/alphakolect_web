@@ -1,0 +1,706 @@
+dataset: {"events":2000000,"merchants":3000,"actors":15000,"days":730,"platformShare":0.05,"groupSizes":"1–4 events per transaction, sharing its timestamp","skew":"business = floor(3000 · u³): the busiest holds about 7% of all events","actorsPerMerchant":5}
+window: 31 days; page: 100
+seeded in 354 s: {"events":2060000,"platform_events":99558,"shared_timestamps":600000,"latest":"2026-12-31T23:59:16.357Z"}; busiest business 132320 events (5816 in the window); a small one 183; all events in the window 88327; the busiest business's busiest actor 26911; the busy staff member: 2506 events in the window across businesses, 40 of them in the busiest business
+
+---- A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id) (indexes built in 50 s)
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 busiest + busy staff
+Limit (actual time=0.319..5.827 rows=40 loops=1)
+  Buffers: shared hit=2542
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.315..5.803 rows=40 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Rows Removed by Filter: 2466
+        Buffers: shared hit=2542
+Planning Time: 0.137 ms
+Execution Time: 6.038 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 small + busy staff
+Limit (actual time=6.617..6.620 rows=0 loops=1)
+  Buffers: shared hit=2542
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=6.613..6.615 rows=0 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Rows Removed by Filter: 2506
+        Buffers: shared hit=2542
+Planning Time: 0.122 ms
+Execution Time: 6.718 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 by busy staff
+Limit (actual time=0.071..0.414 rows=101 loops=1)
+  Buffers: shared hit=106
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.069..0.388 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=106
+Planning Time: 0.098 ms
+Execution Time: 0.503 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #33 first page, busiest
+Limit (actual time=0.086..0.350 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.083..0.318 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=54
+Planning Time: 0.106 ms
+Execution Time: 0.450 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #33 continuation, busiest
+Limit (actual time=0.086..0.404 rows=101 loops=1)
+  Buffers: shared hit=44
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.083..0.370 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($4, $5)))
+        Buffers: shared hit=44
+Planning Time: 0.130 ms
+Execution Time: 0.539 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #33 by person, busiest
+Limit (actual time=0.114..0.369 rows=101 loops=1)
+  Buffers: shared hit=51
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.111..0.341 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Buffers: shared hit=51
+Planning Time: 0.104 ms
+Execution Time: 0.467 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 first page
+Limit (actual time=0.105..0.369 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.102..0.331 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=48
+Planning Time: 0.108 ms
+Execution Time: 0.476 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 continuation
+Limit (actual time=0.093..0.568 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.090..0.530 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($3, $4)))
+        Buffers: shared hit=45
+Planning Time: 0.120 ms
+Execution Time: 0.703 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 by business
+Limit (actual time=0.161..0.429 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.158..0.396 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=54
+Planning Time: 0.115 ms
+Execution Time: 0.541 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 by person
+Limit (actual time=0.077..0.260 rows=101 loops=1)
+  Buffers: shared hit=51
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.075..0.236 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=51
+Planning Time: 0.084 ms
+Execution Time: 0.344 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 by event
+Limit (actual time=0.259..0.444 rows=101 loops=1)
+  Buffers: shared hit=105
+  ->  Incremental Sort (actual time=0.257..0.430 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=105
+        ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.142..0.311 rows=102 loops=1)
+              Index Cond: ((action = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=105
+Planning Time: 0.061 ms
+Execution Time: 0.508 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), generic: #34 empty window
+Limit (actual time=0.025..0.026 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.022..0.022 rows=0 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.038 ms
+Execution Time: 0.060 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 busiest + busy staff
+Limit (actual time=0.417..7.531 rows=40 loops=1)
+  Buffers: shared hit=2545
+  ->  Nested Loop Left Join (actual time=0.413..7.503 rows=40 loops=1)
+        Buffers: shared hit=2545
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.373..7.226 rows=40 loops=1)
+              Index Cond: ((actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Filter: (merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid)
+              Rows Removed by Filter: 2466
+              Buffers: shared hit=2542
+        ->  Materialize (actual time=0.001..0.001 rows=1 loops=40)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.021..0.021 rows=1 loops=1)
+                    Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 1.089 ms
+Execution Time: 7.645 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 small + busy staff
+Limit (actual time=0.061..0.063 rows=0 loops=1)
+  Buffers: shared hit=5
+  ->  Nested Loop Left Join (actual time=0.058..0.060 rows=0 loops=1)
+        Buffers: shared hit=5
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.057..0.058 rows=0 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f93c-73af-8c3b-5394695ab5e8'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Filter: (actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+              Rows Removed by Filter: 8
+              Buffers: shared hit=5
+        ->  Index Scan using identities_pkey on identities i (never executed)
+              Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+Planning:
+  Buffers: shared hit=4
+Planning Time: 1.219 ms
+Execution Time: 0.163 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 by busy staff
+Limit (actual time=0.089..0.535 rows=101 loops=1)
+  Buffers: shared hit=109
+  ->  Nested Loop Left Join (actual time=0.086..0.504 rows=101 loops=1)
+        Buffers: shared hit=109
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.054..0.362 rows=101 loops=1)
+              Index Cond: ((actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=106
+        ->  Materialize (actual time=0.000..0.000 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.017..0.018 rows=1 loops=1)
+                    Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 1.107 ms
+Execution Time: 0.675 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #33 first page, busiest
+Limit (actual time=0.103..1.096 rows=101 loops=1)
+  Buffers: shared hit=357
+  ->  Nested Loop Left Join (actual time=0.100..1.056 rows=101 loops=1)
+        Buffers: shared hit=357
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.041..0.257 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=54
+        ->  Index Scan using identities_pkey on identities i (actual time=0.006..0.006 rows=1 loops=101)
+              Index Cond: (id = e.actor_identity_id)
+              Buffers: shared hit=303
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.017..0.017 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 1.944 ms
+Execution Time: 1.251 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #33 continuation, busiest
+Limit (actual time=0.059..0.530 rows=101 loops=1)
+  Buffers: shared hit=347
+  ->  Nested Loop Left Join (actual time=0.057..0.497 rows=101 loops=1)
+        Buffers: shared hit=347
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.026..0.131 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone) AND (ROW(occurred_at, id) < ROW('2026-12-08 23:22:39.345+00'::timestamp with time zone, '01a15158-401b-7fdb-9e2a-b507e5e7b7c2'::uuid)))
+              Buffers: shared hit=44
+        ->  Index Scan using identities_pkey on identities i (actual time=0.003..0.003 rows=1 loops=101)
+              Index Cond: (id = e.actor_identity_id)
+              Buffers: shared hit=303
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.008..0.008 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 1.084 ms
+Execution Time: 0.605 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #33 by person, busiest
+Limit (actual time=0.694..1.018 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Nested Loop Left Join (actual time=0.691..1.004 rows=101 loops=1)
+        Buffers: shared hit=54
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.050..0.197 rows=101 loops=1)
+              Index Cond: ((actor_identity_id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Filter: (merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid)
+              Buffers: shared hit=51
+        ->  Materialize (actual time=0.006..0.006 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.046..0.046 rows=1 loops=1)
+                    Index Cond: (id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid)
+                    Buffers: shared hit=3
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.017..0.018 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.831 ms
+Execution Time: 1.974 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 first page
+Limit (actual time=0.035..0.419 rows=101 loops=1)
+  Buffers: shared hit=177
+  ->  Nested Loop Left Join (actual time=0.034..0.403 rows=101 loops=1)
+        Buffers: shared hit=177
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.019..0.149 rows=101 loops=1)
+              Index Cond: ((occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=48
+        ->  Memoize (actual time=0.002..0.002 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 58  Misses: 43  Evictions: 0  Overflows: 0  Memory Usage: 7kB
+              Buffers: shared hit=129
+              ->  Index Scan using identities_pkey on identities i (actual time=0.003..0.003 rows=1 loops=43)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=129
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.527 ms
+Execution Time: 0.509 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 continuation
+Limit (actual time=0.099..0.801 rows=101 loops=1)
+  Buffers: shared hit=156
+  ->  Nested Loop Left Join (actual time=0.096..0.765 rows=101 loops=1)
+        Buffers: shared hit=156
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.052..0.248 rows=101 loops=1)
+              Index Cond: ((occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone) AND (ROW(occurred_at, id) < ROW('2026-12-08 18:10:04.272+00'::timestamp with time zone, '01a15158-8aeb-7c00-b66d-ee6db0016c03'::uuid)))
+              Buffers: shared hit=45
+        ->  Memoize (actual time=0.004..0.004 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 64  Misses: 37  Evictions: 0  Overflows: 0  Memory Usage: 6kB
+              Buffers: shared hit=111
+              ->  Index Scan using identities_pkey on identities i (actual time=0.007..0.007 rows=1 loops=37)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=111
+Planning:
+  Buffers: shared hit=19
+Planning Time: 1.383 ms
+Execution Time: 1.028 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 by business
+Limit (actual time=0.056..0.363 rows=101 loops=1)
+  Buffers: shared hit=72
+  ->  Nested Loop Left Join (actual time=0.054..0.339 rows=101 loops=1)
+        Buffers: shared hit=72
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.029..0.166 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=54
+        ->  Memoize (actual time=0.001..0.001 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 95  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+              Buffers: shared hit=18
+              ->  Index Scan using identities_pkey on identities i (actual time=0.005..0.005 rows=1 loops=6)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=18
+Planning:
+  Buffers: shared hit=19
+Planning Time: 1.423 ms
+Execution Time: 0.469 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 by person
+Limit (actual time=0.048..0.209 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Nested Loop Left Join (actual time=0.046..0.193 rows=101 loops=1)
+        Buffers: shared hit=54
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.028..0.120 rows=101 loops=1)
+              Index Cond: ((actor_identity_id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=51
+        ->  Materialize (actual time=0.000..0.000 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.012..0.012 rows=1 loops=1)
+                    Index Cond: (id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.589 ms
+Execution Time: 0.263 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 by event
+Limit (actual time=0.456..1.280 rows=101 loops=1)
+  Buffers: shared hit=408
+  ->  Incremental Sort (actual time=0.454..1.256 rows=101 loops=1)
+        Sort Key: e.occurred_at DESC, e.id DESC
+        Presorted Key: e.occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+        Buffers: shared hit=408
+        ->  Nested Loop Left Join (actual time=0.102..1.133 rows=102 loops=1)
+              Buffers: shared hit=408
+              ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.075..0.287 rows=102 loops=1)
+                    Index Cond: ((action = 'authz.denied'::text) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+                    Buffers: shared hit=105
+              ->  Memoize (actual time=0.007..0.007 rows=1 loops=102)
+                    Cache Key: e.actor_identity_id
+                    Cache Mode: logical
+                    Hits: 1  Misses: 101  Evictions: 0  Overflows: 0  Memory Usage: 15kB
+                    Buffers: shared hit=303
+                    ->  Index Scan using identities_pkey on identities i (actual time=0.006..0.006 rows=1 loops=101)
+                          Index Cond: (id = e.actor_identity_id)
+                          Buffers: shared hit=303
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.914 ms
+Execution Time: 1.463 ms
+
+== A the addendum: (merchant_id, occurred_at, id) replacing (merchant_id, occurred_at); (actor_identity_id, occurred_at, id), per call: #34 empty window
+Limit (actual time=0.009..0.010 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Nested Loop Left Join (actual time=0.008..0.009 rows=0 loops=1)
+        Buffers: shared hit=3
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.007..0.008 rows=0 loops=1)
+              Index Cond: ((occurred_at >= '2027-01-10 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2027-02-10 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=3
+        ->  Index Scan using identities_pkey on identities i (never executed)
+              Index Cond: (id = e.actor_identity_id)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 0.516 ms
+Execution Time: 0.047 ms
+
+---- B = A + (merchant_id, actor_identity_id, occurred_at, id) (indexes built in 23 s)
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 busiest + busy staff
+Limit (actual time=0.113..2.185 rows=40 loops=1)
+  Buffers: shared hit=2542
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.112..2.178 rows=40 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Rows Removed by Filter: 2466
+        Buffers: shared hit=2542
+Planning Time: 0.046 ms
+Execution Time: 2.248 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 small + busy staff
+Limit (actual time=2.603..2.605 rows=0 loops=1)
+  Buffers: shared hit=2542
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=2.601..2.602 rows=0 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Rows Removed by Filter: 2506
+        Buffers: shared hit=2542
+Planning Time: 0.040 ms
+Execution Time: 2.642 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 by busy staff
+Limit (actual time=0.039..0.211 rows=101 loops=1)
+  Buffers: shared hit=106
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.037..0.199 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=106
+Planning Time: 0.047 ms
+Execution Time: 0.261 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #33 first page, busiest
+Limit (actual time=0.043..0.159 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.042..0.146 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=54
+Planning Time: 0.048 ms
+Execution Time: 0.202 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #33 continuation, busiest
+Limit (actual time=0.215..0.388 rows=101 loops=1)
+  Buffers: shared hit=44
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.213..0.371 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($4, $5)))
+        Buffers: shared hit=44
+Planning Time: 0.053 ms
+Execution Time: 0.453 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #33 by person, busiest
+Limit (actual time=0.045..0.188 rows=101 loops=1)
+  Buffers: shared hit=51
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.043..0.173 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $4) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Filter: (merchant_id = $3)
+        Buffers: shared hit=51
+Planning Time: 0.152 ms
+Execution Time: 0.246 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 first page
+Limit (actual time=0.031..0.126 rows=101 loops=1)
+  Buffers: shared hit=48
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.030..0.114 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=48
+Planning Time: 0.039 ms
+Execution Time: 0.160 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 continuation
+Limit (actual time=0.044..0.167 rows=101 loops=1)
+  Buffers: shared hit=45
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.043..0.154 rows=101 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2) AND (ROW(occurred_at, id) < ROW($3, $4)))
+        Buffers: shared hit=45
+Planning Time: 0.065 ms
+Execution Time: 0.220 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 by business
+Limit (actual time=0.040..0.159 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.038..0.145 rows=101 loops=1)
+        Index Cond: ((merchant_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=54
+Planning Time: 0.050 ms
+Execution Time: 0.204 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 by person
+Limit (actual time=0.043..0.152 rows=101 loops=1)
+  Buffers: shared hit=51
+  ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.042..0.139 rows=101 loops=1)
+        Index Cond: ((actor_identity_id = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=51
+Planning Time: 0.057 ms
+Execution Time: 0.203 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 by event
+Limit (actual time=0.170..0.408 rows=101 loops=1)
+  Buffers: shared hit=105
+  ->  Incremental Sort (actual time=0.168..0.391 rows=101 loops=1)
+        Sort Key: occurred_at DESC, id DESC
+        Presorted Key: occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 29kB  Peak Memory: 29kB
+        Buffers: shared hit=105
+        ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.076..0.314 rows=102 loops=1)
+              Index Cond: ((action = $3) AND (occurred_at >= $1) AND (occurred_at < $2))
+              Buffers: shared hit=105
+Planning Time: 0.050 ms
+Execution Time: 0.473 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), generic: #34 empty window
+Limit (actual time=0.034..0.034 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.032..0.033 rows=0 loops=1)
+        Index Cond: ((occurred_at >= $1) AND (occurred_at < $2))
+        Buffers: shared hit=3
+Planning Time: 0.052 ms
+Execution Time: 0.081 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 busiest + busy staff
+Limit (actual time=0.045..0.129 rows=40 loops=1)
+  Buffers: shared hit=50
+  ->  Nested Loop Left Join (actual time=0.044..0.121 rows=40 loops=1)
+        Buffers: shared hit=50
+        ->  Index Scan Backward using spike_merchant_actor_occurred_at_id on audit_events e (actual time=0.024..0.081 rows=40 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=47
+        ->  Materialize (actual time=0.000..0.000 rows=1 loops=40)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.012..0.012 rows=1 loops=1)
+                    Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.581 ms
+Execution Time: 0.192 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 small + busy staff
+Limit (actual time=0.105..0.106 rows=0 loops=1)
+  Buffers: shared hit=4
+  ->  Nested Loop Left Join (actual time=0.103..0.104 rows=0 loops=1)
+        Buffers: shared hit=4
+        ->  Index Scan Backward using spike_merchant_actor_occurred_at_id on audit_events e (actual time=0.102..0.102 rows=0 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f93c-73af-8c3b-5394695ab5e8'::uuid) AND (actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=4
+        ->  Index Scan using identities_pkey on identities i (never executed)
+              Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.358 ms
+Execution Time: 0.181 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 by busy staff
+Limit (actual time=0.157..0.370 rows=101 loops=1)
+  Buffers: shared hit=109
+  ->  Nested Loop Left Join (actual time=0.155..0.357 rows=101 loops=1)
+        Buffers: shared hit=109
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.025..0.182 rows=101 loops=1)
+              Index Cond: ((actor_identity_id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=106
+        ->  Materialize (actual time=0.001..0.001 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.013..0.013 rows=1 loops=1)
+                    Index Cond: (id = '01a1515b-f2a8-7df1-8dd2-e28e7370fb28'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.489 ms
+Execution Time: 0.416 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #33 first page, busiest
+Limit (actual time=0.055..0.437 rows=101 loops=1)
+  Buffers: shared hit=357
+  ->  Nested Loop Left Join (actual time=0.053..0.420 rows=101 loops=1)
+        Buffers: shared hit=357
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.023..0.126 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=54
+        ->  Index Scan using identities_pkey on identities i (actual time=0.002..0.002 rows=1 loops=101)
+              Index Cond: (id = e.actor_identity_id)
+              Buffers: shared hit=303
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.008..0.009 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 0.931 ms
+Execution Time: 0.512 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #33 continuation, busiest
+Limit (actual time=0.089..0.678 rows=101 loops=1)
+  Buffers: shared hit=347
+  ->  Nested Loop Left Join (actual time=0.086..0.653 rows=101 loops=1)
+        Buffers: shared hit=347
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.042..0.172 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone) AND (ROW(occurred_at, id) < ROW('2026-12-08 23:22:39.345+00'::timestamp with time zone, '01a15158-401b-7fdb-9e2a-b507e5e7b7c2'::uuid)))
+              Buffers: shared hit=44
+        ->  Index Scan using identities_pkey on identities i (actual time=0.003..0.003 rows=1 loops=101)
+              Index Cond: (id = e.actor_identity_id)
+              Buffers: shared hit=303
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.010..0.010 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 1.147 ms
+Execution Time: 0.842 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #33 by person, busiest
+Limit (actual time=0.070..0.284 rows=101 loops=1)
+  Buffers: shared hit=57
+  ->  Nested Loop Left Join (actual time=0.068..0.266 rows=101 loops=1)
+        Buffers: shared hit=57
+        ->  Index Scan Backward using spike_merchant_actor_occurred_at_id on audit_events e (actual time=0.031..0.155 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (actor_identity_id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=54
+        ->  Materialize (actual time=0.000..0.000 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.013..0.013 rows=1 loops=1)
+                    Index Cond: (id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid)
+                    Buffers: shared hit=3
+        SubPlan 2
+          ->  Seq Scan on platform_memberships pm (actual time=0.006..0.006 rows=0 loops=1)
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.826 ms
+Execution Time: 0.349 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 first page
+Limit (actual time=0.062..0.972 rows=101 loops=1)
+  Buffers: shared hit=177
+  ->  Nested Loop Left Join (actual time=0.060..0.943 rows=101 loops=1)
+        Buffers: shared hit=177
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.033..0.358 rows=101 loops=1)
+              Index Cond: ((occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=48
+        ->  Memoize (actual time=0.004..0.004 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 58  Misses: 43  Evictions: 0  Overflows: 0  Memory Usage: 7kB
+              Buffers: shared hit=129
+              ->  Index Scan using identities_pkey on identities i (actual time=0.006..0.006 rows=1 loops=43)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=129
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.910 ms
+Execution Time: 1.154 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 continuation
+Limit (actual time=0.071..0.750 rows=101 loops=1)
+  Buffers: shared hit=156
+  ->  Nested Loop Left Join (actual time=0.068..0.718 rows=101 loops=1)
+        Buffers: shared hit=156
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.036..0.262 rows=101 loops=1)
+              Index Cond: ((occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone) AND (ROW(occurred_at, id) < ROW('2026-12-08 18:10:04.272+00'::timestamp with time zone, '01a15158-8aeb-7c00-b66d-ee6db0016c03'::uuid)))
+              Buffers: shared hit=45
+        ->  Memoize (actual time=0.003..0.003 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 64  Misses: 37  Evictions: 0  Overflows: 0  Memory Usage: 6kB
+              Buffers: shared hit=111
+              ->  Index Scan using identities_pkey on identities i (actual time=0.006..0.006 rows=1 loops=37)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=111
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.927 ms
+Execution Time: 0.924 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 by business
+Limit (actual time=0.025..0.154 rows=101 loops=1)
+  Buffers: shared hit=72
+  ->  Nested Loop Left Join (actual time=0.024..0.145 rows=101 loops=1)
+        Buffers: shared hit=72
+        ->  Index Scan Backward using spike_merchant_occurred_at_id on audit_events e (actual time=0.014..0.082 rows=101 loops=1)
+              Index Cond: ((merchant_id = '01a15157-f8f4-73d3-85b0-9a72e510d621'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=54
+        ->  Memoize (actual time=0.000..0.000 rows=1 loops=101)
+              Cache Key: e.actor_identity_id
+              Cache Mode: logical
+              Hits: 95  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+              Buffers: shared hit=18
+              ->  Index Scan using identities_pkey on identities i (actual time=0.002..0.002 rows=1 loops=6)
+                    Index Cond: (id = e.actor_identity_id)
+                    Buffers: shared hit=18
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.387 ms
+Execution Time: 0.201 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 by person
+Limit (actual time=0.032..0.135 rows=101 loops=1)
+  Buffers: shared hit=54
+  ->  Nested Loop Left Join (actual time=0.031..0.126 rows=101 loops=1)
+        Buffers: shared hit=54
+        ->  Index Scan Backward using spike_actor_occurred_at_id on audit_events e (actual time=0.018..0.083 rows=101 loops=1)
+              Index Cond: ((actor_identity_id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=51
+        ->  Materialize (actual time=0.000..0.000 rows=1 loops=101)
+              Buffers: shared hit=3
+              ->  Index Scan using identities_pkey on identities i (actual time=0.008..0.008 rows=1 loops=1)
+                    Index Cond: (id = '01a15157-f971-707e-9cf0-453d0b19bec5'::uuid)
+                    Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.473 ms
+Execution Time: 0.167 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 by event
+Limit (actual time=0.216..0.523 rows=101 loops=1)
+  Buffers: shared hit=408
+  ->  Incremental Sort (actual time=0.215..0.513 rows=101 loops=1)
+        Sort Key: e.occurred_at DESC, e.id DESC
+        Presorted Key: e.occurred_at
+        Full-sort Groups: 4  Sort Method: quicksort  Average Memory: 31kB  Peak Memory: 31kB
+        Buffers: shared hit=408
+        ->  Nested Loop Left Join (actual time=0.047..0.462 rows=102 loops=1)
+              Buffers: shared hit=408
+              ->  Index Scan Backward using audit_events_action_occurred_at_idx on audit_events e (actual time=0.034..0.150 rows=102 loops=1)
+                    Index Cond: ((action = 'authz.denied'::text) AND (occurred_at >= '2026-11-30 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2026-12-31 23:59:16.357+00'::timestamp with time zone))
+                    Buffers: shared hit=105
+              ->  Memoize (actual time=0.003..0.003 rows=1 loops=102)
+                    Cache Key: e.actor_identity_id
+                    Cache Mode: logical
+                    Hits: 1  Misses: 101  Evictions: 0  Overflows: 0  Memory Usage: 15kB
+                    Buffers: shared hit=303
+                    ->  Index Scan using identities_pkey on identities i (actual time=0.002..0.002 rows=1 loops=101)
+                          Index Cond: (id = e.actor_identity_id)
+                          Buffers: shared hit=303
+Planning:
+  Buffers: shared hit=19
+Planning Time: 0.541 ms
+Execution Time: 0.609 ms
+
+== B = A + (merchant_id, actor_identity_id, occurred_at, id), per call: #34 empty window
+Limit (actual time=0.008..0.008 rows=0 loops=1)
+  Buffers: shared hit=3
+  ->  Nested Loop Left Join (actual time=0.006..0.007 rows=0 loops=1)
+        Buffers: shared hit=3
+        ->  Index Scan Backward using audit_events_occurred_at_id_idx on audit_events e (actual time=0.006..0.006 rows=0 loops=1)
+              Index Cond: ((occurred_at >= '2027-01-10 23:59:16.357+00'::timestamp with time zone) AND (occurred_at < '2027-02-10 23:59:16.357+00'::timestamp with time zone))
+              Buffers: shared hit=3
+        ->  Index Scan using identities_pkey on identities i (never executed)
+              Index Cond: (id = e.actor_identity_id)
+Planning:
+  Buffers: shared hit=23
+Planning Time: 0.341 ms
+Execution Time: 0.034 ms

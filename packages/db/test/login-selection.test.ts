@@ -183,7 +183,7 @@ describe('eligibility (T4, T5)', () => {
     expect((await resolve(m.identityId, 'agent')).eligible_count).toBe(1);
   });
 
-  it('a disabled identity has nothing eligible; platform eligibility is the super admin only', async () => {
+  it('a disabled identity has nothing eligible; every active platform membership is eligible, whatever its role (P5.7)', async () => {
     const m = await newMerchant('Disabled Ltd');
     await owner.query(`UPDATE identity.identities SET status = 'disabled' WHERE id = $1`, [m.identityId]);
     expect((await resolve(m.identityId, 'merchant')).eligible_count).toBe(0);
@@ -194,11 +194,22 @@ describe('eligibility (T4, T5)', () => {
       `INSERT INTO identity.identities (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
       [uniqueEmail('support')],
     );
-    await owner.query(
-      `INSERT INTO identity.platform_memberships (identity_id, role) VALUES ($1, 'support')`,
+    const {
+      rows: [membership],
+    } = await owner.query(
+      `INSERT INTO identity.platform_memberships (identity_id, role) VALUES ($1, 'support') RETURNING id`,
       [support.id],
     );
-    expect((await resolve(support.id, 'platform')).eligible_count).toBe(0); // platform staff arrive with P5
+    // A staff member signs in with no permissions (the role is a label, D4); MFA is still required at login.
+    expect(await resolve(support.id, 'platform')).toMatchObject({
+      eligible_count: 1,
+      membership_id: membership.id,
+    });
+    await owner.query(
+      `UPDATE identity.platform_memberships SET status = 'deactivated', deactivated_at = now() WHERE id = $1`,
+      [membership.id],
+    );
+    expect((await resolve(support.id, 'platform')).eligible_count).toBe(0);
   });
 });
 

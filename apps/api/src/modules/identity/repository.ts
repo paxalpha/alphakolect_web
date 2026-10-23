@@ -29,6 +29,15 @@ export type ValidSession = {
   branch_id: string | null;
 };
 
+/** The per-request resolver's row (P5.2, identity.session_authority): the validated session plus its authority. */
+export type SessionAuthority = ValidSession & {
+  /** The staff member's role and branch state (active | archived); null when there is none. */
+  role_status: string | null;
+  branch_status: string | null;
+  /** Effective permissions, resolved by the database now (never cached, never from claims). Sorted. */
+  permissions: string[];
+};
+
 export type RotationResult = {
   outcome: 'rotated' | 'invalid' | 'reuse_detected';
   session_id: string | null;
@@ -43,6 +52,14 @@ export type SessionLifetime = { idleSeconds: number; absoluteSeconds: number };
 
 export class IdentityRepository {
   constructor(private readonly db: Queryable) {}
+
+  /**
+   * The same functions inside the caller's transaction (P5.3a, pattern B): a flow's definer calls and its
+   * mutateAudited event then commit together or not at all.
+   */
+  within(tx: Queryable): IdentityRepository {
+    return new IdentityRepository(tx);
+  }
 
   // ── accounts ──────────────────────────────────────────────────────────────────────────────────
   async signupMerchantOwner(email: string, passwordHash: string, merchantName: string) {
@@ -85,11 +102,18 @@ export class IdentityRepository {
     return row?.id ?? null;
   }
 
-  /** First password through the setup link; also verifies the email (it was sent there). */
-  async completeAccountSetup(tokenHash: string, passwordHash: string): Promise<string | null> {
+  /**
+   * First password through the setup link; also verifies the email (it was sent there) and admits the person's
+   * pending invitations, each recording its own acceptance (#14) with the request context as given (P5.5).
+   */
+  async completeAccountSetup(
+    tokenHash: string,
+    passwordHash: string,
+    ctx: { ip: string; userAgent: string | null; requestId: string },
+  ): Promise<string | null> {
     const [row] = await this.db.query<{ id: string | null }>(
-      `SELECT identity.complete_account_setup($1, $2) AS id`,
-      [tokenHash, passwordHash],
+      `SELECT identity.complete_account_setup($1, $2, $3, $4, $5) AS id`,
+      [tokenHash, passwordHash, ctx.ip, ctx.userAgent, ctx.requestId],
     );
     return row?.id ?? null;
   }
@@ -205,6 +229,14 @@ export class IdentityRepository {
 
   async validateSession(sessionId: string): Promise<ValidSession | null> {
     const [row] = await this.db.query<ValidSession>(`SELECT * FROM identity.validate_session($1)`, [
+      sessionId,
+    ]);
+    return row ?? null;
+  }
+
+  /** P5.2 (ADR-16): the session re-validated and its effective permissions, in one round trip; null = invalid. */
+  async sessionAuthority(sessionId: string): Promise<SessionAuthority | null> {
+    const [row] = await this.db.query<SessionAuthority>(`SELECT * FROM identity.session_authority($1)`, [
       sessionId,
     ]);
     return row ?? null;

@@ -8,19 +8,30 @@ import { FIXTURE, MERCHANT_A, MERCHANT_B } from './support/fixtures.js';
 const A = FIXTURE.A;
 const B = FIXTURE.B;
 
-// Every P1 tenant table, with the column that names its tenant.
+// Every tenant table the app reads directly, with the column that names its tenant.
 const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
-  ['tenancy.merchants', 'id'],
   ['ledger.ledgers', 'merchant_id'],
   ['ledger.accounts', 'merchant_id'],
   ['ledger.journal_entries', 'merchant_id'],
   ['ledger.journal_lines', 'merchant_id'],
   ['ledger.balance_projection', 'merchant_id'],
-  ['audit.audit_events', 'merchant_id'],
   ['tenancy.merchant_memberships', 'merchant_id'],
-  ['tenancy.branches', 'merchant_id'],
-  ['tenancy.roles', 'merchant_id'],
-  ['tenancy.invitations', 'merchant_id'],
+];
+
+// Tenant tables the app holds no privilege on at all (so the visibility tests above, which read as the app, do not
+// apply); they still must carry RLS and an app policy, so that any later grant is tenant-scoped from the start.
+// P5.1: role permissions are read and written only through database functions (ADR-16). P5.5 (the enforcement
+// boundary, owner decision B1): the business, its branches, roles and invitations too — their tenant isolation is the
+// read functions' (the business from the session; enforcement.test.ts), and the P1 criterion holds a fortiori: the app
+// cannot read them at all. P5.8: the activity record too — the app only inserts into it, and reads it through the
+// designated read functions alone (audit.read_merchant_events, the business from the session; audit-reads.test.ts).
+const NO_APP_ACCESS_TENANT_TABLES = [
+  'audit.audit_events',
+  'tenancy.role_permissions',
+  'tenancy.merchants',
+  'tenancy.branches',
+  'tenancy.roles',
+  'tenancy.invitations',
 ];
 
 let app: pg.Client;
@@ -49,19 +60,24 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
   it("B's rows are invisible even when addressed by exact id", async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
       const checks = [
-        [`SELECT 1 FROM tenancy.merchants WHERE id = $1`, B.merchantId],
         [`SELECT 1 FROM ledger.ledgers WHERE id = $1`, B.ledgerId],
         [`SELECT 1 FROM ledger.accounts WHERE id = $1`, B.cashAccountId],
         [`SELECT 1 FROM ledger.journal_entries WHERE id = $1`, B.entryId],
         [`SELECT 1 FROM ledger.journal_lines WHERE entry_id = $1`, B.entryId],
         [`SELECT 1 FROM ledger.balance_projection WHERE account_id = $1`, B.cashAccountId],
-        [`SELECT 1 FROM audit.audit_events WHERE id = $1`, B.auditEventId],
       ] as const;
       for (const [sql, id] of checks) {
         const { rowCount } = await db.query(sql, [id]);
         expect(rowCount, sql).toBe(0);
       }
     });
+  });
+
+  it.each(NO_APP_ACCESS_TENANT_TABLES)('%s: the app cannot read it at all, in any context', async (table) => {
+    for (const tenant of [MERCHANT_A, null])
+      await inTenantTx(app, tenant, (db) =>
+        expectSqlState(db.query(`SELECT 1 FROM ${table} LIMIT 1`), SQLSTATE.insufficientPrivilege),
+      );
   });
 
   it('the same connection sees B, and only B, when switched to B’s context', async () => {
@@ -174,15 +190,15 @@ describe('tenant A cannot write into tenant B', () => {
   it('may record tenant-less audit events, but not events for another tenant', async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
       await db.query(
-        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES (NULL, 'auth.login_failed', 'failure')`,
+        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES (NULL, 'auth.login', 'failure')`,
       );
       await db.query(
-        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'x.done', 'success')`,
+        `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'merchant.profile_updated', 'success')`,
         [MERCHANT_A],
       );
       await expectSqlState(
         db.query(
-          `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'x.done', 'success')`,
+          `INSERT INTO audit.audit_events (merchant_id, action, outcome) VALUES ($1, 'merchant.profile_updated', 'success')`,
           [MERCHANT_B],
         ),
         SQLSTATE.rlsViolation,
@@ -215,7 +231,9 @@ describe('catalog guard: no tenant table may ship without RLS', () => {
         AND (EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'merchant_id' AND NOT a.attisdropped)
              OR (n.nspname = 'tenancy' AND c.relname = 'merchants'))
       ORDER BY 1`);
-    expect(rows.map((r) => r.name).sort()).toEqual(TENANT_TABLES.map(([t]) => t).sort());
+    expect(rows.map((r) => r.name).sort()).toEqual(
+      [...TENANT_TABLES.map(([t]) => t), ...NO_APP_ACCESS_TENANT_TABLES].sort(),
+    );
     for (const r of rows) {
       expect({ table: r.name, rls: r.rls, appPolicy: r.app_policy }).toEqual({
         table: r.name,

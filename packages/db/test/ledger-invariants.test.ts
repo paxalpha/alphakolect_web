@@ -235,4 +235,27 @@ describe('audit event rules', () => {
       expectSqlState(db.query(sql, [A.merchantId]), SQLSTATE.checkViolation),
     );
   });
+
+  // P5.3a's catalog trigger (audit_events_validate) now refuses these rows first. The P1 CHECK constraints must still
+  // hold on their own beneath it: with the trigger switched off (owner, rolled back), each is refused by its CHECK.
+  it.each([
+    ['an unknown outcome', `VALUES ($1, 'auth.logout', 'maybe', '{}')`, 'audit_events_outcome_valid'],
+    ['a blank action', `VALUES ($1, '  ', 'success', '{}')`, 'audit_events_action_not_blank'],
+    [
+      'a non-object summary',
+      `VALUES ($1, 'auth.logout', 'success', '[1]')`,
+      'audit_events_summary_is_object',
+    ],
+  ])('rejects %s by its P1 CHECK, beneath the catalog trigger', async (_label, values, constraint) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
+      await db.query(`ALTER TABLE audit.audit_events DISABLE TRIGGER audit_events_validate`);
+      const err = await expectSqlState(
+        db.query(`INSERT INTO audit.audit_events (merchant_id, action, outcome, summary) ${values}`, [
+          A.merchantId,
+        ]),
+        SQLSTATE.checkViolation,
+      );
+      expect(err.constraint).toBe(constraint);
+    });
+  });
 });

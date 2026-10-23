@@ -16,7 +16,10 @@ const fail = (message: string): never => {
   process.exit(1);
 };
 
+// pnpm passes the `--` separator through to the script; drop it, or every option would count as positional.
+const argv = process.argv.slice(2);
 const { values } = parseArgs({
+  args: argv[0] === '--' ? argv.slice(1) : argv,
   options: { email: { type: 'string' }, 'allow-additional': { type: 'boolean', default: false } },
 });
 const email = z.email().safeParse(values.email);

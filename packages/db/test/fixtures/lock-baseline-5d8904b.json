@@ -1,0 +1,411 @@
+{
+  "comment": "Every function of the identity, tenancy, audit and util schemas as migrated at 5d8904b (origin/main, the P4 closure), dumped with pg_get_functiondef from a database built from that commit's migrations alone. The P5 lock-order guard's baseline control runs against these (P5 plan §7.2, R34). Regenerating it is never needed: these definitions do not change.",
+  "commit": "5d8904b",
+  "functions": [
+    {
+      "schema": "identity",
+      "name": "accept_totp_step",
+      "args": "p_identity_id uuid, p_step bigint",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.accept_totp_step(p_identity_id uuid, p_step bigint)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.totp_credentials SET last_used_step = p_step\n   WHERE identity_id = p_identity_id AND confirmed_at IS NOT NULL\n     AND (last_used_step IS NULL OR last_used_step < p_step);\n  RETURN FOUND;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "account_for_email",
+      "args": "p_email text",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.account_for_email(p_email text)\n RETURNS TABLE(identity_id uuid, identity_status text, email_verified boolean)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT i.id, i.status, i.email_verified_at IS NOT NULL\n    FROM identity.identities i WHERE i.email = lower(btrim(p_email));\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "active_membership",
+      "args": "p_identity_id uuid, p_audience text, p_membership_id uuid",
+      "lang": "sql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.active_membership(p_identity_id uuid, p_audience text, p_membership_id uuid)\n RETURNS uuid\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT pm.id FROM identity.platform_memberships pm\n   WHERE p_audience = 'platform' AND pm.id = p_membership_id AND pm.identity_id = p_identity_id AND pm.status = 'active'\n  UNION ALL\n  SELECT mm.id FROM tenancy.merchant_memberships mm\n    JOIN tenancy.merchants m ON m.id = mm.merchant_id AND m.status = 'active'\n   WHERE mm.id = p_membership_id AND mm.identity_id = p_identity_id AND mm.status = 'active'\n     AND ((p_audience = 'merchant' AND mm.kind IN ('owner', 'staff')) OR (p_audience = 'agent' AND mm.kind = 'agent'))\n  LIMIT 1;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "apply_new_password",
+      "args": "p_identity_id uuid, p_password_hash text, p_reason text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.apply_new_password(p_identity_id uuid, p_password_hash text, p_reason text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.identities\n     SET password_hash = p_password_hash, password_changed_at = now(), updated_at = now()\n   WHERE id = p_identity_id;\n  UPDATE identity.sessions SET revoked_at = now(), revoke_reason = p_reason\n   WHERE identity_id = p_identity_id AND revoked_at IS NULL;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "begin_totp_enrollment",
+      "args": "p_identity_id uuid, p_secret_ciphertext bytea, p_secret_key_id text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.begin_totp_enrollment(p_identity_id uuid, p_secret_ciphertext bytea, p_secret_key_id text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  IF EXISTS (SELECT 1 FROM identity.totp_credentials t WHERE t.identity_id = p_identity_id AND t.confirmed_at IS NOT NULL) THEN\n    RETURN false;\n  END IF;\n  INSERT INTO identity.totp_credentials (identity_id, secret_ciphertext, secret_key_id)\n  VALUES (p_identity_id, p_secret_ciphertext, p_secret_key_id)\n  ON CONFLICT (identity_id) DO UPDATE\n    SET secret_ciphertext = EXCLUDED.secret_ciphertext, secret_key_id = EXCLUDED.secret_key_id,\n        last_used_step = NULL, created_at = now();\n  RETURN true;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "bootstrap_super_admin",
+      "args": "p_email text, p_allow_additional boolean",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.bootstrap_super_admin(p_email text, p_allow_additional boolean)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_email text := lower(btrim(p_email));\n  v_identity uuid;\nBEGIN\n  IF NOT p_allow_additional AND EXISTS (\n       SELECT 1 FROM identity.platform_memberships pm WHERE pm.role = 'super_admin' AND pm.status = 'active') THEN\n    RAISE EXCEPTION 'a super admin already exists; pass allow_additional to add another' USING ERRCODE = 'check_violation';\n  END IF;\n\n  SELECT i.id INTO v_identity FROM identity.identities i WHERE i.email = v_email;\n  IF v_identity IS NULL THEN\n    INSERT INTO identity.identities (email) VALUES (v_email) RETURNING id INTO v_identity;\n  ELSIF EXISTS (SELECT 1 FROM identity.platform_memberships pm WHERE pm.identity_id = v_identity) THEN\n    RAISE EXCEPTION 'this identity already has a platform membership' USING ERRCODE = 'check_violation';\n  END IF;\n\n  INSERT INTO identity.platform_memberships (identity_id, role) VALUES (v_identity, 'super_admin');\n\n  INSERT INTO audit.audit_events (actor_identity_id, actor_audience, action, target_type, target_id, outcome, summary)\n  VALUES (NULL, 'platform', 'platform.super_admin_bootstrapped', 'identity', v_identity::text, 'success',\n          jsonb_build_object('additional', p_allow_additional));\n\n  RETURN v_identity;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "change_password",
+      "args": "p_identity_id uuid, p_password_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.change_password(p_identity_id uuid, p_password_hash text)\n RETURNS void\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  PERFORM identity.apply_new_password(p_identity_id, p_password_hash, 'password_changed');\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "complete_account_setup",
+      "args": "p_token_hash text, p_password_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.complete_account_setup(p_token_hash text, p_password_hash text)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_identity uuid := identity.consume_one_time_token('account_setup', p_token_hash);\n  v_invitation uuid;\nBEGIN\n  IF v_identity IS NULL THEN\n    RETURN NULL;\n  END IF;\n  IF EXISTS (SELECT 1 FROM identity.identities i WHERE i.id = v_identity AND i.password_hash IS NOT NULL) THEN\n    RETURN NULL;\n  END IF;\n  PERFORM identity.apply_new_password(v_identity, p_password_hash, 'account_setup');\n  UPDATE identity.identities SET email_verified_at = coalesce(email_verified_at, now()), updated_at = now()\n   WHERE id = v_identity;\n\n  -- ADR-15 T10: the identity's pending invitations become memberships, each re-checked now (an invalid one is\n  -- simply not admitted; the setup itself still completes).\n  FOR v_invitation IN\n    SELECT i.id FROM tenancy.invitations i\n     WHERE i.identity_id = v_identity AND i.accepted_at IS NULL AND i.revoked_at IS NULL\n     ORDER BY i.created_at, i.id\n  LOOP\n    PERFORM 1 FROM tenancy.admit_invitation(v_invitation, v_identity);\n  END LOOP;\n  RETURN v_identity;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "confirm_totp_enrollment",
+      "args": "p_identity_id uuid, p_step bigint, p_recovery_code_hashes text[]",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.confirm_totp_enrollment(p_identity_id uuid, p_step bigint, p_recovery_code_hashes text[])\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  IF coalesce(array_length(p_recovery_code_hashes, 1), 0) <> 10 THEN\n    RAISE EXCEPTION 'exactly 10 recovery codes are required' USING ERRCODE = 'check_violation';\n  END IF;\n  UPDATE identity.totp_credentials SET confirmed_at = now(), last_used_step = p_step\n   WHERE identity_id = p_identity_id AND confirmed_at IS NULL;\n  IF NOT FOUND THEN\n    RETURN false;\n  END IF;\n  DELETE FROM identity.recovery_codes WHERE identity_id = p_identity_id;\n  INSERT INTO identity.recovery_codes (identity_id, code_hash)\n  SELECT p_identity_id, h FROM unnest(p_recovery_code_hashes) AS h;\n  RETURN true;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "consume_mfa_challenge",
+      "args": "p_token_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.consume_mfa_challenge(p_token_hash text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.mfa_challenges SET consumed_at = now()\n   WHERE token_hash = p_token_hash AND consumed_at IS NULL AND expires_at > now();\n  RETURN FOUND;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "consume_one_time_token",
+      "args": "p_purpose text, p_token_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.consume_one_time_token(p_purpose text, p_token_hash text)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_token_id uuid;\n  v_identity uuid;\nBEGIN\n  SELECT t.id, t.identity_id INTO v_token_id, v_identity\n    FROM identity.one_time_tokens t\n    JOIN identity.identities i ON i.id = t.identity_id\n   WHERE t.token_hash = p_token_hash AND t.purpose = p_purpose\n     AND t.consumed_at IS NULL AND t.expires_at > now() AND i.status = 'active'\n   FOR UPDATE OF t;\n  IF NOT FOUND THEN\n    RETURN NULL;\n  END IF;\n  UPDATE identity.one_time_tokens SET consumed_at = now() WHERE id = v_token_id;\n  RETURN v_identity;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "consume_recovery_code",
+      "args": "p_identity_id uuid, p_code_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.consume_recovery_code(p_identity_id uuid, p_code_hash text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.recovery_codes SET used_at = now()\n   WHERE identity_id = p_identity_id AND code_hash = p_code_hash AND used_at IS NULL;\n  RETURN FOUND;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "create_mfa_challenge",
+      "args": "p_identity_id uuid, p_platform_membership_id uuid, p_token_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.create_mfa_challenge(p_identity_id uuid, p_platform_membership_id uuid, p_token_hash text)\n RETURNS timestamp with time zone\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_expires timestamptz := now() + interval '5 minutes';\nBEGIN\n  IF identity.active_membership(p_identity_id, 'platform', p_platform_membership_id) IS NULL THEN\n    RAISE EXCEPTION 'no active platform membership' USING ERRCODE = 'check_violation';\n  END IF;\n  INSERT INTO identity.mfa_challenges (identity_id, platform_membership_id, token_hash, expires_at)\n  VALUES (p_identity_id, p_platform_membership_id, p_token_hash, v_expires);\n  RETURN v_expires;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "create_session",
+      "args": "p_identity_id uuid, p_audience text, p_membership_id uuid, p_scope text, p_refresh_hash text, p_idle_seconds integer, p_absolute_seconds integer, p_ip text, p_user_agent text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.create_session(p_identity_id uuid, p_audience text, p_membership_id uuid, p_scope text, p_refresh_hash text, p_idle_seconds integer, p_absolute_seconds integer, p_ip text, p_user_agent text)\n RETURNS TABLE(session_id uuid, refresh_expires_at timestamp with time zone, absolute_expires_at timestamp with time zone)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_limits record;\n  v_session uuid;\n  v_absolute timestamptz;\n  v_refresh timestamptz;\nBEGIN\n  SELECT * INTO v_limits FROM identity.session_limits(p_audience, p_scope);\n  IF v_limits.idle_max IS NULL THEN\n    RAISE EXCEPTION 'unsupported audience' USING ERRCODE = 'check_violation';\n  END IF;\n  IF p_idle_seconds < 1 OR p_idle_seconds > v_limits.idle_max\n     OR p_absolute_seconds < p_idle_seconds OR p_absolute_seconds > v_limits.absolute_max THEN\n    RAISE EXCEPTION 'session lifetime out of range for %', p_audience USING ERRCODE = 'check_violation';\n  END IF;\n  IF NOT EXISTS (SELECT 1 FROM identity.identities i WHERE i.id = p_identity_id AND i.status = 'active') THEN\n    RAISE EXCEPTION 'identity is not active' USING ERRCODE = 'check_violation';\n  END IF;\n  IF identity.active_membership(p_identity_id, p_audience, p_membership_id) IS NULL THEN\n    RAISE EXCEPTION 'no active membership for this audience' USING ERRCODE = 'check_violation';\n  END IF;\n  IF p_audience = 'platform' AND p_scope = 'full' AND NOT EXISTS (\n       SELECT 1 FROM identity.totp_credentials t WHERE t.identity_id = p_identity_id AND t.confirmed_at IS NOT NULL) THEN\n    RAISE EXCEPTION 'platform sessions require a confirmed second factor' USING ERRCODE = 'check_violation';\n  END IF;\n\n  v_absolute := now() + make_interval(secs => p_absolute_seconds);\n  v_refresh := least(now() + make_interval(secs => p_idle_seconds), v_absolute);\n\n  INSERT INTO identity.sessions\n    (identity_id, audience, platform_membership_id, merchant_membership_id, scope, absolute_expires_at, created_ip, user_agent)\n  VALUES\n    (p_identity_id, p_audience,\n     CASE WHEN p_audience = 'platform' THEN p_membership_id END,\n     CASE WHEN p_audience <> 'platform' THEN p_membership_id END,\n     p_scope, v_absolute, p_ip, left(p_user_agent, 512))\n  RETURNING id INTO v_session;\n\n  INSERT INTO identity.refresh_tokens (session_id, token_hash, expires_at) VALUES (v_session, p_refresh_hash, v_refresh);\n\n  RETURN QUERY SELECT v_session, v_refresh, v_absolute;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "credentials_for",
+      "args": "p_identity_id uuid",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.credentials_for(p_identity_id uuid)\n RETURNS TABLE(identity_status text, password_hash text)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT i.status, i.password_hash FROM identity.identities i WHERE i.id = p_identity_id;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "eligible_memberships",
+      "args": "p_identity_id uuid, p_audience text",
+      "lang": "sql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.eligible_memberships(p_identity_id uuid, p_audience text)\n RETURNS TABLE(membership_id uuid, merchant_id uuid, merchant_name text, kind text)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT x.membership_id, x.merchant_id, x.merchant_name, x.kind\n    FROM identity.identities i\n    CROSS JOIN LATERAL (\n      SELECT pm.id AS membership_id, NULL::uuid AS merchant_id, NULL::text AS merchant_name, pm.role AS kind\n        FROM identity.platform_memberships pm\n       WHERE p_audience = 'platform' AND pm.identity_id = i.id AND pm.status = 'active' AND pm.role = 'super_admin'\n      UNION ALL\n      SELECT mm.id, m.id, m.name, mm.kind\n        FROM tenancy.merchant_memberships mm\n        JOIN tenancy.merchants m ON m.id = mm.merchant_id AND m.status = 'active'\n       WHERE mm.identity_id = i.id AND mm.status = 'active'\n         AND ((p_audience = 'merchant' AND mm.kind IN ('owner', 'staff')) OR (p_audience = 'agent' AND mm.kind = 'agent'))\n    ) x\n   WHERE i.id = p_identity_id AND i.status = 'active'\n   ORDER BY x.merchant_name NULLS FIRST, x.membership_id;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "issue_one_time_token",
+      "args": "p_identity_id uuid, p_purpose text, p_token_hash text, p_ttl_seconds integer, p_ip text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.issue_one_time_token(p_identity_id uuid, p_purpose text, p_token_hash text, p_ttl_seconds integer, p_ip text)\n RETURNS timestamp with time zone\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_max integer := CASE p_purpose\n                     WHEN 'email_verification' THEN 86400\n                     WHEN 'password_reset' THEN 1800\n                     WHEN 'account_setup' THEN 86400\n                   END;\n  v_expires timestamptz;\nBEGIN\n  IF v_max IS NULL THEN\n    RAISE EXCEPTION 'unknown token purpose' USING ERRCODE = 'check_violation';\n  END IF;\n  IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > v_max THEN\n    RAISE EXCEPTION 'token lifetime out of range for %', p_purpose USING ERRCODE = 'check_violation';\n  END IF;\n  IF p_purpose = 'account_setup' AND EXISTS (\n       SELECT 1 FROM identity.identities i WHERE i.id = p_identity_id AND i.password_hash IS NOT NULL) THEN\n    RAISE EXCEPTION 'account setup is only for identities without a password' USING ERRCODE = 'check_violation';\n  END IF;\n\n  UPDATE identity.one_time_tokens t SET expires_at = now()\n   WHERE t.identity_id = p_identity_id AND t.purpose = p_purpose\n     AND t.consumed_at IS NULL AND t.expires_at > now();\n\n  v_expires := now() + make_interval(secs => p_ttl_seconds);\n  INSERT INTO identity.one_time_tokens (identity_id, purpose, token_hash, expires_at, requested_ip)\n  VALUES (p_identity_id, p_purpose, p_token_hash, v_expires, p_ip);\n  RETURN v_expires;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "login_identity",
+      "args": "p_email text",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.login_identity(p_email text)\n RETURNS TABLE(identity_id uuid, identity_status text, email_verified boolean, password_hash text, mfa_enrolled boolean)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT i.id, i.status, i.email_verified_at IS NOT NULL, i.password_hash,\n         EXISTS (SELECT 1 FROM identity.totp_credentials t WHERE t.identity_id = i.id AND t.confirmed_at IS NOT NULL)\n    FROM identity.identities i\n   WHERE i.email = lower(btrim(p_email));\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "mfa_credential",
+      "args": "p_identity_id uuid",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.mfa_credential(p_identity_id uuid)\n RETURNS TABLE(secret_ciphertext bytea, secret_key_id text, confirmed boolean, last_used_step bigint)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT t.secret_ciphertext, t.secret_key_id, t.confirmed_at IS NOT NULL, t.last_used_step\n    FROM identity.totp_credentials t WHERE t.identity_id = p_identity_id;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "rehash_password",
+      "args": "p_identity_id uuid, p_expected_hash text, p_new_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.rehash_password(p_identity_id uuid, p_expected_hash text, p_new_hash text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.identities SET password_hash = p_new_hash, updated_at = now()\n   WHERE id = p_identity_id AND password_hash = p_expected_hash;\n  RETURN FOUND;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "reset_password",
+      "args": "p_token_hash text, p_password_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.reset_password(p_token_hash text, p_password_hash text)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_identity uuid := identity.consume_one_time_token('password_reset', p_token_hash);\nBEGIN\n  IF v_identity IS NULL THEN\n    RETURN NULL;\n  END IF;\n  PERFORM identity.apply_new_password(v_identity, p_password_hash, 'password_reset');\n  RETURN v_identity;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "resolve_login_membership",
+      "args": "p_identity_id uuid, p_audience text, p_challenge_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.resolve_login_membership(p_identity_id uuid, p_audience text, p_challenge_hash text)\n RETURNS TABLE(eligible_count integer, membership_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_count integer;\n  v_only uuid;\nBEGIN\n  SELECT count(*)::integer, (array_agg(e.membership_id))[1] INTO v_count, v_only\n    FROM identity.eligible_memberships(p_identity_id, p_audience) e;\n  IF v_count > 1 THEN\n    INSERT INTO identity.membership_selection_challenges (identity_id, audience, token_hash, expires_at)\n    VALUES (p_identity_id, p_audience, p_challenge_hash, now() + interval '5 minutes');\n    RETURN QUERY SELECT v_count, NULL::uuid;\n  ELSE\n    RETURN QUERY SELECT v_count, CASE WHEN v_count = 1 THEN v_only END;\n  END IF;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "revoke_all_sessions",
+      "args": "p_identity_id uuid, p_reason text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.revoke_all_sessions(p_identity_id uuid, p_reason text)\n RETURNS integer\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_count integer;\nBEGIN\n  UPDATE identity.sessions SET revoked_at = now(), revoke_reason = p_reason\n   WHERE identity_id = p_identity_id AND revoked_at IS NULL;\n  GET DIAGNOSTICS v_count = ROW_COUNT;\n  RETURN v_count;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "revoke_session",
+      "args": "p_session_id uuid, p_reason text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.revoke_session(p_session_id uuid, p_reason text)\n RETURNS boolean\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  UPDATE identity.sessions SET revoked_at = now(), revoke_reason = p_reason\n   WHERE id = p_session_id AND revoked_at IS NULL;\n  RETURN FOUND;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "rotate_refresh_token",
+      "args": "p_old_hash text, p_new_hash text, p_idle_seconds integer, p_audiences text[]",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.rotate_refresh_token(p_old_hash text, p_new_hash text, p_idle_seconds integer, p_audiences text[])\n RETURNS TABLE(outcome text, session_id uuid, identity_id uuid, audience text, membership_id uuid, scope text, refresh_expires_at timestamp with time zone)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_token identity.refresh_tokens%ROWTYPE;\n  v_session identity.sessions%ROWTYPE;\n  v_membership uuid;\n  v_refresh timestamptz;\n  v_idle_max integer;\n  v_idle integer;\nBEGIN\n  IF p_audiences IS NULL OR cardinality(p_audiences) = 0\n     OR NOT (p_audiences <@ ARRAY['platform', 'merchant', 'agent']) THEN\n    RAISE EXCEPTION 'p_audiences must name the session audiences this endpoint serves'\n      USING ERRCODE = 'check_violation';\n  END IF;\n\n  SELECT * INTO v_token FROM identity.refresh_tokens rt WHERE rt.token_hash = p_old_hash FOR UPDATE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'invalid', NULL::uuid, NULL::uuid, NULL::text, NULL::uuid, NULL::text, NULL::timestamptz;\n    RETURN;\n  END IF;\n  SELECT * INTO v_session FROM identity.sessions s WHERE s.id = v_token.session_id FOR UPDATE;\n\n  -- Another endpoint's token: refused with no side effect at all.\n  IF NOT (v_session.audience = ANY (p_audiences)) THEN\n    RETURN QUERY SELECT 'invalid', NULL::uuid, NULL::uuid, NULL::text, NULL::uuid, NULL::text, NULL::timestamptz;\n    RETURN;\n  END IF;\n\n  IF v_token.rotated_at IS NOT NULL THEN\n    UPDATE identity.sessions SET revoked_at = now(), revoke_reason = 'refresh_token_reuse'\n     WHERE id = v_session.id AND revoked_at IS NULL;\n    RETURN QUERY SELECT 'reuse_detected', v_session.id, v_session.identity_id, NULL::text, NULL::uuid, NULL::text, NULL::timestamptz;\n    RETURN;\n  END IF;\n\n  v_membership := coalesce(v_session.platform_membership_id, v_session.merchant_membership_id);\n  IF v_session.revoked_at IS NOT NULL OR v_session.absolute_expires_at <= now() OR v_token.expires_at <= now()\n     OR NOT EXISTS (SELECT 1 FROM identity.identities i WHERE i.id = v_session.identity_id AND i.status = 'active')\n     OR identity.active_membership(v_session.identity_id, v_session.audience, v_membership) IS NULL THEN\n    RETURN QUERY SELECT 'invalid', NULL::uuid, NULL::uuid, NULL::text, NULL::uuid, NULL::text, NULL::timestamptz;\n    RETURN;\n  END IF;\n  v_idle_max := (identity.session_limits(v_session.audience, v_session.scope)).idle_max;\n  v_idle := coalesce(p_idle_seconds, v_idle_max);\n  IF v_idle < 1 OR v_idle > v_idle_max THEN\n    RAISE EXCEPTION 'session lifetime out of range' USING ERRCODE = 'check_violation';\n  END IF;\n\n  v_refresh := least(now() + make_interval(secs => v_idle), v_session.absolute_expires_at);\n  UPDATE identity.refresh_tokens SET rotated_at = now() WHERE id = v_token.id;\n  INSERT INTO identity.refresh_tokens (session_id, token_hash, expires_at) VALUES (v_session.id, p_new_hash, v_refresh);\n\n  RETURN QUERY SELECT 'rotated', v_session.id, v_session.identity_id, v_session.audience, v_membership, v_session.scope, v_refresh;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "selection_choices",
+      "args": "p_challenge_hash text",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.selection_choices(p_challenge_hash text)\n RETURNS TABLE(membership_id uuid, merchant_name text, kind text)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT e.membership_id, e.merchant_name, e.kind\n    FROM identity.membership_selection_challenges c\n    CROSS JOIN LATERAL identity.eligible_memberships(c.identity_id, c.audience) e\n   WHERE c.token_hash = p_challenge_hash AND c.consumed_at IS NULL AND c.expires_at > now();\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "session_limits",
+      "args": "p_audience text, p_scope text, OUT idle_max integer, OUT absolute_max integer",
+      "lang": "sql",
+      "definer": false,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION identity.session_limits(p_audience text, p_scope text, OUT idle_max integer, OUT absolute_max integer)\n RETURNS record\n LANGUAGE sql\n IMMUTABLE\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT CASE\n           WHEN p_scope = 'mfa_enrollment' THEN 900\n           WHEN p_audience = 'platform' THEN 3600\n           WHEN p_audience = 'merchant' THEN 86400\n           WHEN p_audience = 'agent' THEN 2592000\n         END,\n         CASE\n           WHEN p_scope = 'mfa_enrollment' THEN 900\n           WHEN p_audience = 'platform' THEN 43200\n           WHEN p_audience = 'merchant' THEN 1209600\n           WHEN p_audience = 'agent' THEN 7776000\n         END;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "signup_merchant_owner",
+      "args": "p_email text, p_password_hash text, p_merchant_name text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.signup_merchant_owner(p_email text, p_password_hash text, p_merchant_name text)\n RETURNS TABLE(created boolean, identity_id uuid, merchant_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_email text := lower(btrim(p_email));\n  v_identity uuid;\n  v_merchant uuid;\nBEGIN\n  IF EXISTS (SELECT 1 FROM identity.identities i WHERE i.email = v_email) THEN\n    -- Not an error: the API answers exactly as for a new signup (anti-enumeration, D12).\n    RETURN QUERY SELECT false, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n\n  BEGIN\n    INSERT INTO identity.identities (email, password_hash) VALUES (v_email, p_password_hash)\n      RETURNING id INTO v_identity;\n  EXCEPTION WHEN unique_violation THEN\n    -- A concurrent signup won the race for this email.\n    RETURN QUERY SELECT false, NULL::uuid, NULL::uuid;\n    RETURN;\n  END;\n\n  INSERT INTO tenancy.merchants (name, status) VALUES (p_merchant_name, 'pending_verification')\n    RETURNING id INTO v_merchant;\n  INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind) VALUES (v_merchant, v_identity, 'owner');\n\n  RETURN QUERY SELECT true, v_identity, v_merchant;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "take_mfa_challenge_attempt",
+      "args": "p_token_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.take_mfa_challenge_attempt(p_token_hash text)\n RETURNS TABLE(identity_id uuid, platform_membership_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_challenge identity.mfa_challenges%ROWTYPE;\nBEGIN\n  UPDATE identity.mfa_challenges c SET attempts = c.attempts + 1\n   WHERE c.token_hash = p_token_hash AND c.consumed_at IS NULL AND c.expires_at > now() AND c.attempts < 5\n  RETURNING * INTO v_challenge;\n  IF NOT FOUND THEN\n    RETURN;\n  END IF;\n  IF identity.active_membership(v_challenge.identity_id, 'platform', v_challenge.platform_membership_id) IS NULL\n     OR NOT EXISTS (SELECT 1 FROM identity.identities i WHERE i.id = v_challenge.identity_id AND i.status = 'active') THEN\n    RETURN;\n  END IF;\n  RETURN QUERY SELECT v_challenge.identity_id, v_challenge.platform_membership_id;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "take_selection",
+      "args": "p_challenge_hash text, p_membership_id uuid",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.take_selection(p_challenge_hash text, p_membership_id uuid)\n RETURNS TABLE(identity_id uuid, audience text, membership_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_challenge identity.membership_selection_challenges%ROWTYPE;\nBEGIN\n  SELECT * INTO v_challenge FROM identity.membership_selection_challenges c\n   WHERE c.token_hash = p_challenge_hash\n   FOR UPDATE;\n  IF NOT FOUND OR v_challenge.consumed_at IS NOT NULL THEN\n    RETURN;\n  END IF;\n  UPDATE identity.membership_selection_challenges SET consumed_at = now() WHERE id = v_challenge.id;\n  IF v_challenge.expires_at <= now() THEN\n    RETURN;\n  END IF;\n  RETURN QUERY\n    SELECT v_challenge.identity_id, v_challenge.audience, e.membership_id\n      FROM identity.eligible_memberships(v_challenge.identity_id, v_challenge.audience) e\n     WHERE e.membership_id = p_membership_id;\nEND\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "validate_session",
+      "args": "p_session_id uuid",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.validate_session(p_session_id uuid)\n RETURNS TABLE(identity_id uuid, audience text, membership_id uuid, merchant_id uuid, scope text, kind text, role_id uuid, branch_id uuid)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT s.identity_id, s.audience, coalesce(s.platform_membership_id, s.merchant_membership_id), mm.merchant_id,\n         s.scope,\n         coalesce(mm.kind, pm.role), mm.role_id, mm.branch_id\n    FROM identity.sessions s\n    JOIN identity.identities i ON i.id = s.identity_id AND i.status = 'active'\n    LEFT JOIN tenancy.merchant_memberships mm ON mm.id = s.merchant_membership_id\n    LEFT JOIN identity.platform_memberships pm ON pm.id = s.platform_membership_id\n   WHERE s.id = p_session_id\n     AND s.revoked_at IS NULL\n     AND s.absolute_expires_at > now()\n     AND identity.active_membership(s.identity_id, s.audience, coalesce(s.platform_membership_id, s.merchant_membership_id)) IS NOT NULL;\n$function$\n"
+    },
+    {
+      "schema": "identity",
+      "name": "verify_email",
+      "args": "p_token_hash text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION identity.verify_email(p_token_hash text)\n RETURNS uuid\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_identity uuid := identity.consume_one_time_token('email_verification', p_token_hash);\nBEGIN\n  IF v_identity IS NULL THEN\n    RETURN NULL;\n  END IF;\n  UPDATE identity.identities SET email_verified_at = coalesce(email_verified_at, now()), updated_at = now()\n   WHERE id = v_identity;\n  -- BR-2.2: a business is real once its owner confirms the email.\n  UPDATE tenancy.merchants m SET status = 'active', updated_at = now()\n   WHERE m.status = 'pending_verification'\n     AND m.id IN (SELECT mm.merchant_id FROM tenancy.merchant_memberships mm\n                   WHERE mm.identity_id = v_identity AND mm.kind = 'owner');\n  RETURN v_identity;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "accept_invitation",
+      "args": "p_token_hash text, p_identity_id uuid",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.accept_invitation(p_token_hash text, p_identity_id uuid)\n RETURNS TABLE(outcome text, membership_id uuid, merchant_id uuid, invitation_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_id uuid;\nBEGIN\n  SELECT i.id INTO v_id FROM tenancy.invitations i WHERE i.token_hash = p_token_hash;\n  IF v_id IS NULL THEN\n    RETURN QUERY SELECT 'not_found', NULL::uuid, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n  RETURN QUERY SELECT a.outcome, a.membership_id, a.merchant_id, v_id\n                 FROM tenancy.admit_invitation(v_id, p_identity_id) a;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "admit_invitation",
+      "args": "p_invitation_id uuid, p_identity_id uuid",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.admit_invitation(p_invitation_id uuid, p_identity_id uuid)\n RETURNS TABLE(outcome text, membership_id uuid, merchant_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_inv tenancy.invitations%ROWTYPE;\n  v_membership uuid;\nBEGIN\n  SELECT * INTO v_inv FROM tenancy.invitations i WHERE i.id = p_invitation_id;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'not_found', NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n  -- Lock order as everywhere in tenancy: the merchant first, then rows under it.\n  PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_inv.merchant_id AND m.status = 'active' FOR SHARE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'merchant_inactive', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  END IF;\n  SELECT * INTO v_inv FROM tenancy.invitations i WHERE i.id = p_invitation_id FOR UPDATE;\n  IF v_inv.accepted_at IS NOT NULL THEN\n    RETURN QUERY SELECT 'used', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  ELSIF v_inv.revoked_at IS NOT NULL THEN\n    RETURN QUERY SELECT 'revoked', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  ELSIF v_inv.expires_at <= now() THEN\n    RETURN QUERY SELECT 'expired', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  ELSIF v_inv.identity_id IS DISTINCT FROM p_identity_id THEN\n    RETURN QUERY SELECT 'wrong_identity', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  END IF;\n\n  PERFORM 1 FROM identity.identities i\n   WHERE i.id = p_identity_id AND i.status = 'active' AND i.email_verified_at IS NOT NULL\n     AND i.password_hash IS NOT NULL AND i.email = v_inv.email\n     FOR SHARE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'identity_ineligible', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  END IF;\n\n  IF v_inv.kind = 'staff' THEN\n    PERFORM 1 FROM tenancy.roles r\n     WHERE r.id = v_inv.role_id AND r.merchant_id = v_inv.merchant_id AND r.status = 'active' FOR SHARE;\n    IF NOT FOUND OR (v_inv.branch_id IS NOT NULL AND NOT EXISTS (\n         SELECT 1 FROM tenancy.branches b\n          WHERE b.id = v_inv.branch_id AND b.merchant_id = v_inv.merchant_id AND b.status = 'active' FOR SHARE)) THEN\n      RETURN QUERY SELECT 'assignment_inactive', NULL::uuid, v_inv.merchant_id;\n      RETURN;\n    END IF;\n  END IF;\n\n  IF EXISTS (SELECT 1 FROM tenancy.merchant_memberships mm\n              WHERE mm.merchant_id = v_inv.merchant_id AND mm.identity_id = p_identity_id) THEN\n    RETURN QUERY SELECT 'already_member', NULL::uuid, v_inv.merchant_id;\n    RETURN;\n  END IF;\n\n  INSERT INTO tenancy.merchant_memberships (merchant_id, identity_id, kind, role_id, branch_id)\n  VALUES (v_inv.merchant_id, p_identity_id, v_inv.kind, v_inv.role_id, v_inv.branch_id)\n  RETURNING id INTO v_membership;\n  UPDATE tenancy.invitations i SET accepted_at = now(), accepted_membership_id = v_membership\n   WHERE i.id = v_inv.id;\n\n  RETURN QUERY SELECT 'ok', v_membership, v_inv.merchant_id;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "issue_invitation",
+      "args": "p_session_id uuid, p_email text, p_kind text, p_role_id uuid, p_branch_id uuid, p_token_hash text, p_setup_token_hash text, p_ttl_seconds integer",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.issue_invitation(p_session_id uuid, p_email text, p_kind text, p_role_id uuid, p_branch_id uuid, p_token_hash text, p_setup_token_hash text, p_ttl_seconds integer)\n RETURNS TABLE(outcome text, invitation_id uuid, expires_at timestamp with time zone, delivery text)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_merchant uuid;\n  v_inviter uuid;\n  v_email text := lower(btrim(p_email));\n  v_identity identity.identities%ROWTYPE;\n  v_delivery text;\n  v_expires timestamptz;\n  v_id uuid;\nBEGIN\n  IF p_kind NOT IN ('staff', 'agent') THEN\n    RAISE EXCEPTION 'invitations are for staff or agents' USING ERRCODE = 'check_violation';\n  END IF;\n  IF p_ttl_seconds IS NULL OR p_ttl_seconds < 60 OR p_ttl_seconds > 86400 THEN\n    RAISE EXCEPTION 'invitation lifetime out of range' USING ERRCODE = 'check_violation';\n  END IF;\n\n  -- The session's business; authority decided under its lock (as tenancy.update_membership).\n  SELECT v.merchant_id INTO v_merchant FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';\n  IF v_merchant IS NOT NULL THEN\n    PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_merchant FOR SHARE;\n    SELECT v.merchant_id, v.membership_id INTO v_merchant, v_inviter FROM identity.validate_session(p_session_id) v\n     WHERE v.audience = 'merchant' AND v.scope = 'full' AND v.kind = 'owner' AND v.merchant_id = v_merchant;\n  END IF;\n  IF v_merchant IS NULL THEN\n    RETURN QUERY SELECT 'forbidden', NULL::uuid, NULL::timestamptz, NULL::text;\n    RETURN;\n  END IF;\n\n  IF (p_kind = 'agent' AND (p_role_id IS NOT NULL OR p_branch_id IS NOT NULL))\n     OR (p_kind = 'staff' AND NOT EXISTS (\n           SELECT 1 FROM tenancy.roles r\n            WHERE r.id = p_role_id AND r.merchant_id = v_merchant AND r.status = 'active' FOR SHARE))\n     OR (p_kind = 'staff' AND p_branch_id IS NOT NULL AND NOT EXISTS (\n           SELECT 1 FROM tenancy.branches b\n            WHERE b.id = p_branch_id AND b.merchant_id = v_merchant AND b.status = 'active' FOR SHARE)) THEN\n    RETURN QUERY SELECT 'invalid_assignment', NULL::uuid, NULL::timestamptz, NULL::text;\n    RETURN;\n  END IF;\n\n  -- The identity of this email: created (passwordless, unverified) if there is none.\n  INSERT INTO identity.identities (email) VALUES (v_email) ON CONFLICT (email) DO NOTHING;\n  SELECT * INTO v_identity FROM identity.identities i WHERE i.email = v_email FOR SHARE;\n\n  IF EXISTS (SELECT 1 FROM tenancy.merchant_memberships mm\n              WHERE mm.merchant_id = v_merchant AND mm.identity_id = v_identity.id) THEN\n    RETURN QUERY SELECT 'already_member', NULL::uuid, NULL::timestamptz, NULL::text;\n    RETURN;\n  END IF;\n\n  v_delivery := CASE\n    WHEN v_identity.status <> 'active' THEN 'none'\n    WHEN v_identity.password_hash IS NULL THEN 'setup'\n    ELSE 'accept'\n  END;\n  IF v_delivery = 'setup' THEN\n    PERFORM identity.issue_one_time_token(v_identity.id, 'account_setup', p_setup_token_hash, p_ttl_seconds, NULL);\n  END IF;\n\n  UPDATE tenancy.invitations i SET revoked_at = now()\n   WHERE i.merchant_id = v_merchant AND i.email = v_email AND i.accepted_at IS NULL AND i.revoked_at IS NULL;\n\n  v_expires := now() + make_interval(secs => p_ttl_seconds);\n  INSERT INTO tenancy.invitations\n    (merchant_id, email, kind, role_id, branch_id, identity_id, invited_by_membership_id, token_hash, expires_at)\n  VALUES (v_merchant, v_email, p_kind, p_role_id, p_branch_id, v_identity.id, v_inviter, p_token_hash, v_expires)\n  RETURNING id INTO v_id;\n\n  RETURN QUERY SELECT 'ok', v_id, v_expires, v_delivery;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "list_members",
+      "args": "p_session_id uuid, p_membership_id uuid",
+      "lang": "sql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.list_members(p_session_id uuid, p_membership_id uuid DEFAULT NULL::uuid)\n RETURNS TABLE(membership_id uuid, kind text, status text, role_id uuid, branch_id uuid, email text, created_at timestamp with time zone, deactivated_at timestamp with time zone)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  SELECT mm.id, mm.kind, mm.status, mm.role_id, mm.branch_id, i.email, mm.created_at, mm.deactivated_at\n    FROM identity.validate_session(p_session_id) v\n    JOIN tenancy.merchant_memberships mm ON mm.merchant_id = v.merchant_id\n    JOIN identity.identities i ON i.id = mm.identity_id\n   WHERE v.audience = 'merchant' AND v.scope = 'full' AND v.kind = 'owner'\n     AND (p_membership_id IS NULL OR mm.id = p_membership_id)\n   ORDER BY mm.created_at, mm.id;\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "merchant_keeps_one_owner",
+      "args": "",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.merchant_keeps_one_owner()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  IF NOT EXISTS (\n    SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = OLD.merchant_id AND kind = 'owner'\n  ) THEN\n    RAISE EXCEPTION 'merchant % would have no owner (ADR-15 T17: transfer ownership instead)', OLD.merchant_id\n      USING ERRCODE = 'check_violation';\n  END IF;\n  RETURN NULL;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "revoke_invitation",
+      "args": "p_session_id uuid, p_invitation_id uuid",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.revoke_invitation(p_session_id uuid, p_invitation_id uuid)\n RETURNS TABLE(outcome text, invitation_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_merchant uuid;\n  v_inv tenancy.invitations%ROWTYPE;\nBEGIN\n  SELECT v.merchant_id INTO v_merchant FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';\n  IF v_merchant IS NOT NULL THEN\n    PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_merchant FOR SHARE;\n    SELECT v.merchant_id INTO v_merchant FROM identity.validate_session(p_session_id) v\n     WHERE v.audience = 'merchant' AND v.scope = 'full' AND v.kind = 'owner' AND v.merchant_id = v_merchant;\n  END IF;\n  IF v_merchant IS NULL THEN\n    RETURN QUERY SELECT 'forbidden', NULL::uuid;\n    RETURN;\n  END IF;\n\n  SELECT * INTO v_inv FROM tenancy.invitations i\n   WHERE i.id = p_invitation_id AND i.merchant_id = v_merchant\n     FOR UPDATE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'not_found', NULL::uuid;\n    RETURN;\n  END IF;\n  IF v_inv.accepted_at IS NOT NULL OR v_inv.revoked_at IS NOT NULL THEN\n    RETURN QUERY SELECT 'invalid_transition', v_inv.id;\n    RETURN;\n  END IF;\n  UPDATE tenancy.invitations i SET revoked_at = now() WHERE i.id = v_inv.id;\n  RETURN QUERY SELECT 'ok', v_inv.id;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "set_merchant_status",
+      "args": "p_session_id uuid, p_merchant_id uuid, p_action text, p_reason text",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.set_merchant_status(p_session_id uuid, p_merchant_id uuid, p_action text, p_reason text)\n RETURNS TABLE(outcome text, status text, actor_identity_id uuid, actor_membership_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_actor_identity uuid;\n  v_actor_membership uuid;\n  v_owner_verified boolean;\n  v_status text;\n  v_new text;\n  v_reason text := btrim(p_reason);\nBEGIN\n  IF p_action NOT IN ('deactivate', 'reactivate') THEN\n    RAISE EXCEPTION 'unknown lifecycle action' USING ERRCODE = 'check_violation';\n  END IF;\n\n  SELECT v.identity_id, v.membership_id INTO v_actor_identity, v_actor_membership\n    FROM identity.validate_session(p_session_id) v\n    JOIN identity.platform_memberships pm ON pm.id = v.membership_id AND pm.role = 'super_admin'\n   WHERE v.audience = 'platform' AND v.scope = 'full';\n  IF v_actor_identity IS NULL THEN\n    RETURN QUERY SELECT 'forbidden', NULL::text, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n\n  -- The owner's verification decides where a reactivation lands (BR-2.2); lock it before the merchant row.\n  SELECT i.email_verified_at IS NOT NULL INTO v_owner_verified\n    FROM tenancy.merchant_memberships mm\n    JOIN identity.identities i ON i.id = mm.identity_id\n   WHERE mm.merchant_id = p_merchant_id AND mm.kind = 'owner'\n     FOR SHARE OF i;\n\n  SELECT m.status INTO v_status FROM tenancy.merchants m WHERE m.id = p_merchant_id FOR UPDATE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'not_found', NULL::text, v_actor_identity, v_actor_membership;\n    RETURN;\n  END IF;\n\n  IF p_action = 'deactivate' THEN\n    IF v_status NOT IN ('active', 'pending_verification') THEN\n      RETURN QUERY SELECT 'invalid_transition', v_status, v_actor_identity, v_actor_membership;\n      RETURN;\n    END IF;\n    IF v_reason IS NULL OR char_length(v_reason) NOT BETWEEN 1 AND 500 THEN\n      RETURN QUERY SELECT 'invalid_reason', v_status, v_actor_identity, v_actor_membership;\n      RETURN;\n    END IF;\n    v_new := 'deactivated';\n    UPDATE tenancy.merchants\n       SET status = v_new, deactivated_at = now(), deactivation_reason = v_reason, updated_at = now()\n     WHERE id = p_merchant_id;\n  ELSE\n    IF v_status <> 'deactivated' THEN\n      RETURN QUERY SELECT 'invalid_transition', v_status, v_actor_identity, v_actor_membership;\n      RETURN;\n    END IF;\n    -- Never verifies anything: an unverified owner's business goes back to pending_verification (BR-2.2).\n    v_new := CASE WHEN coalesce(v_owner_verified, false) THEN 'active' ELSE 'pending_verification' END;\n    UPDATE tenancy.merchants\n       SET status = v_new, deactivated_at = NULL, deactivation_reason = NULL, updated_at = now()\n     WHERE id = p_merchant_id;\n  END IF;\n\n  RETURN QUERY SELECT 'ok', v_new, v_actor_identity, v_actor_membership;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "transfer_ownership",
+      "args": "p_session_id uuid, p_merchant_id uuid, p_new_owner_membership_id uuid, p_former_owner_role_id uuid, p_deactivate_former boolean",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.transfer_ownership(p_session_id uuid, p_merchant_id uuid, p_new_owner_membership_id uuid, p_former_owner_role_id uuid, p_deactivate_former boolean)\n RETURNS TABLE(outcome text, former_owner_membership_id uuid, former_owner_identity_id uuid, new_owner_identity_id uuid, actor_identity_id uuid, actor_membership_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_actor_identity uuid;\n  v_actor_membership uuid;\n  v_former tenancy.merchant_memberships%ROWTYPE;\n  v_new tenancy.merchant_memberships%ROWTYPE;\nBEGIN\n  IF p_deactivate_former IS NULL THEN\n    RAISE EXCEPTION 'p_deactivate_former is required' USING ERRCODE = 'null_value_not_allowed';\n  END IF;\n\n  SELECT v.identity_id, v.membership_id INTO v_actor_identity, v_actor_membership\n    FROM identity.validate_session(p_session_id) v\n    JOIN identity.platform_memberships pm ON pm.id = v.membership_id AND pm.role = 'super_admin'\n   WHERE v.audience = 'platform' AND v.scope = 'full';\n  IF v_actor_identity IS NULL THEN\n    RETURN QUERY SELECT 'forbidden', NULL::uuid, NULL::uuid, NULL::uuid, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n\n  PERFORM 1 FROM tenancy.merchants m WHERE m.id = p_merchant_id FOR UPDATE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'not_found', NULL::uuid, NULL::uuid, NULL::uuid, v_actor_identity, v_actor_membership;\n    RETURN;\n  END IF;\n\n  PERFORM 1 FROM tenancy.merchant_memberships mm\n   WHERE mm.merchant_id = p_merchant_id AND (mm.kind = 'owner' OR mm.id = p_new_owner_membership_id)\n   ORDER BY mm.id\n     FOR UPDATE;\n  SELECT * INTO v_former FROM tenancy.merchant_memberships mm\n   WHERE mm.merchant_id = p_merchant_id AND mm.kind = 'owner';\n  IF NOT FOUND THEN\n    RAISE EXCEPTION 'merchant % has no owner', p_merchant_id USING ERRCODE = 'check_violation';\n  END IF;\n  SELECT * INTO v_new FROM tenancy.merchant_memberships mm\n   WHERE mm.id = p_new_owner_membership_id AND mm.merchant_id = p_merchant_id\n     AND mm.kind = 'staff' AND mm.status = 'active';\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'invalid_new_owner', v_former.id, v_former.identity_id, NULL::uuid, v_actor_identity,\n                        v_actor_membership;\n    RETURN;\n  END IF;\n  PERFORM 1 FROM identity.identities i\n   WHERE i.id = v_new.identity_id AND i.status = 'active' AND i.email_verified_at IS NOT NULL\n     FOR SHARE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'invalid_new_owner', v_former.id, v_former.identity_id, NULL::uuid, v_actor_identity,\n                        v_actor_membership;\n    RETURN;\n  END IF;\n  PERFORM 1 FROM tenancy.roles r\n   WHERE r.id = p_former_owner_role_id AND r.merchant_id = p_merchant_id AND r.status = 'active'\n     FOR SHARE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'invalid_role', v_former.id, v_former.identity_id, v_new.identity_id, v_actor_identity,\n                        v_actor_membership;\n    RETURN;\n  END IF;\n\n  -- Demote first: never two owners, not even inside this transaction.\n  UPDATE tenancy.merchant_memberships mm\n     SET kind = 'staff', role_id = p_former_owner_role_id, branch_id = NULL,\n         status = CASE WHEN p_deactivate_former THEN 'deactivated' ELSE mm.status END,\n         deactivated_at = CASE WHEN p_deactivate_former THEN coalesce(mm.deactivated_at, now()) ELSE mm.deactivated_at END\n   WHERE mm.id = v_former.id;\n  IF p_deactivate_former THEN\n    UPDATE identity.sessions s SET revoked_at = now(), revoke_reason = 'ownership_transferred'\n     WHERE s.merchant_membership_id = v_former.id AND s.revoked_at IS NULL;\n  END IF;\n\n  UPDATE tenancy.merchant_memberships mm SET kind = 'owner', role_id = NULL, branch_id = NULL\n   WHERE mm.id = v_new.id;\n\n  RETURN QUERY SELECT 'ok', v_former.id, v_former.identity_id, v_new.identity_id, v_actor_identity,\n                      v_actor_membership;\nEND\n$function$\n"
+    },
+    {
+      "schema": "tenancy",
+      "name": "update_membership",
+      "args": "p_session_id uuid, p_membership_id uuid, p_action text, p_role_id uuid, p_branch_id uuid",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION tenancy.update_membership(p_session_id uuid, p_membership_id uuid, p_action text, p_role_id uuid, p_branch_id uuid)\n RETURNS TABLE(outcome text, membership_id uuid, kind text, status text, role_id uuid, branch_id uuid)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_merchant uuid;\n  v_target tenancy.merchant_memberships%ROWTYPE;\nBEGIN\n  IF p_action NOT IN ('assign', 'deactivate', 'reactivate') THEN\n    RAISE EXCEPTION 'unknown membership action' USING ERRCODE = 'check_violation';\n  END IF;\n\n  -- Which business: the session's. Whether the caller may act is decided only after locking it (below).\n  SELECT v.merchant_id INTO v_merchant FROM identity.validate_session(p_session_id) v\n   WHERE v.audience = 'merchant';\n  IF v_merchant IS NOT NULL THEN\n    PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_merchant FOR SHARE;\n    -- Authority, under the lock: an ownership transfer that committed meanwhile is visible now.\n    SELECT v.merchant_id INTO v_merchant FROM identity.validate_session(p_session_id) v\n     WHERE v.audience = 'merchant' AND v.scope = 'full' AND v.kind = 'owner' AND v.merchant_id = v_merchant;\n  END IF;\n  IF v_merchant IS NULL THEN\n    RETURN QUERY SELECT 'forbidden', NULL::uuid, NULL::text, NULL::text, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n\n  SELECT * INTO v_target FROM tenancy.merchant_memberships mm\n   WHERE mm.id = p_membership_id AND mm.merchant_id = v_merchant\n     FOR UPDATE;\n  IF NOT FOUND THEN\n    RETURN QUERY SELECT 'not_found', NULL::uuid, NULL::text, NULL::text, NULL::uuid, NULL::uuid;\n    RETURN;\n  END IF;\n  IF v_target.kind = 'owner' THEN\n    RETURN QUERY SELECT 'owner_protected', v_target.id, v_target.kind, v_target.status, v_target.role_id,\n                        v_target.branch_id;\n    RETURN;\n  END IF;\n\n  IF p_action = 'assign' THEN\n    IF v_target.kind <> 'staff' THEN\n      RETURN QUERY SELECT 'invalid_target', v_target.id, v_target.kind, v_target.status, v_target.role_id,\n                          v_target.branch_id;\n      RETURN;\n    END IF;\n    -- Missing, archived and another merchant's role or branch are one answer: nothing about them is revealed.\n    PERFORM 1 FROM tenancy.roles r\n      WHERE r.id = p_role_id AND r.merchant_id = v_merchant AND r.status = 'active' FOR SHARE;\n    IF NOT FOUND OR (p_branch_id IS NOT NULL AND NOT EXISTS (\n         SELECT 1 FROM tenancy.branches b\n          WHERE b.id = p_branch_id AND b.merchant_id = v_merchant AND b.status = 'active' FOR SHARE)) THEN\n      RETURN QUERY SELECT 'invalid_assignment', v_target.id, v_target.kind, v_target.status, v_target.role_id,\n                          v_target.branch_id;\n      RETURN;\n    END IF;\n    UPDATE tenancy.merchant_memberships mm SET role_id = p_role_id, branch_id = p_branch_id\n     WHERE mm.id = v_target.id\n    RETURNING * INTO v_target;\n\n  ELSIF p_action = 'deactivate' THEN\n    IF v_target.status <> 'active' THEN\n      RETURN QUERY SELECT 'invalid_transition', v_target.id, v_target.kind, v_target.status, v_target.role_id,\n                          v_target.branch_id;\n      RETURN;\n    END IF;\n    UPDATE tenancy.merchant_memberships mm SET status = 'deactivated', deactivated_at = now()\n     WHERE mm.id = v_target.id\n    RETURNING * INTO v_target;\n    UPDATE identity.sessions s SET revoked_at = now(), revoke_reason = 'membership_deactivated'\n     WHERE s.merchant_membership_id = v_target.id AND s.revoked_at IS NULL;\n\n  ELSE\n    IF v_target.status <> 'deactivated' THEN\n      RETURN QUERY SELECT 'invalid_transition', v_target.id, v_target.kind, v_target.status, v_target.role_id,\n                          v_target.branch_id;\n      RETURN;\n    END IF;\n    UPDATE tenancy.merchant_memberships mm SET status = 'active', deactivated_at = NULL\n     WHERE mm.id = v_target.id\n    RETURNING * INTO v_target;\n  END IF;\n\n  RETURN QUERY SELECT 'ok', v_target.id, v_target.kind, v_target.status, v_target.role_id, v_target.branch_id;\nEND\n$function$\n"
+    },
+    {
+      "schema": "util",
+      "name": "current_merchant_id",
+      "args": "",
+      "lang": "sql",
+      "definer": false,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION util.current_merchant_id()\n RETURNS uuid\n LANGUAGE sql\n STABLE PARALLEL SAFE\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\n  -- current_setting(..., true) is NULL if never set and '' after a SET LOCAL transaction ends.\n  SELECT nullif(current_setting('app.merchant_id', true), '')::uuid;\n$function$\n"
+    },
+    {
+      "schema": "util",
+      "name": "rate_limit_hit",
+      "args": "p_key text, p_window_seconds integer, p_max integer",
+      "lang": "plpgsql",
+      "definer": true,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION util.rate_limit_hit(p_key text, p_window_seconds integer, p_max integer)\n RETURNS TABLE(allowed boolean, retry_after_seconds integer)\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nDECLARE\n  v_window_start timestamptz;\n  v_hits integer;\nBEGIN\n  IF p_key IS NULL OR length(p_key) NOT BETWEEN 1 AND 200\n     OR p_window_seconds NOT BETWEEN 1 AND 86400 OR p_max NOT BETWEEN 1 AND 100000 THEN\n    RAISE EXCEPTION 'invalid rate limit arguments' USING ERRCODE = 'check_violation';\n  END IF;\n\n  v_window_start := to_timestamp(floor(extract(epoch FROM now()) / p_window_seconds) * p_window_seconds);\n\n  INSERT INTO util.rate_limit_counters (key, window_start, hits, expires_at)\n  VALUES (p_key, v_window_start, 1, v_window_start + make_interval(secs => p_window_seconds))\n  ON CONFLICT (key, window_start) DO UPDATE SET hits = util.rate_limit_counters.hits + 1\n  RETURNING hits INTO v_hits;\n\n  -- Bounded housekeeping so the table cannot grow without limit.\n  DELETE FROM util.rate_limit_counters\n   WHERE ctid = ANY (ARRAY(SELECT ctid FROM util.rate_limit_counters WHERE expires_at < now() LIMIT 100));\n\n  RETURN QUERY SELECT v_hits <= p_max,\n                      greatest(1, ceil(extract(epoch FROM (v_window_start + make_interval(secs => p_window_seconds)) - now()))::integer);\nEND\n$function$\n"
+    },
+    {
+      "schema": "util",
+      "name": "reject_modification",
+      "args": "",
+      "lang": "plpgsql",
+      "definer": false,
+      "executors": [],
+      "def": "CREATE OR REPLACE FUNCTION util.reject_modification()\n RETURNS trigger\n LANGUAGE plpgsql\n SET search_path TO 'pg_catalog', 'pg_temp'\nAS $function$\nBEGIN\n  RAISE EXCEPTION '%.% is append-only: % is not allowed', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP\n    USING ERRCODE = 'restrict_violation';\nEND\n$function$\n"
+    },
+    {
+      "schema": "util",
+      "name": "uuid_v7",
+      "args": "",
+      "lang": "sql",
+      "definer": false,
+      "executors": ["alphakolect_app"],
+      "def": "CREATE OR REPLACE FUNCTION util.uuid_v7()\n RETURNS uuid\n LANGUAGE sql\n PARALLEL SAFE\nAS $function$\n  SELECT encode(\n    set_bit(\n      set_bit(\n        overlay(uuid_send(gen_random_uuid())\n                PLACING substring(int8send(floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint) FROM 3)\n                FROM 1 FOR 6),\n        52, 1),\n      53, 1),\n    'hex')::uuid;\n$function$\n"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
+import type { Permission } from '@alphakolect/contracts';
 import type { Db, Queryable } from './db.js';
-import { AppError } from './errors.js';
 import type { AuthContext } from './http/authenticate.js';
 
 // TenantContext and tenant-scoped transactions (TARGET_ARCHITECTURE §4, ADR-15 T3, T5, T14).
@@ -20,10 +20,14 @@ export type TenantContext = Readonly<{
   sessionId: string;
   audience: 'merchant' | 'agent';
   kind: MembershipKind;
-  /** Staff only: their merchant-defined role (data only until P5). */
+  /** Staff only: their merchant-defined role, whose grants are their permissions (ADR-16). */
   roleId: string | null;
   /** Staff only: the one branch they are restricted to; null = all branches (ADR-15 T7). */
   branchId: string | null;
+  /** The restricting branch's state (active | archived); null when unrestricted. */
+  branchStatus: string | null;
+  /** Effective permissions from this request's resolver (P5.2, ADR-16); the database still decides every write. */
+  permissions: readonly Permission[];
 }>;
 
 export type TenantTx = Queryable & { readonly tenant: TenantContext };
@@ -50,6 +54,8 @@ export function tenantContextOf(auth: AuthContext | undefined): TenantContext {
     kind: auth.kind as MembershipKind,
     roleId: auth.roleId,
     branchId: auth.branchId,
+    branchStatus: auth.branchStatus,
+    permissions: auth.permissions,
   });
 }
 
@@ -69,14 +75,4 @@ export function withTenant<T>(db: Db, tenant: TenantContext, fn: (tx: TenantTx) 
 export function scopeOf(tx: TenantTx): TenantContext {
   if (!opened.has(tx)) throw new Error('Tenant data requires a transaction opened by withTenant');
   return tx.tenant;
-}
-
-/**
- * ADR-15 T9, the P4 interim check, kept in this one place: merchant-management endpoints require the owner.
- * Replaced wholesale by P5 policies — not a permission system.
- */
-export function requireOwner(tenant: TenantContext): void {
-  if (tenant.kind !== 'owner') {
-    throw new AppError(403, 'FORBIDDEN', 'Only the business owner can do this');
-  }
 }

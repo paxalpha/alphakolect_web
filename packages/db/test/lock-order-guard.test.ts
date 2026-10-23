@@ -111,6 +111,10 @@ describe('enforcing mode (R34): no finding at all', () => {
       'ledger.accounts(ledger_id, code, subject_type, subject_id)',
       'ledger.balance_projection(account_id)',
       'ledger.balance_projection(merchant_id, account_id)',
+      // P6: a posting's entry, under its key and (a reversal) its original (TA-4)
+      'ledger.journal_entries(ledger_id, idempotency_key)',
+      'ledger.journal_entries(merchant_id, idempotency_key)',
+      'ledger.journal_entries(reverses_entry_id) partial',
       'ledger.ledgers(merchant_id)',
       'ledger.ledgers(owner_kind) partial',
       // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))
@@ -123,6 +127,8 @@ describe('enforcing mode (R34): no finding at all', () => {
       'tenancy.roles(merchant_id, <expr>) partial',
       // P5.5 step 6: the containment switch's one-row key (updated only, never inserted by a function)
       'util.authorization_containment(id)',
+      // P6 (TA-6): a command's claim
+      'util.idempotency_records(merchant_id, identity_id, operation, idem_key)',
       'util.rate_limit_counters(key, window_start)',
     ]);
   });

@@ -30,6 +30,8 @@ const LEDGER_TABLES = [
 ];
 const NO_APP_ACCESS_TENANT_TABLES = [
   ...LEDGER_TABLES,
+  // P6 (TA-6): a command's idempotency claims, through util.claim_idempotency and the commands alone
+  'util.idempotency_records',
   'audit.audit_events',
   'tenancy.role_permissions',
   'tenancy.merchants',
@@ -189,7 +191,8 @@ describe('alphakolect_readonly (reporting)', () => {
     const { rows } = await readonly.query(
       `SELECT DISTINCT merchant_id::text AS m FROM ledger.journal_lines ORDER BY 1`,
     );
-    expect(rows.map((r) => r.m)).toEqual([MERCHANT_A, MERCHANT_B].sort());
+    // Both fixture businesses at least: other suites (the ledger's, P6) post for businesses of their own.
+    expect(rows.map((r) => r.m)).toEqual(expect.arrayContaining([MERCHANT_A, MERCHANT_B]));
   });
 });
 

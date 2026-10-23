@@ -29,6 +29,12 @@ const APPROVED: Record<string, string> = {
   'merchant.invitations.manage': 'Invite new staff and agents, and cancel invitations. Owner only.',
   'merchant.audit.read':
     'See everything that happened in the business, including refused attempts. Owner only.',
+  // P6: the books' permissions — approved by the owner as written on 2026-10-23
+  // (docs/business/P6_OWNER_LEDGER_PERMISSIONS.md, Q1; Q2: all three grantable to staff)
+  'merchant.ledger.read':
+    'See the accounts and their balances, account statements, journal entries and the financial reports.',
+  'merchant.ledger.manage': "Add the business's own accounts to its chart of accounts.",
+  'merchant.ledger.post': 'Post manual journal entries, and reverse them.',
 };
 
 describe('the merchant permission descriptions (O13)', () => {

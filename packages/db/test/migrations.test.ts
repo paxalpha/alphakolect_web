@@ -61,6 +61,7 @@ const TABLES = [
   'tenancy.role_permissions',
   'tenancy.roles',
   'util.authorization_containment',
+  'util.idempotency_records',
   'util.rate_limit_counters',
 ];
 

@@ -45,6 +45,7 @@ model Merchant {
   journalEntries    JournalEntry[]
   journalLines      JournalLine[]
   balanceProjection BalanceProjection[]
+  idempotencyRecords IdempotencyRecord[]
   auditEvents       AuditEvent[]
   memberships       MerchantMembership[]
   branches          Branch[]
@@ -449,6 +450,7 @@ model Identity {
   totpCredential                TotpCredential?
   recoveryCodes                 RecoveryCode[]
   journalEntries                JournalEntry[]                 @relation("JournalEntryCreator")
+  idempotencyRecords            IdempotencyRecord[]
   auditEvents                   AuditEvent[]                   @relation("AuditActor")
 
   @@map("identities")
@@ -732,6 +734,30 @@ model RateLimitCounter {
   @@id([key, windowStart])
   @@index([expiresAt])
   @@map("rate_limit_counters")
+  @@schema("util")
+}
+
+/// A command's idempotency key (P6, TA-6): claimed in its own transaction (util.claim_idempotency), locked first and
+/// completed with its response by the command's function, released when the command is refused. Reached only through
+/// those functions.
+model IdempotencyRecord {
+  id          String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId  String    @map("merchant_id") @db.Uuid
+  identityId  String    @map("identity_id") @db.Uuid
+  operation   String
+  idemKey     String    @map("idem_key")
+  fingerprint String
+  state       String    @default("in_progress")
+  response    Json?
+  claimedAt   DateTime  @default(now()) @map("claimed_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "idempotency_records_merchant_fkey")
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "idempotency_records_identity_fkey")
+
+  @@unique([merchantId, id], map: "idempotency_records_merchant_id_id_key")
+  @@unique([merchantId, identityId, operation, idemKey], map: "idempotency_records_scope_key")
+  @@map("idempotency_records")
   @@schema("util")
 }
 

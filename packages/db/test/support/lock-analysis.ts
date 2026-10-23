@@ -49,14 +49,15 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'identity.sessions': 10,
   // the activity record's rows: deleted by id by the purge only (Part 2, §8.6 item 12); nothing else locks them
   'audit.audit_events': 11,
-  // the ledger (P6, TA-7): after the activity record, so a posting may record an event first. A ledger's header goes
-  // with its accounts (written once, at opening); lines with their entry (inserted only, under fresh keys).
-  'ledger.ledgers': 12,
-  'ledger.accounts': 12,
-  'ledger.balance_projection': 13,
-  'ledger.journal_entries': 14,
-  'ledger.journal_lines': 14,
-  'util.idempotency_records': 15,
+  // P6 (TA-7, plan rev 2): after the activity record. A command's idempotency claim first — it is locked before the
+  // posting and completed, already held, after it; then the ledger. A ledger's header goes with its accounts (written
+  // once, at opening); lines with their entry (inserted only, under fresh keys).
+  'util.idempotency_records': 12,
+  'ledger.ledgers': 13,
+  'ledger.accounts': 13,
+  'ledger.balance_projection': 14,
+  'ledger.journal_entries': 15,
+  'ledger.journal_lines': 15,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */
@@ -68,6 +69,7 @@ export const HELPERS: Readonly<Record<string, string>> = {
   'identity.lock_one_time_tokens': 'identity.one_time_tokens',
   'tenancy.lock_roles': 'tenancy.roles',
   'tenancy.lock_branches': 'tenancy.branches',
+  'ledger.lock_projections': 'ledger.balance_projection',
 };
 
 /**
@@ -79,7 +81,7 @@ export type FnClass =
   | { class: 'operation'; planned: string[]; writes: string[] }
   /** An identity flow of the table ("identity flows: …"): every category it waits for is one of `categories`. */
   | { class: 'flow'; categories: number[]; writes: string[] }
-  /** Any other identity function: the category order and L1–L6 apply. */
+  /** Any other identity (or inner ledger) function: the category order and L1–L6 apply. */
   | { class: 'identity'; writes: string[] }
   /** A lock helper: exactly one FOR SHARE and one FOR NO KEY UPDATE of its table, one row per statement, in a loop. */
   | { class: 'helper' }

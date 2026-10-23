@@ -11,7 +11,7 @@ if (existsSync(localEnv)) process.loadEnvFile(localEnv);
  * They run in their own command, `pnpm test:concurrency`, which is part of every gate — never skipped, and never with
  * fewer than 50 staged runs per race without a recorded decision. `pnpm test` runs everything else.
  */
-export const CONCURRENCY_SUITES = ['test/lock-races.test.ts'];
+export const CONCURRENCY_SUITES = ['test/lock-races.test.ts', 'test/ledger-races.test.ts'];
 
 export const baseTest = {
   environment: 'node' as const,

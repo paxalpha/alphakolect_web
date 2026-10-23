@@ -154,8 +154,28 @@ const EXPECTED: Record<string, Grantee[]> = {
   'ledger.check_entry_balanced_trigger()': OWNER_ONLY,
   // P6: a ledger opened with its system accounts — called by signup and the migration, never by the app
   'ledger.open_ledger(text, uuid)': OWNER_ONLY,
+  // P6: the posting core (TA-3, TA-4, TA-5, §4) — called by the commands below and later phases' domain functions,
+  // never by the app; the projections' check is the operator's (§3.4)
+  'ledger.lock_projections(uuid[], uuid[])': OWNER_ONLY,
+  'ledger.post_entry(uuid, text, text, date, text, text, text, jsonb, uuid, uuid, uuid)': OWNER_ONLY,
+  'ledger.post_reversal(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
+  'ledger.open_subaccount(uuid, text, text, uuid)': OWNER_ONLY,
+  'ledger.post_template(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)': OWNER_ONLY,
+  'ledger.verify_projections()': OWNER_ONLY,
+  // P6: the session commands and the B1 reads
+  'ledger.create_account(uuid, text, text, text, text, text, text)': APP,
+  'ledger.post_manual_entry(uuid, text, text, date, text, jsonb, text, text, text)': APP,
+  'ledger.reverse_entry(uuid, uuid, text, text, text, text, text, text)': APP,
+  'ledger.list_accounts(uuid, boolean)': APP,
+  'ledger.read_account(uuid, uuid)': APP,
+  'ledger.read_statement(uuid, uuid, date, date, integer, date, uuid)': APP,
+  'ledger.read_entry(uuid, uuid)': APP,
+  'ledger.account_movements(uuid, date, date)': APP,
   // util — id default and RLS helper run as the querying role; the rate limiter is a request path
   'util.current_merchant_id()': APP,
+  // P6 (TA-6): a command's key is claimed and released in its own transaction
+  'util.claim_idempotency(uuid, text, text, text)': APP,
+  'util.release_idempotency(uuid, text, text, text)': APP,
   'util.rate_limit_hit(text, integer, integer)': APP,
   'util.uuid_v7()': APP,
   'util.reject_modification()': OWNER_ONLY,

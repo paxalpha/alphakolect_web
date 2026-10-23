@@ -152,6 +152,8 @@ const EXPECTED: Record<string, Grantee[]> = {
   // ledger (P1 invariants: trigger and its check, never called by the app)
   'ledger.assert_entry_balanced(uuid)': OWNER_ONLY,
   'ledger.check_entry_balanced_trigger()': OWNER_ONLY,
+  // P6: a ledger opened with its system accounts — called by signup and the migration, never by the app
+  'ledger.open_ledger(text, uuid)': OWNER_ONLY,
   // util — id default and RLS helper run as the querying role; the rate limiter is a request path
   'util.current_merchant_id()': APP,
   'util.rate_limit_hit(text, integer, integer)': APP,

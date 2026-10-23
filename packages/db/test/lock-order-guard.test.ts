@@ -43,7 +43,7 @@ import {
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
 
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger'];
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
 ) as { commit: string; functions: FnRow[] };
@@ -107,6 +107,12 @@ describe('enforcing mode (R34): no finding at all', () => {
       'identity.platform_membership_grants(platform_membership_id, permission)',
       'identity.platform_memberships(identity_id)',
       'identity.totp_credentials(identity_id)',
+      // P6: a ledger opened with its system accounts and their projections (at signup; one platform ledger)
+      'ledger.accounts(ledger_id, code, subject_type, subject_id)',
+      'ledger.balance_projection(account_id)',
+      'ledger.balance_projection(merchant_id, account_id)',
+      'ledger.ledgers(merchant_id)',
+      'ledger.ledgers(owner_kind) partial',
       // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))
       'tenancy.branches(merchant_id, <expr>) partial',
       'tenancy.invitations(merchant_id, email) partial',
@@ -603,7 +609,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
       cls: undefined as unknown as FnClass,
     },
     outside: {
-      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ledger.assert_entry_balanced(NULL); END $$`,
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM loans.no_such_function(NULL); END $$`,
       cls: IDENTITY,
     },
     // schema-level constructs on a table in scope: a default and a CHECK calling a non-allowlisted function, a cascading

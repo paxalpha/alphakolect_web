@@ -40,7 +40,9 @@ describe('alphakolect_app role attributes', () => {
   });
 });
 
-describe('ledger lines and entries are INSERT-only for the app (P1 exit criterion)', () => {
+// P1's criterion was "INSERT-only for the app"; P6 (TA-3) narrows it further: the app holds no privilege on the
+// ledger's tables at all, and posts only through ledger.post_entry.
+describe('ledger lines and entries are never changed by the app (P1 exit criterion, narrowed by P6 TA-3)', () => {
   const attempts: Array<[string, string, unknown[]]> = [
     [
       'UPDATE journal_lines',
@@ -64,10 +66,14 @@ describe('ledger lines and entries are INSERT-only for the app (P1 exit criterio
     );
   });
 
-  it('can still INSERT and SELECT (append-only, not read-only)', async () => {
-    const { rows } = await app.query(`SELECT has_table_privilege('ledger.journal_lines', 'INSERT') AS ins,
-      has_table_privilege('ledger.journal_lines', 'SELECT') AS sel`);
-    expect(rows[0]).toEqual({ ins: true, sel: true });
+  it('holds no privilege on any ledger table (TA-3)', async () => {
+    const { rows } = await app.query(`
+      SELECT c.relname AS table, p.privilege
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        CROSS JOIN unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) p(privilege)
+       WHERE n.nspname = 'ledger' AND c.relkind = 'r' AND has_table_privilege(c.oid, p.privilege)
+       ORDER BY 1, 2`);
+    expect(rows).toEqual([]);
   });
 });
 
@@ -84,16 +90,6 @@ describe('other append-only and immutable data', () => {
     await inTenantTx(app, A.merchantId, (db) =>
       expectSqlState(db.query(sql, params as unknown[]), SQLSTATE.insufficientPrivilege),
     );
-  });
-
-  it('may update only the columns granted (account name, projection figures)', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
-      await db.query(`UPDATE ledger.accounts SET name = 'Cash (renamed)' WHERE id = $1`, [A.cashAccountId]);
-      await db.query(
-        `UPDATE ledger.balance_projection SET balance_minor = balance_minor, version = version + 1 WHERE account_id = $1`,
-        [A.cashAccountId],
-      );
-    });
   });
 });
 

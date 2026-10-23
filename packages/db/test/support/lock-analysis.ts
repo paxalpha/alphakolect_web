@@ -49,6 +49,14 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'identity.sessions': 10,
   // the activity record's rows: deleted by id by the purge only (Part 2, §8.6 item 12); nothing else locks them
   'audit.audit_events': 11,
+  // the ledger (P6, TA-7): after the activity record, so a posting may record an event first. A ledger's header goes
+  // with its accounts (written once, at opening); lines with their entry (inserted only, under fresh keys).
+  'ledger.ledgers': 12,
+  'ledger.accounts': 12,
+  'ledger.balance_projection': 13,
+  'ledger.journal_entries': 14,
+  'ledger.journal_lines': 14,
+  'util.idempotency_records': 15,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */

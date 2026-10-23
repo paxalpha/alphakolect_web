@@ -10,11 +10,6 @@ const B = FIXTURE.B;
 
 // Every tenant table the app reads directly, with the column that names its tenant.
 const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
-  ['ledger.ledgers', 'merchant_id'],
-  ['ledger.accounts', 'merchant_id'],
-  ['ledger.journal_entries', 'merchant_id'],
-  ['ledger.journal_lines', 'merchant_id'],
-  ['ledger.balance_projection', 'merchant_id'],
   ['tenancy.merchant_memberships', 'merchant_id'],
 ];
 
@@ -25,7 +20,16 @@ const TENANT_TABLES: Array<[table: string, tenantColumn: string]> = [
 // read functions' (the business from the session; enforcement.test.ts), and the P1 criterion holds a fortiori: the app
 // cannot read them at all. P5.8: the activity record too — the app only inserts into it, and reads it through the
 // designated read functions alone (audit.read_merchant_events, the business from the session; audit-reads.test.ts).
+// P6 (TA-3): the ledger too — posted only through ledger.post_entry, read only through its read functions.
+const LEDGER_TABLES = [
+  'ledger.ledgers',
+  'ledger.accounts',
+  'ledger.journal_entries',
+  'ledger.journal_lines',
+  'ledger.balance_projection',
+];
 const NO_APP_ACCESS_TENANT_TABLES = [
+  ...LEDGER_TABLES,
   'audit.audit_events',
   'tenancy.role_permissions',
   'tenancy.merchants',
@@ -59,17 +63,11 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
 
   it("B's rows are invisible even when addressed by exact id", async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
-      const checks = [
-        [`SELECT 1 FROM ledger.ledgers WHERE id = $1`, B.ledgerId],
-        [`SELECT 1 FROM ledger.accounts WHERE id = $1`, B.cashAccountId],
-        [`SELECT 1 FROM ledger.journal_entries WHERE id = $1`, B.entryId],
-        [`SELECT 1 FROM ledger.journal_lines WHERE entry_id = $1`, B.entryId],
-        [`SELECT 1 FROM ledger.balance_projection WHERE account_id = $1`, B.cashAccountId],
-      ] as const;
-      for (const [sql, id] of checks) {
-        const { rowCount } = await db.query(sql, [id]);
-        expect(rowCount, sql).toBe(0);
-      }
+      const { rowCount } = await db.query(
+        `SELECT 1 FROM tenancy.merchant_memberships WHERE merchant_id = $1`,
+        [B.merchantId],
+      );
+      expect(rowCount).toBe(0);
     });
   });
 
@@ -82,7 +80,9 @@ describe('tenant A cannot read tenant B (P1 exit criterion)', () => {
 
   it('the same connection sees B, and only B, when switched to B’s context', async () => {
     await inTenantTx(app, MERCHANT_B, async (db) => {
-      const { rows } = await db.query(`SELECT DISTINCT merchant_id::text AS m FROM ledger.journal_lines`);
+      const { rows } = await db.query(
+        `SELECT DISTINCT merchant_id::text AS m FROM tenancy.merchant_memberships`,
+      );
       expect(rows.map((r) => r.m)).toEqual([MERCHANT_B]);
     });
   });
@@ -99,33 +99,45 @@ describe('fail closed', () => {
   it('a malformed tenant context is an error, not a wildcard', async () => {
     await inTenantTx(app, null, async (db) => {
       await db.query(`SELECT set_config('app.merchant_id', 'not-a-uuid', true)`);
-      await expectSqlState(db.query(`SELECT count(*) FROM ledger.accounts`), '22P02');
+      await expectSqlState(db.query(`SELECT count(*) FROM tenancy.merchant_memberships`), '22P02');
     });
   });
 
   it('tenant context does not leak into the next transaction on the same (pooled) connection', async () => {
     await inTenantTx(app, MERCHANT_A, async (db) => {
-      const { rows } = await db.query(`SELECT count(*)::int AS n FROM ledger.accounts`);
+      const { rows } = await db.query(`SELECT count(*)::int AS n FROM tenancy.merchant_memberships`);
       expect(rows[0].n).toBeGreaterThan(0);
     });
     await inTenantTx(app, null, async (db) => {
-      const { rows } = await db.query(`SELECT count(*)::int AS n FROM ledger.accounts`);
+      const { rows } = await db.query(`SELECT count(*)::int AS n FROM tenancy.merchant_memberships`);
       expect(rows[0].n).toBe(0);
     });
   });
 });
 
 describe('tenant A cannot write into tenant B', () => {
-  it('cannot insert a row owned by B (WITH CHECK)', async () => {
+  // P6 (TA-3): the app cannot write the ledger at all, in its own context or another's.
+  it.each([
+    [
+      `INSERT INTO ledger.accounts (merchant_id, ledger_id, code, name, type) VALUES ($1, $2, '9000', 'Planted', 'asset')`,
+      [A.merchantId, A.ledgerId],
+    ],
+    [
+      `INSERT INTO ledger.accounts (merchant_id, ledger_id, code, name, type) VALUES ($1, $2, '9000', 'Planted', 'asset')`,
+      [B.merchantId, B.ledgerId],
+    ],
+    [`UPDATE ledger.accounts SET name = 'Hijacked' WHERE id = $1`, [B.cashAccountId]],
+    [
+      `INSERT INTO ledger.balance_projection (merchant_id, account_id, balance_minor) VALUES ($1, $2, 0)`,
+      [B.merchantId, B.savingsAccountId],
+    ],
+    [`UPDATE ledger.accounts SET merchant_id = $1 WHERE id = $2`, [B.merchantId, A.cashAccountId]],
+  ] as Array<[string, string[]]>)('the ledger is refused: %s', async (sql, params) => {
     await inTenantTx(app, MERCHANT_A, (db) =>
-      expectSqlState(
-        db.query(
-          `INSERT INTO ledger.accounts (merchant_id, ledger_id, code, name, type) VALUES ($1, $2, '9000', 'Planted', 'asset')`,
-          [B.merchantId, B.ledgerId],
-        ),
-        SQLSTATE.rlsViolation,
-      ),
+      expectSqlState(db.query(sql, params), SQLSTATE.insufficientPrivilege),
     );
+    const { rows } = await owner.query(`SELECT name FROM ledger.accounts WHERE id = $1`, [B.cashAccountId]);
+    expect(rows[0].name).toBe('Cash at business');
   });
 
   it('cannot create another merchant', async () => {
@@ -139,43 +151,8 @@ describe('tenant A cannot write into tenant B', () => {
     );
   });
 
-  it("an UPDATE aimed at B's row changes nothing", async () => {
-    await inTenantTx(app, MERCHANT_A, async (db) => {
-      const res = await db.query(`UPDATE ledger.accounts SET name = 'Hijacked' WHERE id = $1`, [
-        B.cashAccountId,
-      ]);
-      expect(res.rowCount).toBe(0);
-    });
-    const { rows } = await owner.query(`SELECT name FROM ledger.accounts WHERE id = $1`, [B.cashAccountId]);
-    expect(rows[0].name).toBe('Cash at business');
-  });
-
-  it("cannot create a balance projection for B's account", async () => {
-    await inTenantTx(app, MERCHANT_A, (db) =>
-      expectSqlState(
-        db.query(
-          `INSERT INTO ledger.balance_projection (merchant_id, account_id, balance_minor) VALUES ($1, $2, 0)`,
-          [B.merchantId, B.savingsAccountId],
-        ),
-        SQLSTATE.rlsViolation,
-      ),
-    );
-  });
-
-  it('cannot re-assign a row to another tenant (merchant_id is not updatable by the app)', async () => {
-    await inTenantTx(app, MERCHANT_A, (db) =>
-      expectSqlState(
-        db.query(`UPDATE ledger.accounts SET merchant_id = $1 WHERE id = $2`, [
-          B.merchantId,
-          A.cashAccountId,
-        ]),
-        SQLSTATE.insufficientPrivilege,
-      ),
-    );
-  });
-
-  it("cannot post a line of A's entry against B's account (composite tenant key)", async () => {
-    await inTenantTx(app, MERCHANT_A, (db) =>
+  it("no writer can post a line of A's entry against B's account (composite tenant key)", async () => {
+    await inTenantTx(owner, MERCHANT_A, (db) =>
       expectSqlState(
         db.query(
           `INSERT INTO ledger.journal_lines (merchant_id, entry_id, account_id, side, amount_minor, currency)

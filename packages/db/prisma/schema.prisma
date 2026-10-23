@@ -59,15 +59,16 @@ model Merchant {
 
 // ── ledger ──────────────────────────────────────────────────────────────────────────────────────
 
-/// The merchant's books (one per merchant). Platform and custody ledgers (§7) have no merchant and
-/// are added with their own row-level-security rule when the ledger/billing phases need them.
+/// A business's books (one per business), or the platform's (TA-1: owner_kind 'platform', no business; one
+/// platform ledger, a partial unique index). Reached only through definer functions (TA-3).
 model Ledger {
   id         String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
-  merchantId String   @unique @map("merchant_id") @db.Uuid
+  merchantId String?  @unique @map("merchant_id") @db.Uuid
+  ownerKind  String   @default("merchant") @map("owner_kind")
   currency   String   @default("NGN") @db.Char(3)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  merchant       Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  merchant       Merchant?      @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accounts       Account[]
   journalEntries JournalEntry[]
 
@@ -76,11 +77,12 @@ model Ledger {
   @@schema("ledger")
 }
 
-/// Chart-of-accounts entry or per-subject sub-account (e.g. one Collection wallet per customer).
-/// Codes and names are data; the chart itself is decided later (OPEN-8).
+/// Chart-of-accounts entry or per-subject sub-account (e.g. one savings account per customer). The system accounts
+/// come from ledger.chart_template (P6, owner Q1). Unique by (ledger, code, subject), NULLS NOT DISTINCT (TA-5:
+/// accounts_ledger_id_code_subject_key, in the migration).
 model Account {
-  id              String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
-  merchantId      String   @map("merchant_id") @db.Uuid
+  id              String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId      String?   @map("merchant_id") @db.Uuid
   ledgerId        String   @map("ledger_id") @db.Uuid
   code            String
   name            String
@@ -89,18 +91,22 @@ model Account {
   /// What a sub-account belongs to (e.g. "customer"), with its id. Both null for plain accounts.
   subjectType     String?  @map("subject_type")
   subjectId       String?  @map("subject_id") @db.Uuid
-  isSystem        Boolean  @default(false) @map("is_system")
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  isSystem        Boolean   @default(false) @map("is_system")
+  /// A posting may not take this account below zero (BR-7.4).
+  nonNegative     Boolean   @default(false) @map("non_negative")
+  status          String    @default("active")
+  archivedAt      DateTime? @map("archived_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  merchant   Merchant           @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  ledger     Ledger             @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  merchant   Merchant?          @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ledger     Ledger?            @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   parent     Account?           @relation("AccountParent", fields: [merchantId, parentAccountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   children   Account[]          @relation("AccountParent")
   lines      JournalLine[]
   projection BalanceProjection?
 
   @@unique([merchantId, id])
-  @@index([ledgerId, code])
+  @@unique([ledgerId, code, subjectType, subjectId], map: "accounts_ledger_id_code_subject_key")
   @@map("accounts")
   @@schema("ledger")
 }
@@ -108,7 +114,7 @@ model Account {
 /// Journal entry header. Immutable once written: corrections are reversing entries (BR-11.1).
 model JournalEntry {
   id              String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
-  merchantId      String   @map("merchant_id") @db.Uuid
+  merchantId      String?  @map("merchant_id") @db.Uuid
   ledgerId        String   @map("ledger_id") @db.Uuid
   effectiveDate   DateTime @map("effective_date") @db.Date
   entryType       String   @map("entry_type")
@@ -121,8 +127,8 @@ model JournalEntry {
   createdBy       String?  @map("created_by") @db.Uuid
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  merchant   Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  ledger     Ledger         @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  merchant   Merchant?      @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  ledger     Ledger?        @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   reverses   JournalEntry?  @relation("EntryReversal", fields: [merchantId, reversesEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy JournalEntry[] @relation("EntryReversal")
   creator    Identity?      @relation("JournalEntryCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -130,6 +136,7 @@ model JournalEntry {
 
   @@unique([merchantId, id])
   @@unique([merchantId, idempotencyKey])
+  @@unique([ledgerId, idempotencyKey])
   @@index([ledgerId, effectiveDate])
   @@map("journal_entries")
   @@schema("ledger")
@@ -138,7 +145,7 @@ model JournalEntry {
 /// One side of a journal entry. INSERT-only; the entry must balance (Σdebits = Σcredits) at commit.
 model JournalLine {
   id          String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
-  merchantId  String   @map("merchant_id") @db.Uuid
+  merchantId  String?  @map("merchant_id") @db.Uuid
   entryId     String   @map("entry_id") @db.Uuid
   accountId   String   @map("account_id") @db.Uuid
   side        String
@@ -146,9 +153,9 @@ model JournalLine {
   currency    String   @db.Char(3)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  merchant Merchant     @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entry    JournalEntry @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
-  account  Account      @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  merchant Merchant?     @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entry    JournalEntry? @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  account  Account?      @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([merchantId, id])
   @@index([entryId])
@@ -160,16 +167,45 @@ model JournalLine {
 /// Read model: current balance per account, updated in the same transaction as each posting (§7).
 model BalanceProjection {
   accountId    String   @id @map("account_id") @db.Uuid
-  merchantId   String   @map("merchant_id") @db.Uuid
+  merchantId   String?  @map("merchant_id") @db.Uuid
   balanceMinor BigInt   @default(0) @map("balance_minor")
   version      BigInt   @default(0)
   updatedAt    DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
 
-  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  account  Account  @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  merchant Merchant? @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  account  Account?  @relation(fields: [merchantId, accountId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([merchantId, accountId])
   @@map("balance_projection")
+  @@schema("ledger")
+}
+
+/// The chart every ledger opens with (P6, owner Q1), by kind of ledger. A row with a subject type is a control
+/// account whose balance lives in one sub-account per customer or agent.
+model ChartTemplate {
+  ledgerKind  String  @map("ledger_kind")
+  code        String
+  name        String
+  type        String
+  nonNegative Boolean @map("non_negative")
+  subjectType String? @map("subject_type")
+  purpose     String
+
+  @@id([ledgerKind, code])
+  @@map("chart_template")
+  @@schema("ledger")
+}
+
+/// The transaction mappings (P6 plan §4; owner Q2, Q3, Q5, Q6): each line a chart code, a side and, for a control
+/// account, the subject; every line takes the posting's one amount.
+model PostingTemplate {
+  code        String @id
+  ledgerKind  String @map("ledger_kind")
+  description String
+  lines       Json
+  status      String @default("active")
+
+  @@map("posting_templates")
   @@schema("ledger")
 }
 

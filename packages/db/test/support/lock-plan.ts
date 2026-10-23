@@ -360,7 +360,20 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.create_mfa_challenge': { class: 'identity', writes: ['identity.mfa_challenges'] },
   'identity.signup_merchant_owner': {
     class: 'identity',
-    writes: ['identity.identities', 'tenancy.merchants', 'tenancy.merchant_memberships'],
+    writes: [
+      'identity.identities',
+      'tenancy.merchants',
+      'tenancy.merchant_memberships',
+      'ledger.ledgers',
+      'ledger.accounts',
+      'ledger.balance_projection',
+    ],
+  },
+  // P6: a ledger opened with its system accounts and their projections (at signup, and for the platform) — inserts
+  // only, waiting for nothing
+  'ledger.open_ledger': {
+    class: 'identity',
+    writes: ['ledger.ledgers', 'ledger.accounts', 'ledger.balance_projection'],
   },
   'identity.resolve_login_membership': {
     class: 'identity',
@@ -414,6 +427,9 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.protect_permission_catalog': { class: 'trigger' },
   'tenancy.merchant_keeps_one_owner': { class: 'trigger' },
   'util.reject_modification': { class: 'trigger' },
+  // the ledger's P1 invariants: the commit-time balance check, lock-free
+  'ledger.check_entry_balanced_trigger': { class: 'trigger' },
+  'ledger.assert_entry_balanced': { class: 'reader' },
 
   // ── a request path called in its own statement, never inside a transaction ──
   'util.rate_limit_hit': { class: 'standalone', writes: ['util.rate_limit_counters'] },
@@ -499,6 +515,8 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
   'identity.eligible_memberships': 'the login flow’s list of the memberships an identity may choose from',
   'identity.permissions_of':
     'the permissions of a membership session_authority or assert_authority has already resolved from the session',
+  'ledger.assert_entry_balanced':
+    'the commit-time balance check of one entry (P1), called by its constraint trigger with the entry being written',
 };
 
 /**

@@ -19,7 +19,11 @@ afterAll(async () => {
 type Line = { account: string; side: string; amount: number | bigint; currency?: string };
 let seq = 0;
 
-/** Insert an entry with lines as the app in merchant A's context, then run the commit-time checks. */
+/**
+ * Insert an entry with lines directly, then run the commit-time checks. P6 (TA-3): the app holds no privilege on the
+ * ledger's tables — postings go through ledger.post_entry — so these table-level invariants, which hold for every
+ * writer, are exercised as the table owner (the migrator; not exempt from constraints or triggers).
+ */
 async function postEntry(db: pg.Client, lines: Line[], extra: { reverses?: string } = {}) {
   const key = `test-${process.pid}-${++seq}`;
   const {
@@ -46,7 +50,7 @@ const savings = A.savingsAccountId;
 
 describe('balanced double entry (ADR-5)', () => {
   it('accepts a balanced multi-line entry', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       await postEntry(db, [
         { account: cash, side: 'debit', amount: 30_000 },
         { account: savings, side: 'credit', amount: 20_000 },
@@ -56,7 +60,7 @@ describe('balanced double entry (ADR-5)', () => {
   });
 
   it('rejects an unbalanced entry at commit', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       const err = await expectSqlState(
         postEntry(db, [
           { account: cash, side: 'debit', amount: 30_000 },
@@ -69,7 +73,7 @@ describe('balanced double entry (ADR-5)', () => {
   });
 
   it('rejects an entry with a single line', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       const err = await expectSqlState(
         postEntry(db, [{ account: cash, side: 'debit', amount: 100 }]),
         SQLSTATE.checkViolation,
@@ -79,14 +83,14 @@ describe('balanced double entry (ADR-5)', () => {
   });
 
   it('rejects an entry with no lines at all', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       const err = await expectSqlState(postEntry(db, []), SQLSTATE.checkViolation);
       expect(err.constraint).toBe('journal_entry_min_two_lines');
     });
   });
 
   it('rejects appending a line to an entry committed earlier (would unbalance it)', async () => {
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       await db.query(
         `INSERT INTO ledger.journal_lines (merchant_id, entry_id, account_id, side, amount_minor, currency)
          VALUES ($1, $2, $3, 'debit', 1, 'NGN')`,
@@ -98,19 +102,18 @@ describe('balanced double entry (ADR-5)', () => {
   });
 
   it('really enforces at COMMIT (not only when forced early)', async () => {
-    await app.query('BEGIN');
-    await app.query(`SELECT set_config('app.merchant_id', $1, true)`, [A.merchantId]);
-    await app.query(
+    await owner.query('BEGIN');
+    await owner.query(
       `INSERT INTO ledger.journal_entries (id, merchant_id, ledger_id, effective_date, entry_type, narrative, idempotency_key)
        VALUES ('01900000-0000-7000-8000-00000000ffff', $1, $2, CURRENT_DATE, 'test', 'Unbalanced at commit', $3)`,
       [A.merchantId, A.ledgerId, `commit-check-${process.pid}`],
     );
-    await app.query(
+    await owner.query(
       `INSERT INTO ledger.journal_lines (merchant_id, entry_id, account_id, side, amount_minor, currency)
        VALUES ($1, '01900000-0000-7000-8000-00000000ffff', $2, 'debit', 500, 'NGN')`,
       [A.merchantId, cash],
     );
-    await expectSqlState(app.query('COMMIT'), SQLSTATE.checkViolation);
+    await expectSqlState(owner.query('COMMIT'), SQLSTATE.checkViolation);
     const { rows } = await owner.query(
       `SELECT count(*)::int AS n FROM ledger.journal_entries WHERE id = '01900000-0000-7000-8000-00000000ffff'`,
     );
@@ -125,7 +128,7 @@ describe('line and amount rules', () => {
     ['non-NGN currency', { account: cash, side: 'debit', amount: 5, currency: 'USD' }],
     ['unknown side', { account: cash, side: 'sideways', amount: 5 }],
   ])('rejects a line with %s', async (_label, line) => {
-    await inTenantTx(app, A.merchantId, (db) =>
+    await inTenantTx(owner, A.merchantId, (db) =>
       expectSqlState(
         postEntry(db, [line as Line, { account: savings, side: 'credit', amount: 5 }]),
         SQLSTATE.checkViolation,
@@ -135,7 +138,7 @@ describe('line and amount rules', () => {
 
   it('stores amounts as bigint minor units beyond 32-bit range', async () => {
     const big = 900_000_000_000n; // ₦9,000,000,000.00 in kobo
-    await inTenantTx(app, A.merchantId, async (db) => {
+    await inTenantTx(owner, A.merchantId, async (db) => {
       const id = await postEntry(db, [
         { account: cash, side: 'debit', amount: big },
         { account: savings, side: 'credit', amount: big },
@@ -149,7 +152,7 @@ describe('line and amount rules', () => {
   });
 
   it('allows one entry per idempotency key per merchant', async () => {
-    await inTenantTx(app, A.merchantId, (db) =>
+    await inTenantTx(owner, A.merchantId, (db) =>
       expectSqlState(
         db.query(
           `INSERT INTO ledger.journal_entries (merchant_id, ledger_id, effective_date, entry_type, narrative, idempotency_key)
@@ -162,7 +165,7 @@ describe('line and amount rules', () => {
   });
 
   it("rejects a reversal pointing at another merchant's entry", async () => {
-    await inTenantTx(app, A.merchantId, (db) =>
+    await inTenantTx(owner, A.merchantId, (db) =>
       expectSqlState(
         postEntry(
           db,
@@ -178,7 +181,7 @@ describe('line and amount rules', () => {
   });
 
   it('accepts a reversal of an entry of the same merchant', async () => {
-    await inTenantTx(app, A.merchantId, (db) =>
+    await inTenantTx(owner, A.merchantId, (db) =>
       postEntry(
         db,
         [

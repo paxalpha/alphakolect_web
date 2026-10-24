@@ -1,11 +1,14 @@
 # P6 implementation plan — the ledger
 
-**Status: revision 1 (2026-10-23) — building.** Planned and built in one pass at the project lead's request ("map
-everything out and implement it in one go"; "efficiency and speed of delivery is very important"). Decisions that would go
-to the project lead take the recommended option (his standing instruction) and are recorded in §8. The owner's answers on
-the accounts and mappings are asked in `docs/business/P6_OWNER_ACCOUNTS_AND_MAPPINGS.md`; until they arrive, the system
-accounts follow that form's suggested answers, held as data (§3.2), so an answer is a small forward migration, not a
-redesign. The gate review is the independent reviewer's.
+**Status: revision 2 (2026-10-24) — built; awaiting the gate review.** Planned and built in one pass at the project
+lead's request ("map everything out and implement it in one go"; "efficiency and speed of delivery is very important").
+Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
+§8. The owner answered both P6 forms on 2026-10-23, each with the suggested options:
+`docs/business/P6_OWNER_ACCOUNTS_AND_MAPPINGS.md` (the chart, the corrections, unearned loan interest, both debit
+records, transfers not now, the Directors' current account) and `docs/business/P6_OWNER_LEDGER_PERMISSIONS.md` (the
+permissions' wording, all three grantable to staff). The chart and the templates are data (§3.2, §4), so a later answer
+is a small forward migration, not a redesign. The gate review is the independent reviewer's; §9 lists what revision 2
+changed from revision 1, and §10 what was built.
 
 | | |
 |---|---|
@@ -35,14 +38,16 @@ before P8b (TA-2).
 | TA-4 double reversal | A partial unique index on `reverses_entry_id`; the posting function checks the mirror (same ledger, same accounts and amounts, sides swapped) and refuses to reverse a reversal |
 | TA-5 duplicate sub-accounts | Unique `(ledger_id, code, subject_type, subject_id) NULLS NOT DISTINCT`; a sub-account is opened by its own idempotent function (it returns the existing one), committed before any posting uses it — so posting never inserts an account and never waits after a contested insert (L3) |
 | TA-6 idempotency | `util.idempotency_records`: scope (business, actor, operation, key), the request's fingerprint, its state and stored response. A command claims its key in its own transaction; a replay gets the stored response, a different body `409 IDEMPOTENCY_KEY_REUSED`, a concurrent duplicate `409 IDEMPOTENCY_IN_PROGRESS`. Entry keys derive from the command's key |
-| TA-7 lock mode | `FOR NO KEY UPDATE`, ascending account id. New categories after the activity record: 12 ledger accounts, 13 balance projections, 14 journal entries, 15 idempotency records |
+| TA-7 lock mode | `FOR NO KEY UPDATE`, ascending account id. New categories after the activity record: 12 idempotency records, 13 ledgers and accounts, 14 balance projections, 15 journal entries and lines (rev 2: the claim moved first, so a posting command locks its claim, posts, and completes the claim it already holds — revision 1's order would have waited for the claim after the entry's contested insert, against L3) |
 
 ## 3. Design
 
 ### 3.1 Ledgers and accounts
 
-- A business's ledger and its system accounts are opened when the business is created (a trigger on
-  `tenancy.merchants`), and for every existing business by the migration. The platform ledger is opened by the migration.
+- A business's ledger and its system accounts are opened when the business is created — by
+  `identity.signup_merchant_owner`, through `ledger.open_ledger` (rev 2: not a trigger on `tenancy.merchants`, which
+  would collide with the test fixtures' own ledgers) — and for every existing business by the migration. The platform
+  ledger is opened by the migration.
 - An account has a kind (asset, liability, equity, revenue, expense), a code, a name, a status (active / archived), a
   **non-negative** flag, and optionally a subject (a customer or an agent) for sub-accounts. A sub-account's parent is
   its system account (e.g. customer savings 2100 → one per customer).
@@ -72,11 +77,16 @@ definer, executable by no application role; domain functions call it inside thei
    going below zero;
 5. records, in the same transaction, a debit to a capital account and a debit to an income account in the activity
    record (the PDF's "Capital/Equity Audit Requirement" and the sheet's "debit income account to audit trail"; owner
-   Q4, the suggested answer applied until answered).
+   Q4: record both).
 
-**Reversal** (`ledger.reverse_entry`): a new entry with every line's side swapped, referencing the original, posted
-through 3.3; refused for a reversal, for an entry already reversed (the unique index decides under concurrency), and for a
-closed account. A correction is a reversal plus a new entry (BR-11.1).
+It refuses a control account (a chart account whose balance lives in its customers' or agents' sub-accounts): postings go
+to the sub-accounts. Nothing is written unless the outcome is `ok`.
+
+**Reversal** (`ledger.post_reversal`; the session command is `ledger.reverse_entry`): a new entry with every line's side
+swapped, referencing the original, posted through 3.3; refused for a reversal, for an entry already reversed (the unique
+index decides under concurrency), and for an archived account. A correction is a reversal plus a new entry (BR-11.1). By
+hand (the endpoint) only a manual entry is reversed: an entry a domain posted is reversed by that domain (P8–P11), so its
+own records stay in step (rev 2).
 
 ### 3.4 Projections and their check
 
@@ -112,8 +122,8 @@ defines and tests the templates from the owner's documents, as corrected in the 
 | `charge.general` | 2100 (customer) | 4400 General charges | P8 | Map "Charges" (corrected), PDF "Transaction Fees" |
 | `charge.target_savings` | 2110 (customer) | 4500 Target savings charges | P8 | Map |
 | `charge.loan_application` | 2100 (customer) | 4300 Loan application charges | P11 | Map |
-| `withdrawal.cash` | 2100 or 2110 (customer) | 1200 Cash at office | P8 | §9, PDF "Wallet Withdrawal" |
-| `withdrawal.to_loan` | 2100 or 2110 (customer) | 1300 Customer loans (customer) | P8 | §9, Map "Move fund … to Loan" (corrected) |
+| `withdrawal.savings_cash` / `withdrawal.target_cash` | 2100 / 2110 (customer) | 1200 Cash at office | P8 | §9, PDF "Wallet Withdrawal" |
+| `withdrawal.savings_to_loan` / `withdrawal.target_to_loan` | 2100 / 2110 (customer) | 1300 Customer loans (customer) | P8 | §9, Map "Move fund … to Loan" (corrected) |
 | `savings.to_target` | 2100 (customer) | 2110 (customer) | P8 | |
 | `loan.disbursed_cash` | 1300 (customer) | 1200 Cash at office | P11 | §10, Map "Loan disbursed" |
 | `loan.disbursed_wallet` | 1300 (customer) | 1100 Business wallet | P11 | §10, PDF "Loan Disbursement" |
@@ -122,7 +132,7 @@ defines and tests the templates from the owner's documents, as corrected in the 
 | `loan.repaid_cash` | 1200 | 1300 (customer) | P11 | Map "Loan repayment" (corrected) |
 | `loan.repaid_wallet` | 1100 | 1300 (customer) | P9 | §10 |
 | `investment.created` | 2100 (customer) | 2120 Customer investments (customer) | P11 | PDF "Investment Creation" |
-| `investment.interest` | 5300 Interest on investments | 2120 or 2100 (customer) | P11 | PDF "Investment Returns" |
+| `investment.interest` | 5300 Interest on investments | 2120 (customer) | P11 | PDF "Investment Returns" |
 | `investment.withdrawn` | 2120 (customer) | 2100 (customer) | P11 | PDF "Investment Withdrawal" |
 | `target_savings.interest` | 5200 Interest on target savings | 2110 (customer) | P8 | Map "Interest on Investment" (corrected to credit the customer) |
 | `transfer.sent` / `transfer.paid` | 2100 / 2200 | 2200 / 1000 Cash at bank | later (Q5) | PDF "Remittance" |
@@ -130,9 +140,12 @@ defines and tests the templates from the owner's documents, as corrected in the 
 | `directors.funding` | 1000 Cash at bank | 2400 Directors' current account | any | sheet "load wallet" (Q6) |
 | `wallet.loaded` | 1100 Business wallet | 1000 Cash at bank | P9 | Map "Load Wallet" |
 
-Templates live in `ledger.posting_templates` (code, version, lines as account codes with side and amount role, active);
-`ledger.post_template(ledger, template, amounts, subjects, …)` resolves accounts and calls 3.3. P6 tests every template
-balances and moves the accounts named.
+Templates live in `ledger.posting_templates` (code, ledger kind, description, lines as chart codes with side and
+subject, status); a template has one choice per row (rev 2: `withdrawal.*` and `investment.interest` no longer leave the
+account to the caller) and every line takes the posting's one amount. `ledger.post_template(ledger, template, amount,
+subjects, …)` resolves the accounts — a subject's sub-account must already be open (`ledger.open_subaccount`) — and
+calls 3.3. The platform's template, `platform.subscription_received`, posts to the platform ledger. P6 tests every
+template balances and moves the accounts named.
 
 ## 5. Interfaces
 
@@ -150,6 +163,15 @@ balances and moves the accounts named.
 
 Activity events (atomic, pattern A): `ledger.account_created`, `ledger.manual_entry_posted`, `ledger.entry_reversed`,
 `ledger.capital_debited`, `ledger.income_debited`; refusals best effort (`denied`).
+
+The two posting endpoints answer `201 { entryId }` — the same answer to a retry — and the entry is read with
+`GET …/entries/{entryId}` (rev 2: a session may hold `merchant.ledger.post` without `merchant.ledger.read`, so a posting's
+answer never depends on reading the books). Errors: `IDEMPOTENCY_KEY_REUSED`, `IDEMPOTENCY_IN_PROGRESS`,
+`ALREADY_REVERSED` (409); `UNBALANCED_ENTRY`, `INSUFFICIENT_BALANCE`, `ACCOUNT_NOT_POSTABLE`, `NOT_REVERSIBLE` (422);
+`CODE_TAKEN` (409) for an account. Balances that may be negative are `SignedMoney` (a new primitive). The reports are
+computed in the API from one read, `ledger.account_movements` (each account's debits and credits in a period,
+sub-accounts rolled into their control account). Request headers are now validated from the contract (the
+`Idempotency-Key`).
 
 ## 6. Tests
 
@@ -178,9 +200,33 @@ platform ledger's subscription income. OPEN-12 (before P8b): the custody ledger.
 | P6-3 | Permissions | `merchant.ledger.read`, `merchant.ledger.manage`, `merchant.ledger.post` — all grantable by the owner; every manual entry and reversal recorded |
 | P6-4 | Account codes before the owner answers | the form's suggested list, as data |
 | P6-5 | Gate | one review of P6 by the independent reviewer at the end |
+| P6-6 | Lock categories (rev 2) | the idempotency claim first (12), then ledgers and accounts (13), projections (14), entries and lines (15) — §2 TA-7 |
+| P6-7 | Ledger opening (rev 2) | in the signup function and the migration, not a trigger |
+| P6-8 | Posting answers (rev 2) | `{ entryId }`, the same for a retry; read the entry with GET |
+| P6-9 | Reversal by hand (rev 2) | manual entries only; a domain reverses its own entries |
+| P6-10 | Stale claims (rev 2) | a claim in progress for two minutes is taken over by the same request (a command that died); another request is refused |
+| P6-11 | Customer subjects (rev 2) | a customer sub-account's subject is not checked until customers exist (P7); an agent's is an agent membership of the business |
 
 ## 9. Revision log
 
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-23 | First plan, written and built in one pass |
+| 2 | 2026-10-24 | The owner's answers to both P6 forms recorded; built as §10 says. Changed from revision 1: the lock categories (P6-6), ledger opening (P6-7), the split templates (§4), the posting answers and error codes (§5, P6-8), reversal by hand (P6-9), stale claims (P6-10), customer subjects (P6-11) |
+
+## 10. What was built
+
+| Part | Where |
+|---|---|
+| Migration 1: ownership (TA-1), accounts' status and non-negative rule, TA-4/TA-5 indexes, the chart and the templates as data, `ledger.open_ledger`, signup opens the ledger, the app's ledger privileges removed (TA-3) | `packages/db/prisma/migrations/20261023000100_ledger_core` |
+| Migration 2: `util.idempotency_records` with claim and release (TA-6), `ledger.lock_projections`, `post_entry`, `post_reversal`, `open_subaccount`, `post_template`, `verify_projections`, the debit events | `…/20261023000200_ledger_posting` |
+| Migration 3: the three permissions, `create_account`, `post_manual_entry`, `reverse_entry`, the five B1 reads, the command events | `…/20261023000300_ledger_commands_and_reads` |
+| Database tests: the chart, sub-accounts, every posting rule, reversal, every template, 120 random postings and reversals against the §6 properties, idempotency, the commands, permissions and reads; the debit events' coverage pair | `packages/db/test/ledger.test.ts` |
+| Races, 50 staged runs each: TA-4, TA-5, TA-6, the non-negative rule | `packages/db/test/ledger-races.test.ts` (in `test:concurrency`) |
+| Guards: lock categories 12–15 and every new function classified with its footprint; the grants inventory; R19; the contested keys; RLS lists | `packages/db/test/support/lock-*.ts` and the guard tests |
+| Contracts: nine endpoints, `SignedMoney`, the Idempotency-Key's characters, the three permissions | `packages/contracts/src/endpoints/ledger.ts` |
+| API: the ledger module (repository, service, routes), the idempotency store, header validation, the catalog mirror, refusal wording | `apps/api/src/modules/ledger/`, `apps/api/src/platform/idempotency.ts` |
+| API tests: the endpoints; the authorization, policy and isolation matrices and the activity-record guards cover them | `apps/api/test/ledger/ledger-api.test.ts` and the matrices |
+
+Passed on: P12 runs `ledger.verify_projections()` nightly and alerts (§7); idempotency records need a retention rule then
+too (completed records are kept until it exists).

@@ -294,19 +294,31 @@ BEGIN
            GROUP BY a.id) d
    WHERE p.account_id = d.id;
 
-  -- Owner Q4: every debit to a capital or an income account, in the activity record.
+  -- Owner Q4: every debit to a capital or an income account, in the activity record (one statement per event, so
+  -- each names its own catalog pair).
   INSERT INTO audit.audit_events
     (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
      summary)
   SELECT v_ledger.merchant_id, p_actor_identity_id,
          CASE WHEN p_actor_membership_id IS NOT NULL THEN 'merchant' END, p_actor_membership_id,
-         CASE a.type WHEN 'equity' THEN 'ledger.capital_debited' ELSE 'ledger.income_debited' END,
-         'ledger_entry', v_entry::text, 'success',
+         'ledger.capital_debited', 'ledger_entry', v_entry::text, 'success',
          jsonb_build_object('entryId', v_entry::text, 'entryType', left(p_entry_type, 100), 'accountId', a.id::text,
                             'accountCode', a.code, 'amountMinor', t.value ->> 'amountMinor')
     FROM jsonb_array_elements(p_lines) WITH ORDINALITY AS t
     JOIN ledger.accounts a ON a.id = (t.value ->> 'accountId')::uuid
-   WHERE t.value ->> 'side' = 'debit' AND a.type IN ('equity', 'revenue')
+   WHERE t.value ->> 'side' = 'debit' AND a.type = 'equity'
+   ORDER BY t.ordinality;
+  INSERT INTO audit.audit_events
+    (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
+     summary)
+  SELECT v_ledger.merchant_id, p_actor_identity_id,
+         CASE WHEN p_actor_membership_id IS NOT NULL THEN 'merchant' END, p_actor_membership_id,
+         'ledger.income_debited', 'ledger_entry', v_entry::text, 'success',
+         jsonb_build_object('entryId', v_entry::text, 'entryType', left(p_entry_type, 100), 'accountId', a.id::text,
+                            'accountCode', a.code, 'amountMinor', t.value ->> 'amountMinor')
+    FROM jsonb_array_elements(p_lines) WITH ORDINALITY AS t
+    JOIN ledger.accounts a ON a.id = (t.value ->> 'accountId')::uuid
+   WHERE t.value ->> 'side' = 'debit' AND a.type = 'revenue'
    ORDER BY t.ordinality;
 
   RETURN QUERY SELECT 'ok', v_entry;

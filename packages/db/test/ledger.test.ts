@@ -496,6 +496,78 @@ describe('the posting function (TA-3)', () => {
   });
 });
 
+// The coverage guard's tests of the two pairs the posting function writes (apps/api test/audit/coverage.test.ts lists
+// them as covered here): each commits with its posting, and with its insert failing the posting fails and is absent.
+// [coverage ledger.capital_debited/success] the row commits with the posting (the first test below, for 3000).
+// [coverage ledger.capital_debited/success] the row's insert failing, the posting fails (the second, for 3000).
+// [coverage ledger.income_debited/success] the row commits with the posting (the first test below, for 4400).
+// [coverage ledger.income_debited/success] the row's insert failing, the posting fails (the second, for 4400).
+describe.each([
+  ['ledger.capital_debited', '3000'],
+  ['ledger.income_debited', '4400'],
+])('%s (owner Q4)', (action, code) => {
+  const debit = async (b: Business) => {
+    const debited = await account(b.ledgerId, code);
+    await seed(b.ledgerId, debited, 100n);
+    return post(b.ledgerId, [
+      { accountId: debited, side: 'debit', amountMinor: '40' },
+      { accountId: await account(b.ledgerId, '1000'), side: 'credit', amountMinor: '40' },
+    ]);
+  };
+  const entriesOf = async (b: Business) =>
+    (await one(`SELECT count(*)::int AS n FROM ledger.journal_entries WHERE ledger_id = $1`, [b.ledgerId]))
+      .n as number;
+
+  it(`${action}: one row, with its business, entry and account, commits with the posting`, async () => {
+    const b = await business();
+    await seed(b.ledgerId, await account(b.ledgerId, '1000'), 100n);
+    const r = await debit(b);
+    expect(r.outcome).toBe('ok');
+    const { rows } = await owner.query(
+      `SELECT merchant_id, target_id FROM audit.audit_events WHERE action = $1 AND target_id = $2`,
+      [action, r.entry_id],
+    );
+    expect(rows).toEqual([{ merchant_id: b.merchantId, target_id: r.entry_id }]);
+    expect(
+      (await one(`SELECT count(*)::int AS n FROM ledger.journal_entries WHERE id = $1`, [r.entry_id])).n,
+    ).toBe(1);
+  });
+
+  it(`${action}: with that pair's insert failing, the posting fails and is absent`, async () => {
+    const b = await business();
+    await seed(b.ledgerId, await account(b.ledgerId, '1000'), 100n);
+    await seed(b.ledgerId, await account(b.ledgerId, code), 100n);
+    const before = await entriesOf(b);
+    const name = `test_fail_${randomBytes(6).toString('hex')}`;
+    await owner.query(
+      `CREATE FUNCTION audit.${name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
+       BEGIN
+         IF NEW.action = '${action}' AND NEW.merchant_id = '${b.merchantId}' THEN
+           RAISE EXCEPTION 'injected audit storage failure' USING ERRCODE = 'XX000';
+         END IF;
+         RETURN NEW;
+       END $fn$`,
+    );
+    await owner.query(
+      `CREATE TRIGGER ${name} BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION audit.${name}()`,
+    );
+    try {
+      const debited = await account(b.ledgerId, code);
+      await expectSqlState(
+        post(b.ledgerId, [
+          { accountId: debited, side: 'debit', amountMinor: '40' },
+          { accountId: await account(b.ledgerId, '1000'), side: 'credit', amountMinor: '40' },
+        ]),
+        'XX000',
+      );
+    } finally {
+      await owner.query(`DROP TRIGGER ${name} ON audit.audit_events`);
+      await owner.query(`DROP FUNCTION audit.${name}()`);
+    }
+    expect(await entriesOf(b)).toBe(before);
+  });
+});
+
 describe('reversal (TA-4, BR-11.1)', () => {
   let b: Business;
   let cash: string;

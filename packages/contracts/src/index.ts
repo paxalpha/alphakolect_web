@@ -46,6 +46,17 @@ import {
   updateMerchantProfile,
   updateRole,
 } from './endpoints/merchant.js';
+import {
+  createLedgerAccount,
+  getAccountStatement,
+  getBalanceSheet,
+  getJournalEntry,
+  getProfitAndLoss,
+  getTrialBalance,
+  listLedgerAccounts,
+  postJournalEntry,
+  reverseJournalEntry,
+} from './endpoints/ledger.js';
 import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
 import {
   createPlatformStaff,
@@ -67,6 +78,7 @@ export * from './endpoints/agent.js';
 export * from './endpoints/platform.js';
 export * from './endpoints/platform-team.js';
 export * from './endpoints/audit.js';
+export * from './endpoints/ledger.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
 /** Every endpoint of the v1 API, keyed by operation id. Add new endpoints here. */
@@ -126,6 +138,15 @@ export const endpoints = {
   agentSelectMembership,
   agentRefresh,
   getAgentMembership,
+  listLedgerAccounts,
+  createLedgerAccount,
+  getAccountStatement,
+  getJournalEntry,
+  postJournalEntry,
+  reverseJournalEntry,
+  getTrialBalance,
+  getBalanceSheet,
+  getProfitAndLoss,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

@@ -4657,6 +4657,769 @@
           }
         }
       }
+    },
+    "/v1/merchant/ledger/accounts": {
+      "get": {
+        "operationId": "listLedgerAccounts",
+        "summary": "The chart of accounts with balances",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "includeSubaccounts",
+            "schema": {
+              "default": "false",
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every account, by code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerAccountList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createLedgerAccount",
+        "summary": "Add the business’s own account to its chart (BR-9.1)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.manage",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLedgerAccountRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The account, with a zero balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerAccount"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "CODE_TAKEN — the chart already has an account with this code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/ledger/accounts/{accountId}/statement": {
+      "get": {
+        "operationId": "getAccountStatement",
+        "summary": "An account’s lines in a period, oldest first, with running balances",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the statement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountStatement"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — an inverted period; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such account in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/ledger/entries/{entryId}": {
+      "get": {
+        "operationId": "getJournalEntry",
+        "summary": "A journal entry and its lines",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entryId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The entry",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntry"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such entry in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/ledger/entries": {
+      "post": {
+        "operationId": "postJournalEntry",
+        "summary": "Post a manual journal entry (recorded in the activity record)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.post",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[!-~]+$",
+              "description": "Client-generated unique key for this operation; reuse it when retrying"
+            },
+            "required": true,
+            "description": "Client-generated unique key for this operation; reuse it when retrying"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PostJournalEntryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Posted (or, for a retry, the first answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryPosted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a future date, or a malformed line",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.post",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the key was used with another request; IDEMPOTENCY_IN_PROGRESS — the same request is still running; ALREADY_REVERSED (reversal)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "UNBALANCED_ENTRY — the debits do not equal the credits; INSUFFICIENT_BALANCE — an account that may not go below zero would; ACCOUNT_NOT_POSTABLE — an unknown or archived account, or a control account (post to its sub-accounts)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/ledger/entries/{entryId}/reversal": {
+      "post": {
+        "operationId": "reverseJournalEntry",
+        "summary": "Reverse a manual journal entry: a new entry with every line’s side swapped (BR-11.1)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.post",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entryId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[!-~]+$",
+              "description": "Client-generated unique key for this operation; reuse it when retrying"
+            },
+            "required": true,
+            "description": "Client-generated unique key for this operation; reuse it when retrying"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReverseJournalEntryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The reversal (or, for a retry, the first answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalEntryPosted"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.post",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such entry in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the key was used with another request; IDEMPOTENCY_IN_PROGRESS — the same request is still running; ALREADY_REVERSED (reversal)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "NOT_REVERSIBLE — a reversal, or an entry posted by the system (reversed where it was made); INSUFFICIENT_BALANCE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/reports/trial-balance": {
+      "get": {
+        "operationId": "getTrialBalance",
+        "summary": "The trial balance at the end of a day",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asOf",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Each account’s debit or credit balance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrialBalance"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/reports/balance-sheet": {
+      "get": {
+        "operationId": "getBalanceSheet",
+        "summary": "The balance sheet at the end of a day",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "asOf",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Assets, liabilities and equity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BalanceSheet"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/reports/profit-and-loss": {
+      "get": {
+        "operationId": "getProfitAndLoss",
+        "summary": "Profit and loss for a period, both days included",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "$ref": "#/components/schemas/LedgerDate"
+            },
+            "required": true,
+            "description": "A calendar date (YYYY-MM-DD)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Income, expenses and the net profit",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfitAndLoss"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — an inverted period",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -5118,11 +5881,115 @@
           "refreshToken"
         ]
       },
+      "CreateLedgerAccountRequest": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/AccountCode"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountType"
+          }
+        },
+        "required": [
+          "code",
+          "name",
+          "type"
+        ],
+        "description": "A business’s own account (BR-9.1)"
+      },
+      "AccountCode": {
+        "type": "string",
+        "pattern": "^[0-9]{4,6}$",
+        "example": "6100"
+      },
+      "AccountType": {
+        "type": "string",
+        "enum": [
+          "asset",
+          "liability",
+          "equity",
+          "revenue",
+          "expense"
+        ],
+        "description": "equity = capital; revenue = income"
+      },
+      "LedgerDate": {
+        "type": "string",
+        "format": "date",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$",
+        "description": "A calendar date (YYYY-MM-DD)"
+      },
+      "PostJournalEntryRequest": {
+        "type": "object",
+        "properties": {
+          "effectiveDate": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "narrative": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "lines": {
+            "minItems": 2,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "side": {
+                  "$ref": "#/components/schemas/Side"
+                },
+                "amountMinor": {
+                  "$ref": "#/components/schemas/AmountMinor"
+                }
+              },
+              "required": [
+                "accountId",
+                "side",
+                "amountMinor"
+              ]
+            }
+          }
+        },
+        "required": [
+          "effectiveDate",
+          "narrative",
+          "lines"
+        ],
+        "description": "A manual journal entry: at least two lines, the debits equal to the credits"
+      },
+      "Side": {
+        "type": "string",
+        "enum": [
+          "debit",
+          "credit"
+        ]
+      },
       "AmountMinor": {
         "type": "string",
         "pattern": "^(0|[1-9][0-9]{0,18})$",
         "description": "Non-negative amount in minor units (kobo) as a decimal digit string",
         "example": "150000"
+      },
+      "ReverseJournalEntryRequest": {
+        "type": "object",
+        "properties": {
+          "narrative": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        }
       },
       "Currency": {
         "type": "string",
@@ -6478,6 +7345,660 @@
         ],
         "additionalProperties": false,
         "description": "A signed-in agent session"
+      },
+      "LedgerAccountList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LedgerAccount"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "description": "The chart of accounts, by code"
+      },
+      "LedgerAccount": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "code": {
+            "$ref": "#/components/schemas/AccountCode"
+          },
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/AccountType"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          },
+          "nonNegative": {
+            "type": "boolean"
+          },
+          "isSystem": {
+            "type": "boolean"
+          },
+          "parentAccountId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "agent"
+                    ]
+                  },
+                  "id": {
+                    "$ref": "#/components/schemas/Id"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "balance": {
+            "$ref": "#/components/schemas/SignedMoney"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "accountId",
+          "code",
+          "name",
+          "type",
+          "status",
+          "nonNegative",
+          "isSystem",
+          "parentAccountId",
+          "subject",
+          "balance",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "An account of the business’s chart, with its balance"
+      },
+      "SignedMoney": {
+        "type": "object",
+        "properties": {
+          "amountMinor": {
+            "$ref": "#/components/schemas/SignedAmountMinor"
+          },
+          "currency": {
+            "$ref": "#/components/schemas/Currency"
+          }
+        },
+        "required": [
+          "amountMinor",
+          "currency"
+        ],
+        "additionalProperties": false,
+        "description": "A balance, which may be negative"
+      },
+      "SignedAmountMinor": {
+        "type": "string",
+        "pattern": "^(0|-?[1-9][0-9]{0,18})$",
+        "description": "A balance in minor units (kobo) as a decimal digit string; negative with a leading minus",
+        "example": "-2500"
+      },
+      "AccountStatement": {
+        "type": "object",
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/LedgerAccount"
+          },
+          "from": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "to": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lineId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "entryId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "effectiveDate": {
+                  "$ref": "#/components/schemas/LedgerDate"
+                },
+                "entryType": {
+                  "type": "string"
+                },
+                "narrative": {
+                  "type": "string"
+                },
+                "side": {
+                  "$ref": "#/components/schemas/Side"
+                },
+                "amount": {
+                  "$ref": "#/components/schemas/Money"
+                },
+                "balance": {
+                  "$ref": "#/components/schemas/SignedMoney"
+                }
+              },
+              "required": [
+                "lineId",
+                "entryId",
+                "effectiveDate",
+                "entryType",
+                "narrative",
+                "side",
+                "amount",
+                "balance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "account",
+          "from",
+          "to",
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "An account’s lines in a period, oldest first"
+      },
+      "JournalEntry": {
+        "type": "object",
+        "properties": {
+          "entryId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "effectiveDate": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "entryType": {
+            "type": "string"
+          },
+          "narrative": {
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversesEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reversedByEntryId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdBy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "lineId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "accountId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "accountCode": {
+                  "$ref": "#/components/schemas/AccountCode"
+                },
+                "accountName": {
+                  "type": "string"
+                },
+                "side": {
+                  "$ref": "#/components/schemas/Side"
+                },
+                "amount": {
+                  "$ref": "#/components/schemas/Money"
+                }
+              },
+              "required": [
+                "lineId",
+                "accountId",
+                "accountCode",
+                "accountName",
+                "side",
+                "amount"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "entryId",
+          "effectiveDate",
+          "entryType",
+          "narrative",
+          "source",
+          "reversesEntryId",
+          "reversedByEntryId",
+          "createdBy",
+          "createdAt",
+          "lines"
+        ],
+        "additionalProperties": false,
+        "description": "A journal entry and its lines; entries are never changed"
+      },
+      "JournalEntryPosted": {
+        "type": "object",
+        "properties": {
+          "entryId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "entryId"
+        ],
+        "additionalProperties": false,
+        "description": "The entry posted (GET it for its lines)"
+      },
+      "TrialBalance": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "code": {
+                  "$ref": "#/components/schemas/AccountCode"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "type": {
+                  "$ref": "#/components/schemas/AccountType"
+                },
+                "debit": {
+                  "$ref": "#/components/schemas/Money"
+                },
+                "credit": {
+                  "$ref": "#/components/schemas/Money"
+                }
+              },
+              "required": [
+                "accountId",
+                "code",
+                "name",
+                "type",
+                "debit",
+                "credit"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "totalDebit": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "totalCredit": {
+            "$ref": "#/components/schemas/Money"
+          }
+        },
+        "required": [
+          "asOf",
+          "items",
+          "totalDebit",
+          "totalCredit"
+        ],
+        "additionalProperties": false,
+        "description": "Each account’s balance at the end of a day; the two totals are equal"
+      },
+      "BalanceSheet": {
+        "type": "object",
+        "properties": {
+          "asOf": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "assets": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "code": {
+                      "$ref": "#/components/schemas/AccountCode"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/AccountType"
+                    },
+                    "amount": {
+                      "$ref": "#/components/schemas/SignedMoney"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "code",
+                    "name",
+                    "type",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "$ref": "#/components/schemas/SignedMoney"
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "liabilities": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "code": {
+                      "$ref": "#/components/schemas/AccountCode"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/AccountType"
+                    },
+                    "amount": {
+                      "$ref": "#/components/schemas/SignedMoney"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "code",
+                    "name",
+                    "type",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "$ref": "#/components/schemas/SignedMoney"
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "equity": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "code": {
+                      "$ref": "#/components/schemas/AccountCode"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/AccountType"
+                    },
+                    "amount": {
+                      "$ref": "#/components/schemas/SignedMoney"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "code",
+                    "name",
+                    "type",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "$ref": "#/components/schemas/SignedMoney"
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "currentEarnings": {
+            "$ref": "#/components/schemas/SignedMoney"
+          }
+        },
+        "required": [
+          "asOf",
+          "assets",
+          "liabilities",
+          "equity",
+          "currentEarnings"
+        ],
+        "additionalProperties": false,
+        "description": "At the end of a day: assets = liabilities + equity + current earnings"
+      },
+      "ProfitAndLoss": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "to": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "revenue": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "code": {
+                      "$ref": "#/components/schemas/AccountCode"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/AccountType"
+                    },
+                    "amount": {
+                      "$ref": "#/components/schemas/SignedMoney"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "code",
+                    "name",
+                    "type",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "$ref": "#/components/schemas/SignedMoney"
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "expenses": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "$ref": "#/components/schemas/Id"
+                    },
+                    "code": {
+                      "$ref": "#/components/schemas/AccountCode"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "$ref": "#/components/schemas/AccountType"
+                    },
+                    "amount": {
+                      "$ref": "#/components/schemas/SignedMoney"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "code",
+                    "name",
+                    "type",
+                    "amount"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "total": {
+                "$ref": "#/components/schemas/SignedMoney"
+              }
+            },
+            "required": [
+              "items",
+              "total"
+            ],
+            "additionalProperties": false
+          },
+          "netProfit": {
+            "$ref": "#/components/schemas/SignedMoney"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "revenue",
+          "expenses",
+          "netProfit"
+        ],
+        "additionalProperties": false,
+        "description": "Income and expenses in a period, both days included"
       },
       "Money": {
         "type": "object",

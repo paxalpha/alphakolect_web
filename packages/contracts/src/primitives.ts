@@ -35,6 +35,27 @@ export const AmountMinor = z
     example: '150000',
   });
 
+/**
+ * A balance in minor units (kobo), which may be negative (an account taken below zero in its normal direction, a loss),
+ * as a decimal digit string with an optional leading minus, e.g. "-2500". Exact, like AmountMinor.
+ */
+export const SignedAmountMinor = z
+  .string()
+  .regex(
+    /^(0|-?[1-9][0-9]{0,18})$/,
+    'must be a whole number of kobo written as digits, with an optional minus',
+  )
+  .meta({
+    id: 'SignedAmountMinor',
+    description: 'A balance in minor units (kobo) as a decimal digit string; negative with a leading minus',
+    example: '-2500',
+  });
+
+export const SignedMoney = z
+  .object({ amountMinor: SignedAmountMinor, currency: Currency })
+  .meta({ id: 'SignedMoney', description: 'A balance, which may be negative' });
+export type SignedMoney = z.infer<typeof SignedMoney>;
+
 export const Money = z
   .object({
     amountMinor: AmountMinor,
@@ -87,6 +108,8 @@ export const IdempotencyKeyHeader = z.object({
     .string()
     .min(8)
     .max(200)
+    // Printable ASCII, no spaces (P6, TA-6: the key is stored as given).
+    .regex(/^[!-~]+$/, 'must be printable ASCII without spaces')
     .meta({ description: 'Client-generated unique key for this operation; reuse it when retrying' }),
 });
 

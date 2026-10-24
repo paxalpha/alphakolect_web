@@ -75,6 +75,10 @@ const REFUSAL_MESSAGE: Record<Permission, string> = {
   'merchant.invitations.read': ASK_THE_OWNER,
   'merchant.invitations.manage': OWNER_ONLY,
   'merchant.audit.read': OWNER_ONLY,
+  // P6: the books, grantable (the owner's answer, P6_OWNER_LEDGER_PERMISSIONS.md Q2)
+  'merchant.ledger.read': ASK_THE_OWNER,
+  'merchant.ledger.manage': ASK_THE_OWNER,
+  'merchant.ledger.post': ASK_THE_OWNER,
   'platform.merchants.read': ASK_A_SUPER_ADMIN,
   'platform.audit.read': ASK_A_SUPER_ADMIN,
   'platform.merchants.lifecycle': 'Only a platform super admin may change a merchant’s status',

@@ -10,6 +10,7 @@ import { totpCode, totpStep } from '../../src/modules/identity/totp.js';
 import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app.js';
 import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
 import { auditRows, FORMER_TRANSITIONAL_PAIRS, failAuditInsert, markerRequestId } from '../support/audit.js';
+import { ledgerBodies, ledgerResources } from '../support/ledger.js';
 import { TEST_PASSWORD, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The coverage guard's per-pair tests (P5.3a; P5 plan §8.1): for every atomic pair the API writes, one real request
@@ -966,6 +967,68 @@ const CASES: Case[] = [
       };
     },
   },
+  // P6: the ledger's commands (pattern A: ledger.create_account, post_manual_entry, reverse_entry)
+  {
+    pair: 'ledger.account_created/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const code = `9${String(randomBytes(3).readUIntBE(0, 3) % 100000).padStart(5, '0')}`;
+      const res = await asOwner(b, 'post', '/v1/merchant/ledger/accounts', rid, {
+        code,
+        name: 'Coverage account',
+        type: 'expense',
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'ledger_account', target_id: res.body.accountId ?? null },
+        changed: async () =>
+          (await count(
+            `SELECT count(*)::int AS n FROM ledger.accounts WHERE merchant_id = $1 AND code = $2`,
+            [b.merchantId, code],
+          )) === 1,
+      };
+    },
+  },
+  ...(['posted', 'reversed'] as const).map((step): Case => ({
+    pair: step === 'posted' ? 'ledger.manual_entry_posted/success' : 'ledger.entry_reversed/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const l = await ledgerResources(owner, b.merchantId);
+      const entry = (r: string) =>
+        asOwner(b, 'post', '/v1/merchant/ledger/entries', r, ledgerBodies.postJournalEntry(l)).set(
+          'Idempotency-Key',
+          `cov-${randomBytes(8).toString('hex')}`,
+        );
+      const manual = step === 'reversed' ? (await entry(markerRequestId('cov-setup'))).body.entryId : null;
+      const res =
+        step === 'posted'
+          ? await entry(rid)
+          : await asOwner(b, 'post', `/v1/merchant/ledger/entries/${manual}/reversal`, rid, {}).set(
+              'Idempotency-Key',
+              `cov-${randomBytes(8).toString('hex')}`,
+            );
+      return {
+        res,
+        expected: {
+          ...ownerActor(b),
+          target_type: 'ledger_entry',
+          target_id: step === 'posted' ? (res.body.entryId ?? null) : manual,
+        },
+        changed: async () =>
+          step === 'posted'
+            ? (await count(
+                `SELECT count(*)::int AS n FROM ledger.journal_entries WHERE merchant_id = $1 AND entry_type = 'manual'`,
+                [b.merchantId],
+              )) === 1
+            : (await count(
+                `SELECT count(*)::int AS n FROM ledger.journal_entries WHERE reverses_entry_id = $1`,
+                [manual],
+              )) === 1,
+      };
+    },
+  })),
 ];
 
 /** The atomic pairs this file covers. */
@@ -986,6 +1049,9 @@ const DATABASE_COVERED = [
   'platform.purge_report_request_cancelled/success',
   'platform.purge_report_handover_abandoned/success',
   'platform.purge_report_handover_failed/success',
+  // P6: written by the posting function for any posting, the session's or a domain's (ledger.test.ts, db)
+  'ledger.capital_debited/success',
+  'ledger.income_debited/success',
 ];
 
 describe('the coverage guard: every atomic pair has its two tests', () => {

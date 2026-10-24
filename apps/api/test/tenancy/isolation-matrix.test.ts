@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 import { requiredQuery } from '../support/required-query.js';
+import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from '../support/ledger.js';
 
 // The tenant-isolation matrix (P4 exit criterion; ADR-15 T3, T9, T14, T15), driven by the contract registry: every
 // merchant- and agent-audience endpoint, as it is registered — not a hand-picked list. A new tenant endpoint is in
@@ -34,7 +35,14 @@ async function setUp(name: string) {
     kind: 'agent',
   });
   expect(invited.status).toBe(201);
-  return { ...b, staff, agent, target, invitationId: invited.body.invitationId as string };
+  return {
+    ...b,
+    staff,
+    agent,
+    target,
+    invitationId: invited.body.invitationId as string,
+    ledger: await ledgerResources(owner, b.merchantId),
+  };
 }
 
 /** How to address each path parameter in a tenant: a real resource of that tenant. */
@@ -43,10 +51,14 @@ const RESOLVERS: Record<string, (t: Tenant) => string> = {
   roleId: (t) => t.roleId,
   membershipId: (t) => t.target.membershipId,
   invitationId: (t) => t.invitationId,
+  accountId: (t) => t.ledger.accountId,
+  entryId: (t) => t.ledger.entryId,
 };
 
 /** A valid request body for each tenant endpoint that takes one (`t` is the CALLER's tenant). */
 const BODIES: Partial<Record<keyof typeof endpoints, (t: Tenant) => object>> = {
+  ...ledgerBodies,
+  postJournalEntry: (t) => ledgerBodies.postJournalEntry(t.ledger),
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -75,7 +87,7 @@ function send(
   t: Tenant,
 ) {
   const path = e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => ids(p)) + requiredQuery(id);
-  let req = request(app)[e.method](path);
+  let req = request(app)[e.method](path).set(requiredHeaders(id));
   if (caller.kind === 'bearer') {
     req = req.set('Authorization', `Bearer ${caller.token}`);
   } else {
@@ -103,7 +115,8 @@ const snapshot = async (merchantId: string) =>
          'branches', (SELECT json_agg(b ORDER BY b.id) FROM tenancy.branches b WHERE merchant_id = $1),
          'roles', (SELECT json_agg(r ORDER BY r.id) FROM tenancy.roles r WHERE merchant_id = $1),
          'memberships', (SELECT json_agg(mm ORDER BY mm.id) FROM tenancy.merchant_memberships mm WHERE merchant_id = $1),
-         'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1)
+         'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
+         ${LEDGER_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )

@@ -33,6 +33,7 @@ import { apiProgram, authorityFlows, type Finding as FlowFinding } from './suppo
 import { auditRows, markerRequestId } from './support/audit.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 import { requiredQuery } from './support/required-query.js';
+import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
 
 // The policy middleware (P5.4; TARGET_ARCHITECTURE ADR-16 §3.5; P5 plan §4 invariants 3–8, §7.6, §8.2a rule 6, §9.4):
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
@@ -298,7 +299,14 @@ async function setUp() {
   });
   expect(invited.status).toBe(201);
   const support = await fx.platformAdmin('support');
-  return { ...b, staff, target, support, invitationId: invited.body.invitationId as string };
+  return {
+    ...b,
+    staff,
+    target,
+    support,
+    invitationId: invited.body.invitationId as string,
+    ledger: await ledgerResources(owner, b.merchantId),
+  };
 }
 
 const PARAMS: Record<string, (w: World) => string> = {
@@ -308,8 +316,12 @@ const PARAMS: Record<string, (w: World) => string> = {
   invitationId: (w) => w.invitationId,
   merchantId: (w) => w.merchantId,
   platformMembershipId: (w) => w.support.membershipId,
+  accountId: (w) => w.ledger.accountId,
+  entryId: (w) => w.ledger.entryId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
+  ...ledgerBodies,
+  postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
   updateMerchantProfile: () => ({ name: `Policy ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -335,7 +347,8 @@ function send(id: keyof typeof endpoints, e: EndpointContract, token: string, w:
     .set('Cookie', `${AUTH_COOKIES.access}=${token}; ${AUTH_COOKIES.csrf}=policy-csrf`)
     .set('Origin', TEST_WEB_ORIGIN)
     .set(CSRF_HEADER, 'policy-csrf')
-    .set('X-Request-ID', rid);
+    .set('X-Request-ID', rid)
+    .set(requiredHeaders(id));
   const body = BODIES[id]?.(w);
   return body ? req.send(body) : req.send();
 }
@@ -349,7 +362,8 @@ const snapshot = async (merchantId: string) =>
          'branches', (SELECT json_agg(b ORDER BY b.id) FROM tenancy.branches b WHERE merchant_id = $1),
          'roles', (SELECT json_agg(r ORDER BY r.id) FROM tenancy.roles r WHERE merchant_id = $1),
          'memberships', (SELECT json_agg(mm ORDER BY mm.id) FROM tenancy.merchant_memberships mm WHERE merchant_id = $1),
-         'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1)
+         'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
+         ${LEDGER_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )

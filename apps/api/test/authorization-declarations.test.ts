@@ -76,14 +76,24 @@ const FROZEN: Record<string, unknown> = {
   // P5.8: the activity record (sensitive reads; ADR-16 addendum, confirmed 2026-10-19)
   listMerchantAuditEvents: perm('merchant.audit.read'),
   listPlatformAuditEvents: perm('platform.audit.read'),
+  // P6: the books (plan §5; the owner's answers: all three grantable)
+  listLedgerAccounts: perm('merchant.ledger.read'),
+  createLedgerAccount: perm('merchant.ledger.manage'),
+  getAccountStatement: perm('merchant.ledger.read'),
+  getJournalEntry: perm('merchant.ledger.read'),
+  postJournalEntry: perm('merchant.ledger.post'),
+  reverseJournalEntry: perm('merchant.ledger.post'),
+  getTrialBalance: perm('merchant.ledger.read'),
+  getBalanceSheet: perm('merchant.ledger.read'),
+  getProfitAndLoss: perm('merchant.ledger.read'),
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 55 operations, one class each', () => {
+  it('declare exactly the frozen route map: 64 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(55);
+    expect(Object.keys(declared)).toHaveLength(64);
     expect(declared).toEqual(FROZEN);
   });
 

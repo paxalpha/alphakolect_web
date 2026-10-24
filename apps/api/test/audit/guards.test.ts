@@ -187,6 +187,12 @@ const INVENTORY: Record<
     pattern: 'A',
     writer: 'tenancy.transfer_ownership',
   },
+  // P6: the ledger's commands, and every debit to capital or income, written by the posting function (owner Q4)
+  'ledger.account_created/success': { class: 'atomic', pattern: 'A', writer: 'ledger.create_account' },
+  'ledger.manual_entry_posted/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_manual_entry' },
+  'ledger.entry_reversed/success': { class: 'atomic', pattern: 'A', writer: 'ledger.reverse_entry' },
+  'ledger.capital_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
+  'ledger.income_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
   ...Object.fromEntries(
     [
       ...[
@@ -241,6 +247,10 @@ const INVENTORY: Record<
       // P5.8: a refused activity-record read (a refusal by the database)
       'merchant.audit_read/denied',
       'platform.audit_read/denied',
+      // P6: a ledger command refused by the database
+      'ledger.account_created/denied',
+      'ledger.manual_entry_posted/denied',
+      'ledger.entry_reversed/denied',
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

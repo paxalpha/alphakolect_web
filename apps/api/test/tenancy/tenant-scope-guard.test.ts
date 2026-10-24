@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { tenancyRepository } from '../../src/modules/tenancy/repository.js';
+import { ledgerRepository } from '../../src/modules/ledger/repository.js';
 
 // ADR-15 T14 — no unscoped repository for tenant data — checked against the source. The tenant tables are read from
 // the migrated database (every table under row-level security), so a new tenant table is covered without editing
@@ -14,7 +15,10 @@ import { tenancyRepository } from '../../src/modules/tenancy/repository.js';
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src');
 
 /** Scoped repositories: every function takes a TenantTx and calls scopeOf first. */
-const SCOPED_REPOSITORIES: Record<string, object> = { 'modules/tenancy/repository.ts': tenancyRepository };
+const SCOPED_REPOSITORIES: Record<string, object> = {
+  'modules/tenancy/repository.ts': tenancyRepository,
+  'modules/ledger/repository.ts': ledgerRepository, // P6
+};
 /** Writes tenant audit events inside a transaction that sets that event's tenant (AuditLog). */
 const TENANT_SELF_SCOPING = ['modules/audit/audit-log.ts'];
 /** The only places that set app.merchant_id. */

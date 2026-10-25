@@ -22,7 +22,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer: A name, a contribution amount and its fee (Q2). A package is either "fixed" — each collection is the amount, or several days at once in multiples of it — or "flexible" — any amount from a minimum
+> Answer: A name, a contribution amount and its fee (Q2). A package is either "fixed" — each collection is the amount, or several days at once in multiples of it — or "flexible" — any amount from a minimum the business sets
 
 ## Q2. The percentage fee, when it does not divide exactly
 
@@ -32,7 +32,7 @@ A 2% fee on ₦1,050 is ₦21.00; on ₦1,075 it is ₦21.50; on ₦333 it is �
 - ☐ Rounded to the nearest kobo
 - ☐ Not sure
 
-> Answer:
+> Answer: Rounded down to the kobo, in the customer's favour
 
 ## Q3. When does a 31-day cycle start?
 
@@ -43,7 +43,7 @@ A 2% fee on ₦1,050 is ₦21.00; on ₦1,075 it is ₦21.50; on ₦333 it is �
 - ☐ On the 1st of each calendar month
 - ☐ Not sure
 
-> Answer:
+> Answer: with the customer's first contribution; the next cycle starts with the first contribution after the 31 days end
 
 ## Q4. The first-contribution fee when one collection covers several days
 
@@ -54,7 +54,7 @@ On a fixed ₦1,000 package, the first collection of a cycle is ₦5,000 (five d
 - ☐ The fee is the whole first collection (₦5,000)
 - ☐ Not sure
 
-> Answer:
+> Answer: The fee is one day's amount (₦1,000); the other ₦4,000 is the customer's savings. On a flexible package the fee is the whole first contribution, as your rule 6.1 says
 
 ## Q5. When the agent's cash does not match (a "remittance")
 
@@ -66,7 +66,7 @@ An agent hands over the day's cash; the business checks it against what the agen
 - ☐ A remittance is all or nothing: approved whole, or rejected whole
 - ☐ Not sure
 
-> Answer:
+> Answer: The business approves the collections the cash covers; any it does not approve stay "recorded, awaiting the cash" until a later remittance covers them or the business cancels them (Q6). Every remittance and every collection left out is recorded against the agent
 
 ## Q6. A collection recorded by mistake
 
@@ -76,7 +76,7 @@ An agent hands over the day's cash; the business checks it against what the agen
 - ☐ Agents may cancel their own collections too, before approval
 - ☐ Not sure
 
-> Answer:
+> Answer: before it is approved, the business (staff you allow) can cancel it, with a reason; it is reversed in the books and the customer sees it cancelled. After approval, a mistake is corrected the bank way: a reversing entry (your rule 11.1)
 
 ## Q7. Withdrawals: one person, or two?
 
@@ -85,7 +85,7 @@ An agent hands over the day's cash; the business checks it against what the agen
 - ☐ Always two: one records, a second approves before the cash is paid
 - ☐ Not sure
 
-> Answer:
+> Answer: One person you allow records the withdrawal and pays the cash; it is recorded with who did it
 
 ## Q8. Withdrawals to repay a loan
 
@@ -95,7 +95,7 @@ Your rule 7.2 allows a withdrawal to go to loan repayment. Loans themselves are 
   until loans exist.)*
 - ☐ Not sure
 
-> Answer:
+> Answer: cash withdrawals now; withdrawals to repay a loan come with loans
 
 ## Q9. Target savings
 
@@ -107,7 +107,7 @@ Your rules have a Target Savings wallet (saving towards a goal) and allow withdr
 - ☐ Withdrawals from target savings only once the goal is reached
 - ☐ Not sure
 
-> Answer:
+> Answer: A customer may have target savings with an optional goal (an amount and/or a date). Money goes in from their collection savings, moved by staff you allow, and can be withdrawn at any time
 
 ## Q10. Changing a customer's package
 
@@ -116,7 +116,7 @@ Your rules have a Target Savings wallet (saving towards a goal) and allow withdr
 - ☐ Immediately, starting a new cycle (a new first-contribution fee)
 - ☐ Not sure
 
-> Answer:
+> Answer: The change takes effect when the current cycle ends; the new package's first contribution starts the next cycle
 
 ## Q11. The wording of the new permissions
 
@@ -134,7 +134,7 @@ Business owners read these on the role screen. Agents need none: they record col
 - ☐ I approve it with these changes: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: I approve the wording as written; all four can be given to staff
 
 ---
 

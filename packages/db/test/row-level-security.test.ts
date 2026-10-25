@@ -32,6 +32,10 @@ const NO_APP_ACCESS_TENANT_TABLES = [
   ...LEDGER_TABLES,
   // P6 (TA-6): a command's idempotency claims, through util.claim_idempotency and the commands alone
   'util.idempotency_records',
+  // P7: customers, their agents and their app links, through the customers.* functions alone (B1)
+  'customers.customers',
+  'customers.assignments',
+  'customers.app_invitations',
   'audit.audit_events',
   'tenancy.role_permissions',
   'tenancy.merchants',

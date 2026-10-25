@@ -40,6 +40,11 @@ const CATALOG: ReadonlyArray<readonly [string, 'merchant' | 'platform', boolean]
   ['merchant.ledger.read', 'merchant', true],
   ['merchant.ledger.manage', 'merchant', true],
   ['merchant.ledger.post', 'merchant', true],
+  // P7: customers (the owner's answers of 2026-10-25; removing details is the owner's alone)
+  ['merchant.customers.read', 'merchant', true],
+  ['merchant.customers.manage', 'merchant', true],
+  ['merchant.customers.assign', 'merchant', true],
+  ['merchant.customers.anonymise', 'merchant', false],
   ['platform.merchants.read', 'platform', true],
   ['platform.audit.read', 'platform', true],
   ['platform.merchants.lifecycle', 'platform', false],

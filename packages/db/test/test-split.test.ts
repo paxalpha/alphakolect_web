@@ -16,8 +16,12 @@ describe('the test split (§9.3)', () => {
   it('the races still run 50 staged times each — never fewer without a recorded decision', () => {
     for (const suite of CONCURRENCY_SUITES)
       expect(readFileSync(new URL(suite, root), 'utf8'), suite).toMatch(/^const RUNS = 50;$/m);
-    // P6: the ledger's races (TA-4, TA-5, TA-6, the non-negative rule) joined P5's
-    expect(CONCURRENCY_SUITES).toEqual(['test/lock-races.test.ts', 'test/ledger-races.test.ts']);
+    // P6: the ledger's races (TA-4, TA-5, TA-6, the non-negative rule) joined P5's; P7: the customers'
+    expect(CONCURRENCY_SUITES).toEqual([
+      'test/lock-races.test.ts',
+      'test/ledger-races.test.ts',
+      'test/customers-races.test.ts',
+    ]);
   });
 
   it('the concurrency command is wired into the root and the CI gate', () => {

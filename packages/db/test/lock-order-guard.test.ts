@@ -43,7 +43,7 @@ import {
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
 
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers'];
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
 ) as { commit: string; functions: FnRow[] };
@@ -102,6 +102,11 @@ describe('enforcing mode (R34): no finding at all', () => {
       'audit.purge_run_events(run_id, page_no, ordinal)',
       'audit.purge_run_pages(run_id, page_no)',
       'audit.purge_runs(run_id)',
+      // P7: the customers' unique keys — a link, an agent, a sign-in and a phone number per business
+      'customers.app_invitations(customer_id) partial',
+      'customers.assignments(customer_id) partial',
+      'customers.customers(merchant_id, identity_id) partial',
+      'customers.customers(merchant_id, phone) partial',
       'identity.identities(email)',
       // P5.7: the platform grant writer inserts grant rows
       'identity.platform_membership_grants(platform_membership_id, permission)',

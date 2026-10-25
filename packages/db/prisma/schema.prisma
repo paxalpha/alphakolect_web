@@ -48,6 +48,9 @@ model Merchant {
   idempotencyRecords IdempotencyRecord[]
   auditEvents       AuditEvent[]
   memberships       MerchantMembership[]
+  customers          Customer[]
+  customerAssignments CustomerAssignment[]
+  customerAppInvitations CustomerAppInvitation[]
   branches          Branch[]
   roles             Role[]
   invitations       Invitation[]
@@ -460,6 +463,8 @@ model Identity {
   journalEntries                JournalEntry[]                 @relation("JournalEntryCreator")
   idempotencyRecords            IdempotencyRecord[]
   auditEvents                   AuditEvent[]                   @relation("AuditActor")
+  customers                     Customer[]
+  customerAppInvitations        CustomerAppInvitation[]
 
   @@map("identities")
   @@schema("identity")
@@ -526,6 +531,8 @@ model Session {
   audience             String
   platformMembershipId String?   @map("platform_membership_id") @db.Uuid
   merchantMembershipId String?   @map("merchant_membership_id") @db.Uuid
+  /// The customer audience (P7): the customer record the session signs in as.
+  customerId           String?   @map("customer_id") @db.Uuid
   /// "full", or "mfa_enrollment" for a platform login that may only enrol TOTP (D8).
   scope                String    @default("full")
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -538,6 +545,7 @@ model Session {
   identity           Identity            @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   platformMembership PlatformMembership? @relation(fields: [platformMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   merchantMembership MerchantMembership? @relation(fields: [merchantMembershipId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  customer           Customer?           @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "sessions_customer_fkey")
   refreshTokens      RefreshToken[]
 
   @@index([identityId])
@@ -658,6 +666,7 @@ model Branch {
   merchant    Merchant             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   memberships MerchantMembership[]
   invitations Invitation[]
+  customers   Customer[]
 
   @@unique([merchantId, id])
   @@map("branches")
@@ -721,6 +730,10 @@ model MerchantMembership {
   sessions            Session[]
   invitationsSent     Invitation[] @relation("InvitationInviter")
   invitationsAccepted Invitation[] @relation("InvitationAcceptedMembership")
+  customersCreated    Customer[]   @relation("CustomerCreatedBy")
+  agentAssignments    CustomerAssignment[] @relation("AssignmentAgent")
+  assignmentsMade     CustomerAssignment[] @relation("AssignmentAssignedBy")
+  assignmentsEnded    CustomerAssignment[] @relation("AssignmentEndedBy")
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
@@ -728,6 +741,88 @@ model MerchantMembership {
   @@index([merchantId, createdAt, id], map: "merchant_memberships_merchant_id_created_at_id_idx")
   @@map("merchant_memberships")
   @@schema("tenancy")
+}
+
+// ── customers ───────────────────────────────────────────────────────────────────────────────────
+
+/// A business's customer (P7; the owner's answers of 2026-10-25). Reached only through customers.* definer functions.
+/// Partial unique indexes live in the migration: one customer per phone number per business among those not
+/// anonymised (customers_one_per_phone), one per person per business (customers_one_per_identity).
+model Customer {
+  id                    String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId            String    @map("merchant_id") @db.Uuid
+  branchId              String    @map("branch_id") @db.Uuid
+  fullName              String    @map("full_name")
+  /// Normalised (customers.normalise_phone); null only once anonymised (BR-11.3).
+  phone                 String?
+  email                 String?
+  address               String?
+  nickname              String?
+  status                String    @default("active")
+  /// The customer's app sign-in, once they accept the business's link.
+  identityId            String?   @map("identity_id") @db.Uuid
+  createdByMembershipId String?   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  deactivatedAt         DateTime? @map("deactivated_at") @db.Timestamptz(6)
+  anonymisedAt          DateTime? @map("anonymised_at") @db.Timestamptz(6)
+
+  merchant       Merchant              @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "customers_merchant_fkey")
+  branch         Branch                @relation(fields: [merchantId, branchId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "customers_branch_fkey")
+  identity       Identity?             @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "customers_identity_fkey")
+  createdBy      MerchantMembership?   @relation("CustomerCreatedBy", fields: [merchantId, createdByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "customers_created_by_fkey")
+  assignments    CustomerAssignment[]
+  appInvitations CustomerAppInvitation[]
+  sessions       Session[]
+
+  @@unique([merchantId, id], map: "customers_merchant_id_id_key")
+  @@index([merchantId, branchId, createdAt, id], map: "customers_merchant_branch_idx")
+  @@map("customers")
+  @@schema("customers")
+}
+
+/// Every period an agent holds a customer (D1; owner Q5). At most one open per customer (assignments_one_open).
+model CustomerAssignment {
+  id                     String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId             String    @map("merchant_id") @db.Uuid
+  customerId             String    @map("customer_id") @db.Uuid
+  agentMembershipId      String    @map("agent_membership_id") @db.Uuid
+  assignedAt             DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(6)
+  endedAt                DateTime? @map("ended_at") @db.Timestamptz(6)
+  assignedByMembershipId String?   @map("assigned_by_membership_id") @db.Uuid
+  endedByMembershipId    String?   @map("ended_by_membership_id") @db.Uuid
+
+  merchant   Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "assignments_merchant_fkey")
+  customer   Customer            @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "assignments_customer_fkey")
+  agent      MerchantMembership  @relation("AssignmentAgent", fields: [merchantId, agentMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "assignments_agent_fkey")
+  assignedBy MerchantMembership? @relation("AssignmentAssignedBy", fields: [merchantId, assignedByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "assignments_assigned_by_fkey")
+  endedBy    MerchantMembership? @relation("AssignmentEndedBy", fields: [merchantId, endedByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "assignments_ended_by_fkey")
+
+  @@unique([merchantId, id], map: "assignments_merchant_id_id_key")
+  @@index([customerId, assignedAt, id], map: "assignments_customer_idx")
+  @@map("assignments")
+  @@schema("customers")
+}
+
+/// The link a business sends a customer for the mobile app (owner Q7, P7-9). One open per customer.
+model CustomerAppInvitation {
+  id         String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String    @map("merchant_id") @db.Uuid
+  customerId String    @map("customer_id") @db.Uuid
+  identityId String    @map("identity_id") @db.Uuid
+  tokenHash  String    @unique(map: "app_invitations_token_hash_key") @map("token_hash") @db.Char(64)
+  expiresAt  DateTime  @map("expires_at") @db.Timestamptz(6)
+  acceptedAt DateTime? @map("accepted_at") @db.Timestamptz(6)
+  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "app_invitations_merchant_fkey")
+  customer Customer @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "app_invitations_customer_fkey")
+  identity Identity @relation(fields: [identityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "app_invitations_identity_fkey")
+
+  @@unique([merchantId, id], map: "app_invitations_merchant_id_id_key")
+  @@map("app_invitations")
+  @@schema("customers")
 }
 
 // ── util ────────────────────────────────────────────────────────────────────────────────────────

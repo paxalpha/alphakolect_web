@@ -58,6 +58,10 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'ledger.balance_projection': 14,
   'ledger.journal_entries': 15,
   'ledger.journal_lines': 15,
+  // P7 (P7-11): after the ledger, so removing a customer's details holds their balances (14) before the customer
+  'customers.customers': 16,
+  'customers.assignments': 16,
+  'customers.app_invitations': 16,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */
@@ -980,6 +984,8 @@ export const LOCK_FREE_EXPRESSION_FUNCTIONS: ReadonlySet<string> = new Set([
   'char_length',
   'lower',
   'jsonb_typeof',
+  // P7: a phone number's normalisation (IMMUTABLE, reads no table)
+  'customers.normalise_phone',
 ]);
 
 /**

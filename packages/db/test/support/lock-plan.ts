@@ -179,6 +179,78 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
       'audit.audit_events',
     ],
   },
+  // ── P7: customers (plan §9.1, P7-11) ──
+  // Each command: the business (S), the actor (the authority lock; with the agent it assigns, S, in one sorted call),
+  // the actor's role, the branches it checks, then the customer (16, NKU) and what it writes; onboarding's contested
+  // inserts last (L3: the customer, its assignment, its four ledger sub-accounts — the loop counted twice).
+  // Removing a customer's details holds their sub-accounts' balances (14) before the customer (16).
+  'customers.create_customer': {
+    class: 'operation',
+    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '+16', '+13', '+14', '+13', '+14'],
+    writes: [
+      'customers.customers',
+      'customers.assignments',
+      'ledger.accounts',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'customers.agent_create_customer': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '8:S', '+16', '+13', '+14', '+13', '+14'],
+    writes: [
+      'customers.customers',
+      'customers.assignments',
+      'ledger.accounts',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'customers.update_customer': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU'],
+    writes: ['customers.customers', 'audit.audit_events'],
+  },
+  'customers.set_customer_status': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU'],
+    writes: ['customers.customers', 'audit.audit_events'],
+  },
+  'customers.assign_agent': {
+    class: 'operation',
+    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '16:NKU', '16:W', '+16'],
+    writes: ['customers.assignments', 'audit.audit_events'],
+  },
+  'customers.issue_app_invitation': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU', '16:W', '+6', '+16'],
+    writes: ['customers.app_invitations', 'identity.identities', 'audit.audit_events'],
+  },
+  'customers.accept_app_invitation': {
+    class: 'operation',
+    planned: ['6:NKU', '16:NKU', '16:NKU'],
+    writes: ['identity.identities', 'customers.customers', 'customers.app_invitations', 'audit.audit_events'],
+  },
+  'customers.anonymise_customer': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '14:S', '16:NKU', '16:W', '16:W'],
+    writes: [
+      'customers.customers',
+      'customers.assignments',
+      'customers.app_invitations',
+      'audit.audit_events',
+    ],
+  },
+  'customers.insert_customer_locked': {
+    class: 'locked',
+    writes: [
+      'customers.customers',
+      'customers.assignments',
+      'ledger.accounts',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -494,6 +566,14 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'ledger.read_entry': { class: 'reader' },
   'ledger.account_movements': { class: 'reader' },
   'ledger.verify_projections': { class: 'reader' },
+  // P7: the customer reads, the phone normalisation and P8's current-agent lookup
+  'customers.normalise_phone': { class: 'reader' },
+  'customers.list_customers': { class: 'reader' },
+  'customers.branch_of': { class: 'reader' },
+  'customers.list_assignments': { class: 'reader' },
+  'customers.agent_customers': { class: 'reader' },
+  'customers.read_self': { class: 'reader' },
+  'customers.current_agent': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -562,6 +642,11 @@ export const BASELINE: readonly string[] = [
  */
 export const MERCHANT_SCOPED_READS: readonly string[] = [
   'audit.read_merchant_events',
+  'customers.agent_customers',
+  'customers.branch_of',
+  'customers.list_assignments',
+  'customers.list_customers',
+  'customers.read_self',
   'identity.session_authority',
   'ledger.account_movements',
   'ledger.list_accounts',
@@ -604,6 +689,8 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
     'the permissions of a membership session_authority or assert_authority has already resolved from the session',
   'ledger.verify_projections':
     'the operator’s nightly check of every projection against its lines (§3.4, P12): all businesses by design',
+  'customers.current_agent':
+    'P8’s check that an agent records collections only for their own customers (D1): called by its definer functions',
   'ledger.assert_entry_balanced':
     'the commit-time balance check of one entry (P1), called by its constraint trigger with the entry being written',
 };
@@ -703,4 +790,10 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   // P6: an agent's sub-account (cash with agents, 1210) belongs to an agent membership of the business — a subject
   // check, not authority
   "ledger.open_subaccount: m.kind = 'agent'",
+  // P7: the agent a customer is given is an agent membership of the business (a subject check, not authority); an
+  // agent's own endpoints act for the agent only (P7-6)
+  "customers.agent_create_customer: v.kind = 'agent'",
+  "customers.agent_customers: s.kind = 'agent'",
+  "customers.assign_agent: mm.kind = 'agent'",
+  "customers.create_customer: mm.kind = 'agent'",
 ];

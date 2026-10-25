@@ -89,7 +89,7 @@ needs `merchant.customers.read`.
 | `POST …/{customerId}/app-invitation` | `merchant.customers.manage` (branch) | the customer's sign-in link |
 | `POST …/{customerId}/anonymisation` | `merchant.customers.anonymise` (owner only) | BR-11.3 |
 | `GET /v1/agent/customers`, `POST /v1/agent/customers` | agent (assigned customers) | the agent's own; onboard |
-| `POST /v1/customer/auth/login`, `…/refresh`, `…/select` · `GET /v1/customer/me` | customer | |
+| `POST /v1/auth/customer/login`, `…/login/select`, `…/refresh`, `…/invitation/accept` · `GET /v1/customer/me` | customer | sign-in beside the agent's (`/v1/auth/agent/…`); the app link's acceptance |
 
 Activity events (atomic, pattern A, identifiers only): `customer.created`, `customer.updated`, `customer.deactivated`,
 `customer.reactivated`, `customer.agent_assigned`, `customer.app_invited`, `customer.anonymised`; refusals best effort.
@@ -102,7 +102,7 @@ Activity events (atomic, pattern A, identifiers only): `customer.created`, `cust
 - **D1:** every assignment is recorded with its period; one current agent at most, under concurrency; `current_agent`
   answers what P8 needs.
 - **Branch scope:** the first end-to-end branch isolation — a restricted staff member gets 404 for another branch's
-  customer; the authorization and isolation matrices cover every endpoint and actor, the customer audience included.
+  customer; the authorization and isolation matrices cover every endpoint and actor, the customer audience by the API tests (a customer token refused on the business's and the agent's endpoints; `/me` the customer's own record only).
 - Phone uniqueness under concurrency; deactivation ends sessions; the customer audience's sign-in and refresh; the
   lock-order guard classifies every new function.
 

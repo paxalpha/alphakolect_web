@@ -280,6 +280,43 @@ describe('the app link and the customer’s sign-in (Q7)', () => {
     expect(CustomerTokens.parse(chosen.body).session.audience).toBe('customer');
   });
 
+  it('a weak password gets the same answer whatever the address — unknown, new or an existing account (D12)', async () => {
+    const b = await business();
+    const fresh = uniqueEmail('fresh');
+    const c = await newCustomer(b.owner.token, b.branchId, { email: fresh });
+    await call(b.owner.token, 'post', `/v1/merchant/customers/${c.customerId}/app-invitation`);
+    for (const address of [uniqueEmail('nobody'), fresh, b.owner.email])
+      expectError(
+        await request(app)
+          .post('/v1/auth/customer/invitation/accept')
+          .send({ token: 'x'.repeat(43), email: address, password: 'short' }),
+        422,
+        'WEAK_PASSWORD',
+      );
+  });
+
+  it('R1: a link sent before the customer’s email changed no longer works', async () => {
+    const b = await business();
+    const oldAddress = uniqueEmail('before');
+    const c = await newCustomer(b.owner.token, b.branchId, { email: oldAddress });
+    await call(b.owner.token, 'post', `/v1/merchant/customers/${c.customerId}/app-invitation`);
+    const link = linkOf(oldAddress);
+    expect(
+      (
+        await call(b.owner.token, 'patch', `/v1/merchant/customers/${c.customerId}`, {
+          email: uniqueEmail('after'),
+        })
+      ).status,
+    ).toBe(200);
+    expectError(
+      await request(app)
+        .post('/v1/auth/customer/invitation/accept')
+        .send({ token: link, email: oldAddress, password: PASSWORD }),
+      400,
+      'INVALID_INVITATION',
+    );
+  });
+
   it('refuses a link for a customer without an email; the answer never says whether the address had an account', async () => {
     const b = await business();
     const c = await newCustomer(b.owner.token, b.branchId);

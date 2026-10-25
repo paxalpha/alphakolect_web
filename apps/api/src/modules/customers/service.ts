@@ -297,6 +297,12 @@ export class CustomerService {
   async acceptAppInvitation(input: AcceptCustomerInvitationRequest, ctx: RequestContext): Promise<void> {
     const { db, identity, audit, limiter } = this.deps;
     await limiter.enforce('customer_app_accept', ctx.ip, input.email);
+    // D10, first and for everyone: the answer must not tell an account that has a password from one that has not
+    // (D12). An existing account's password was set under the same rules.
+    const problem = checkPasswordPolicy(input.password);
+    if (problem) {
+      throw new AppError(422, 'WEAK_PASSWORD', 'Choose a longer or less common password', { problem });
+    }
     const candidate = await identity.loginIdentity(input.email);
     const tokenHash = hashReceivedToken(input.token);
     const fail = async (reason: string) => {
@@ -317,10 +323,6 @@ export class CustomerService {
       if (!(await verifyPassword(input.password, candidate.password_hash)))
         throw await fail('wrong_password');
     } else if (candidate) {
-      const problem = checkPasswordPolicy(input.password);
-      if (problem) {
-        throw new AppError(422, 'WEAK_PASSWORD', 'Choose a longer or less common password', { problem });
-      }
       newHash = await hashPassword(input.password);
     } else {
       // D12: an unknown account costs the same password check as a known one and fails identically.

@@ -7,7 +7,7 @@ import type { Ed25519PrivateJwk } from '../../platform/config.js';
 export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const ALGORITHM = 'EdDSA';
 
-export type SessionAudience = 'platform' | 'merchant' | 'agent';
+export type SessionAudience = 'platform' | 'merchant' | 'agent' | 'customer';
 
 export type AccessClaims = {
   /** identity id */
@@ -86,7 +86,7 @@ export class AccessTokens {
         typeof payload.sub !== 'string' ||
         typeof payload.sid !== 'string' ||
         typeof payload.mid !== 'string' ||
-        (aud !== 'platform' && aud !== 'merchant' && aud !== 'agent')
+        (aud !== 'platform' && aud !== 'merchant' && aud !== 'agent' && aud !== 'customer')
       ) {
         return null;
       }

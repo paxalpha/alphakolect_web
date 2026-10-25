@@ -14,6 +14,8 @@ const PUBLIC = { class: 'public' };
 const SELF = { class: 'self' };
 const cap = (capability: string) => ({ class: 'capability', capability });
 const perm = (permission: string) => ({ class: 'permission', permission, branchScope: 'merchant_wide' });
+/** P7: a branch-scoped permission endpoint (P5 §7.6), the customers' first. */
+const bperm = (permission: string) => ({ class: 'permission', permission, branchScope: 'branch' });
 
 /** The route map frozen in P5.0 (plan §5). A change here is a change to the approved design. */
 const FROZEN: Record<string, unknown> = {
@@ -87,14 +89,33 @@ const FROZEN: Record<string, unknown> = {
   getTrialBalance: perm('merchant.ledger.read'),
   getBalanceSheet: perm('merchant.ledger.read'),
   getProfitAndLoss: perm('merchant.ledger.read'),
+  // P7: customers (plan §4; the owner's answers): branch-scoped for the business; the agent's own (self); the
+  // customer audience
+  listCustomers: bperm('merchant.customers.read'),
+  createCustomer: bperm('merchant.customers.manage'),
+  getCustomer: bperm('merchant.customers.read'),
+  updateCustomer: bperm('merchant.customers.manage'),
+  deactivateCustomer: bperm('merchant.customers.manage'),
+  reactivateCustomer: bperm('merchant.customers.manage'),
+  assignCustomerAgent: bperm('merchant.customers.assign'),
+  listCustomerAssignments: bperm('merchant.customers.read'),
+  inviteCustomerToApp: bperm('merchant.customers.manage'),
+  anonymiseCustomer: perm('merchant.customers.anonymise'),
+  listAgentCustomers: SELF,
+  createAgentCustomer: SELF,
+  customerLogin: cap('credentials'),
+  customerSelectMembership: cap('selection_challenge'),
+  customerRefresh: cap('refresh_token'),
+  acceptCustomerInvitation: cap('invitation_token'),
+  getCustomerSelf: SELF,
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 65 operations, one class each', () => {
+  it('declare exactly the frozen route map: 82 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(65);
+    expect(Object.keys(declared)).toHaveLength(82);
     expect(declared).toEqual(FROZEN);
   });
 

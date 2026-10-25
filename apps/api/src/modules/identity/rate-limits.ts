@@ -17,7 +17,9 @@ export type LimitName =
   | 'mfa'
   | 'membership_selection'
   | 'invitation_issue'
-  | 'invitation_accept';
+  | 'invitation_accept'
+  | 'customer_app_invite'
+  | 'customer_app_accept';
 
 type Rule = { windowSeconds: number; perIp: number; perIdentifier: number };
 
@@ -38,6 +40,10 @@ export const LIMITS: Readonly<Record<LimitName, Rule>> = {
   invitation_issue: { windowSeconds: 3600, perIp: 60, perIdentifier: 50 },
   // ADR-15 T11: a password check; the identifier is the email.
   invitation_accept: { windowSeconds: 900, perIp: 30, perIdentifier: 10 },
+  // P7: a customer's app link — its own limits, so sending customers links never uses up a business's staff
+  // invitations. Issuing: the identifier is the business; accepting (a password check): the identifier is the email.
+  customer_app_invite: { windowSeconds: 3600, perIp: 120, perIdentifier: 100 },
+  customer_app_accept: { windowSeconds: 900, perIp: 30, perIdentifier: 10 },
 };
 
 const key = (name: LimitName, kind: 'ip' | 'id', value: string) =>

@@ -11,6 +11,7 @@ import { createTestApp, TEST_WEB_APP_URL, TEST_WEB_ORIGIN } from '../support/app
 import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
 import { auditRows, FORMER_TRANSITIONAL_PAIRS, failAuditInsert, markerRequestId } from '../support/audit.js';
 import { ledgerBodies, ledgerResources } from '../support/ledger.js';
+import { customerOf, uniquePhone } from '../support/customers.js';
 import { TEST_PASSWORD, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The coverage guard's per-pair tests (P5.3a; P5 plan §8.1): for every atomic pair the API writes, one real request
@@ -1053,6 +1054,163 @@ const CASES: Case[] = [
       };
     },
   })),
+  // P7: the customers' commands (pattern A: each its own customers.* function)
+  {
+    pair: 'customer.created/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const phone = uniquePhone();
+      const res = await asOwner(b, 'post', '/v1/merchant/customers', rid, {
+        branchId: b.branchId,
+        fullName: 'Coverage customer',
+        phone,
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: res.body.customerId ?? null },
+        changed: async () =>
+          (await count(
+            `SELECT count(*)::int AS n FROM customers.customers WHERE merchant_id = $1 AND phone = $2`,
+            [b.merchantId, phone],
+          )) === 1,
+      };
+    },
+  },
+  {
+    pair: 'customer.updated/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const res = await asOwner(b, 'patch', `/v1/merchant/customers/${customerId}`, rid, {
+        nickname: 'Covered',
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await one(`SELECT nickname FROM customers.customers WHERE id = $1`, [customerId])).nickname ===
+          'Covered',
+      };
+    },
+  },
+  ...(['deactivated', 'reactivated'] as const).map((step): Case => ({
+    pair: `customer.${step}/success`,
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      if (step === 'reactivated')
+        await owner.query(
+          `UPDATE customers.customers SET status = 'deactivated', deactivated_at = now() WHERE id = $1`,
+          [customerId],
+        );
+      const action = step === 'deactivated' ? 'deactivate' : 'reactivate';
+      const res = await asOwner(b, 'post', `/v1/merchant/customers/${customerId}/${action}`, rid);
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await one(`SELECT status FROM customers.customers WHERE id = $1`, [customerId])).status ===
+          (step === 'deactivated' ? 'deactivated' : 'active'),
+      };
+    },
+  })),
+  {
+    pair: 'customer.agent_assigned/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const agent = await fx.member(b, 'agent');
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const res = await asOwner(b, 'put', `/v1/merchant/customers/${customerId}/agent`, rid, {
+        agentMembershipId: agent.membershipId,
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await count(
+            `SELECT count(*)::int AS n FROM customers.assignments WHERE customer_id = $1 AND ended_at IS NULL`,
+            [customerId],
+          )) === 1,
+      };
+    },
+  },
+  {
+    pair: 'customer.app_invited/success',
+    status: 202,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      await owner.query(`UPDATE customers.customers SET email = $2 WHERE id = $1`, [
+        customerId,
+        uniqueEmail('cov-saver'),
+      ]);
+      const res = await asOwner(b, 'post', `/v1/merchant/customers/${customerId}/app-invitation`, rid);
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await count(`SELECT count(*)::int AS n FROM customers.app_invitations WHERE customer_id = $1`, [
+            customerId,
+          ])) === 1,
+      };
+    },
+  },
+  {
+    pair: 'customer.app_access_accepted/success',
+    status: 204,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const address = uniqueEmail('cov-accept');
+      await owner.query(`UPDATE customers.customers SET email = $2 WHERE id = $1`, [customerId, address]);
+      const token = newOpaqueToken();
+      const issued = await owner.query(
+        `SELECT outcome FROM customers.issue_app_invitation($1, $2, $3, 3600, NULL, NULL, NULL)`,
+        [b.owner.sessionId, customerId, token.hash],
+      );
+      expect(issued.rows[0].outcome).toBe('ok');
+      const identityId = (await one(`SELECT id FROM identity.identities WHERE email = $1`, [address])).id;
+      const res = await marked(request(app).post('/v1/auth/customer/invitation/accept'), rid).send({
+        token: token.raw,
+        email: address,
+        password: NEW_PASSWORD,
+      });
+      return {
+        res,
+        expected: {
+          merchant_id: b.merchantId,
+          actor_identity_id: identityId,
+          actor_audience: null,
+          actor_membership_id: null,
+          target_type: 'customer',
+          target_id: customerId,
+        },
+        changed: async () =>
+          (await one(`SELECT identity_id FROM customers.customers WHERE id = $1`, [customerId]))
+            .identity_id === identityId,
+      };
+    },
+  },
+  {
+    pair: 'customer.anonymised/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const res = await asOwner(b, 'post', `/v1/merchant/customers/${customerId}/anonymisation`, rid);
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await one(`SELECT status FROM customers.customers WHERE id = $1`, [customerId])).status ===
+          'anonymised',
+      };
+    },
+  },
 ];
 
 /** The atomic pairs this file covers. */

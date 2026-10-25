@@ -27,7 +27,7 @@ import {
 // reachable — nothing is tolerated (the lock-order guard fails if a tolerated list is exported again).
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers'];
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
 let catalog: Catalog;
 let rules: ClassRules;
@@ -125,6 +125,15 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
     // P5.5 steps 3–5: the privileged functions write their own audit rows; their transactions are one operation each
     // (the branch-or-role writes: one of a constant map's two functions; acceptance: admission records #14).
     expect(byClass('T1')).toEqual([
+      // P7: the customers' commands — each one call of its planned operation (the app link's acceptance included)
+      'CustomerService.acceptAppInvitation',
+      'CustomerService.agentCreate',
+      'CustomerService.anonymise',
+      'CustomerService.assignAgent',
+      'CustomerService.create',
+      'CustomerService.inviteToApp',
+      'CustomerService.setStatus',
+      'CustomerService.update',
       'InvitationService.accept',
       'InvitationService.create',
       'InvitationService.revoke',

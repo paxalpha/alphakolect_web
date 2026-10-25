@@ -86,6 +86,35 @@ export function invitationSetupEmail(
   };
 }
 
+/**
+ * P7 (owner Q7): a business's link to the customer mobile app. A new person chooses their password with it; an
+ * existing account accepts it with its own. Both pages are the app's (or the web app's until the mobile app ships).
+ */
+export function customerAppEmail(
+  to: string,
+  webAppUrl: string,
+  rawToken: string,
+  businessName: string,
+  delivery: 'setup' | 'accept',
+): EmailMessage {
+  return {
+    template: delivery === 'setup' ? 'customer_app_setup' : 'customer_app_accept',
+    to,
+    subject: `${businessName} invites you to the AlphaKolect app`,
+    text: [
+      `${businessName} invites you to see your savings in the AlphaKolect app.`,
+      '',
+      delivery === 'setup'
+        ? 'Choose your password to start:'
+        : 'Accept with your AlphaKolect email and password:',
+      `${webAppUrl}/customer/accept#token=${rawToken}`,
+      '',
+      'This link works once and expires in 24 hours.',
+      'If you did not expect this, ignore this email.',
+    ].join('\n'),
+  };
+}
+
 /** An existing account: the invitation link, accepted with that account's password (ADR-15 T11). */
 export function invitationAcceptEmail(
   to: string,

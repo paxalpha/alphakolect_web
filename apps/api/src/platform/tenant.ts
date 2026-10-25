@@ -18,8 +18,9 @@ export type TenantContext = Readonly<{
   identityId: string;
   membershipId: string;
   sessionId: string;
-  audience: 'merchant' | 'agent';
-  kind: MembershipKind;
+  /** P7: a customer session is a tenant session too — its own record of one business. */
+  audience: 'merchant' | 'agent' | 'customer';
+  kind: MembershipKind | 'customer';
   /** Staff only: their merchant-defined role, whose grants are their permissions (ADR-16). */
   roleId: string | null;
   /** Staff only: the one branch they are restricted to; null = all branches (ADR-15 T7). */
@@ -32,18 +33,18 @@ export type TenantContext = Readonly<{
 
 export type TenantTx = Queryable & { readonly tenant: TenantContext };
 
-const MEMBERSHIP_KINDS: ReadonlySet<string> = new Set(['owner', 'staff', 'agent']);
+const MEMBERSHIP_KINDS: ReadonlySet<string> = new Set(['owner', 'staff', 'agent', 'customer']);
 
-/** The TenantContext of an authenticated merchant or agent session; refuses any other session. */
+/** The TenantContext of an authenticated merchant, agent or customer session; refuses any other session. */
 export function tenantContextOf(auth: AuthContext | undefined): TenantContext {
   if (
     !auth ||
-    (auth.audience !== 'merchant' && auth.audience !== 'agent') ||
+    (auth.audience !== 'merchant' && auth.audience !== 'agent' && auth.audience !== 'customer') ||
     !auth.merchantId ||
     !MEMBERSHIP_KINDS.has(auth.kind)
   ) {
     // Unreachable through the router (audience-checked endpoints); a programming error if it ever happens.
-    throw new Error('A tenant endpoint was reached without a merchant or agent session');
+    throw new Error('A tenant endpoint was reached without a merchant, agent or customer session');
   }
   return Object.freeze({
     merchantId: auth.merchantId,
@@ -51,7 +52,7 @@ export function tenantContextOf(auth: AuthContext | undefined): TenantContext {
     membershipId: auth.membershipId,
     sessionId: auth.sessionId,
     audience: auth.audience,
-    kind: auth.kind as MembershipKind,
+    kind: auth.kind as MembershipKind | 'customer',
     roleId: auth.roleId,
     branchId: auth.branchId,
     branchStatus: auth.branchStatus,

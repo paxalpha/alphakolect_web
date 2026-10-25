@@ -194,6 +194,19 @@ const INVENTORY: Record<
   'ledger.entry_reversed/success': { class: 'atomic', pattern: 'A', writer: 'ledger.reverse_entry' },
   'ledger.capital_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
   'ledger.income_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
+  // P7: the customers' commands (pattern A, each its own definer function)
+  'customer.created/success': { class: 'atomic', pattern: 'A', writer: 'customers.insert_customer_locked' },
+  'customer.updated/success': { class: 'atomic', pattern: 'A', writer: 'customers.update_customer' },
+  'customer.deactivated/success': { class: 'atomic', pattern: 'A', writer: 'customers.set_customer_status' },
+  'customer.reactivated/success': { class: 'atomic', pattern: 'A', writer: 'customers.set_customer_status' },
+  'customer.agent_assigned/success': { class: 'atomic', pattern: 'A', writer: 'customers.assign_agent' },
+  'customer.app_invited/success': { class: 'atomic', pattern: 'A', writer: 'customers.issue_app_invitation' },
+  'customer.app_access_accepted/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'customers.accept_app_invitation',
+  },
+  'customer.anonymised/success': { class: 'atomic', pattern: 'A', writer: 'customers.anonymise_customer' },
   ...Object.fromEntries(
     [
       ...[
@@ -253,6 +266,17 @@ const INVENTORY: Record<
       'ledger.account_updated/denied',
       'ledger.manual_entry_posted/denied',
       'ledger.entry_reversed/denied',
+      // P7: a customer command refused by the database, and a failed acceptance of the app link
+      ...[
+        'created',
+        'updated',
+        'deactivated',
+        'reactivated',
+        'agent_assigned',
+        'app_invited',
+        'anonymised',
+      ].map((i) => `customer.${i}/denied`),
+      'customer.app_access_accepted/failure',
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

@@ -34,6 +34,7 @@ import { auditRows, markerRequestId } from './support/audit.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 import { requiredQuery } from './support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
+import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from './support/customers.js';
 
 // The policy middleware (P5.4; TARGET_ARCHITECTURE ADR-16 §3.5; P5 plan §4 invariants 3–8, §7.6, §8.2a rule 6, §9.4):
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
@@ -306,6 +307,7 @@ async function setUp() {
     support,
     invitationId: invited.body.invitationId as string,
     ledger: await ledgerResources(owner, b.merchantId),
+    customerId: await customerOf(owner, b.merchantId, b.branchId),
   };
 }
 
@@ -318,10 +320,12 @@ const PARAMS: Record<string, (w: World) => string> = {
   platformMembershipId: (w) => w.support.membershipId,
   accountId: (w) => w.ledger.accountId,
   entryId: (w) => w.ledger.entryId,
+  customerId: (w) => w.customerId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   ...ledgerBodies,
   postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
+  ...customerBodies,
   updateMerchantProfile: () => ({ name: `Policy ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -363,7 +367,8 @@ const snapshot = async (merchantId: string) =>
          'roles', (SELECT json_agg(r ORDER BY r.id) FROM tenancy.roles r WHERE merchant_id = $1),
          'memberships', (SELECT json_agg(mm ORDER BY mm.id) FROM tenancy.merchant_memberships mm WHERE merchant_id = $1),
          'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
-         ${LEDGER_SNAPSHOT_SQL}
+         ${LEDGER_SNAPSHOT_SQL},
+         ${CUSTOMERS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )

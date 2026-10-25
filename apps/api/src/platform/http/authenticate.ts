@@ -22,10 +22,13 @@ export type AuthContext = Readonly<{
   sessionId: string;
   audience: SessionAudience;
   membershipId: string;
-  /** Tenant of a merchant/agent session (the source of TenantContext); null for platform. */
+  /** Tenant of a merchant, agent or customer session (the source of TenantContext); null for platform. */
   merchantId: string | null;
   scope: 'full' | 'mfa_enrollment';
-  /** owner | staff | agent for a merchant membership; the platform role for a platform session. Current (T5). */
+  /**
+   * owner | staff | agent for a merchant membership; customer for a customer session (P7); the platform role for a
+   * platform session. Current (T5).
+   */
   kind: string;
   /** A staff member's role and branch restriction (null branch = all branches); null for everyone else. */
   roleId: string | null;
@@ -75,7 +78,7 @@ export function knownPermissions(resolved: readonly string[]): readonly Permissi
 
 /** D7: which transport each audience may use. */
 const COOKIE_AUDIENCES: ReadonlySet<SessionAudience> = new Set(['platform', 'merchant']);
-const BEARER_AUDIENCES: ReadonlySet<SessionAudience> = new Set(['agent']);
+const BEARER_AUDIENCES: ReadonlySet<SessionAudience> = new Set(['agent', 'customer']);
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function parseCookies(header: string | undefined): Map<string, string> {

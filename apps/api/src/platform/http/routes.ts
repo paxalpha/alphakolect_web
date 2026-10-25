@@ -31,6 +31,22 @@ export function toExpressPath(contractPath: string): string {
 }
 
 const KNOWN_PERMISSIONS: ReadonlySet<string> = new Set(PERMISSIONS);
+/**
+ * The branch-scoped endpoints whose resource branch the API can resolve (P5 §7.6; P7: customers, the first
+ * branch-owned resource). A `branch` endpoint outside this list is refused at startup; the authorization middleware
+ * refuses to mount one without its resolver.
+ */
+export const BRANCH_RESOLVED_ENDPOINTS: ReadonlySet<string> = new Set([
+  'listCustomers',
+  'createCustomer',
+  'getCustomer',
+  'updateCustomer',
+  'deactivateCustomer',
+  'reactivateCustomer',
+  'assignCustomerAgent',
+  'listCustomerAssignments',
+  'inviteCustomerToApp',
+]);
 const KNOWN_CAPABILITIES: ReadonlySet<string> = new Set(CAPABILITIES);
 const KNOWN_BRANCH_SCOPES: ReadonlySet<string> = new Set(BRANCH_SCOPES);
 const FIELDS: Record<string, readonly string[]> = {
@@ -74,8 +90,8 @@ export function authorizationProblems(endpoint: EndpointContract): string[] {
     }
     if (!KNOWN_BRANCH_SCOPES.has(String(a.branchScope))) {
       problems.push(`unknown branch scope ${JSON.stringify(a.branchScope)}`);
-    } else if (a.branchScope === 'branch') {
-      // §7.6: no branch-owned resource exists in P5, so no resolver for a resource's branch exists either.
+    } else if (a.branchScope === 'branch' && !BRANCH_RESOLVED_ENDPOINTS.has(endpoint.id)) {
+      // §7.6: a branch endpoint needs a resolver for its resource's branch (P7: the customers').
       problems.push(
         'branch-scoped endpoints need a resolver for the resource’s branch; none exists (P5 plan §7.6)',
       );

@@ -6,6 +6,7 @@ import { createTestApp, TEST_WEB_ORIGIN } from '../support/app.js';
 import { tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 import { requiredQuery } from '../support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from '../support/ledger.js';
+import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from '../support/customers.js';
 
 // The tenant-isolation matrix (P4 exit criterion; ADR-15 T3, T9, T14, T15), driven by the contract registry: every
 // merchant- and agent-audience endpoint, as it is registered — not a hand-picked list. A new tenant endpoint is in
@@ -42,6 +43,7 @@ async function setUp(name: string) {
     target,
     invitationId: invited.body.invitationId as string,
     ledger: await ledgerResources(owner, b.merchantId),
+    customerId: await customerOf(owner, b.merchantId, b.branchId),
   };
 }
 
@@ -53,12 +55,14 @@ const RESOLVERS: Record<string, (t: Tenant) => string> = {
   invitationId: (t) => t.invitationId,
   accountId: (t) => t.ledger.accountId,
   entryId: (t) => t.ledger.entryId,
+  customerId: (t) => t.customerId,
 };
 
 /** A valid request body for each tenant endpoint that takes one (`t` is the CALLER's tenant). */
 const BODIES: Partial<Record<keyof typeof endpoints, (t: Tenant) => object>> = {
   ...ledgerBodies,
   postJournalEntry: (t) => ledgerBodies.postJournalEntry(t.ledger),
+  ...customerBodies,
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -116,7 +120,8 @@ const snapshot = async (merchantId: string) =>
          'roles', (SELECT json_agg(r ORDER BY r.id) FROM tenancy.roles r WHERE merchant_id = $1),
          'memberships', (SELECT json_agg(mm ORDER BY mm.id) FROM tenancy.merchant_memberships mm WHERE merchant_id = $1),
          'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
-         ${LEDGER_SNAPSHOT_SQL}
+         ${LEDGER_SNAPSHOT_SQL},
+         ${CUSTOMERS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )
@@ -238,12 +243,14 @@ describe('same tenant, wrong kind (T9)', () => {
   // ADR-15 T5/T7: a staff branch restriction is stored and re-read per request, but no branch-scoped data exists in
   // P4, so nothing reads it yet. That is safe only while staff and agents can reach their own membership and nothing
   // else. Any endpoint that opens to them fails here until its branch scope is decided (and tested) — P5 policies.
-  it('staff and agents reach only their own membership — nothing branch-scoped is open to them yet', () => {
+  it('staff reach only their own membership without a grant; agents their membership and their own customers (P7-6)', () => {
     expect(merchantEndpoints.filter(([, e]) => !forbids(e)).map(([id]) => id)).toEqual([
       'getCurrentMembership',
     ]);
     expect(TENANT_ENDPOINTS.filter(([, e]) => e.audience === 'agent').map(([id]) => id)).toEqual([
       'getAgentMembership',
+      'listAgentCustomers',
+      'createAgentCustomer',
     ]);
   });
 

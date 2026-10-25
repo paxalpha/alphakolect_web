@@ -5,6 +5,9 @@ import { AuditLog } from '../../modules/audit/audit-log.js';
 import { healthHandlers } from '../../modules/health/routes.js';
 import { AccountService, type SignupGuard } from '../../modules/identity/accounts.js';
 import { agentHandlers } from '../../modules/identity/agent-routes.js';
+import { customerAuthHandlers } from '../../modules/identity/customer-routes.js';
+import { CustomerService } from '../../modules/customers/service.js';
+import { customerHandlers } from '../../modules/customers/routes.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
@@ -134,6 +137,7 @@ export function createApp({
     webAppUrl,
   });
   const settings = new MerchantSettingsService({ db, audit });
+  const customers = new CustomerService({ db, identity: auth.identity, audit, limiter, mailer, webAppUrl });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
@@ -152,6 +156,8 @@ export function createApp({
     }),
     ...invitationAcceptHandlers({ invitations }),
     ...agentHandlers({ identity: auth.identity, sessions, limiter, settings }),
+    ...customerAuthHandlers({ identity: auth.identity, sessions, limiter }),
+    ...customerHandlers({ customers }),
     ...ledgerHandlers({ books: new LedgerService({ db, audit, idempotency: new IdempotencyStore(db) }) }),
   };
 
@@ -161,7 +167,7 @@ export function createApp({
     buildV1Router(
       handlers,
       (endpoint) => authenticate(endpoint, { ...auth, logger }),
-      (endpoint) => authorize(endpoint, { audit, logger }),
+      (endpoint) => authorize(endpoint, { audit, logger, branchResolvers: customers.branchResolvers() }),
     ),
   );
 

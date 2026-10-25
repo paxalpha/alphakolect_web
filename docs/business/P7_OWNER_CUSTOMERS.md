@@ -8,7 +8,7 @@ your decisions below. Each question has our suggestion; tick it, choose another,
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ______________________ **Date:** ______________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 25th of October, 2026
 
 ---
 
@@ -21,7 +21,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Full name and phone number, required; email address, home address and a nickname, optional
 
 ## Q2. Can two customers of the same business share a phone number?
 
@@ -30,7 +30,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ Yes (for example, family members sharing a phone)
 - ☐ Not sure
 
-> Answer:
+> Answer: No: within one business, each phone number belongs to one customer
 
 ## Q3. A person who saves with two businesses
 
@@ -39,7 +39,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ One shared record across businesses
 - ☐ Not sure
 
-> Answer:
+> Answer: Each business has its own record of them, and neither business can see the other's
 
 ## Q4. Who can add customers?
 
@@ -48,7 +48,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ The business owner and staff only; agents cannot add customers
 - ☐ Not sure
 
-> Answer:
+> Answer: The business owner, staff the owner allows, and agents. A customer an agent adds is given to that agent
 
 ## Q5. Agents and customers
 
@@ -61,7 +61,7 @@ Agents may record collections only for **their own** customers (your earlier ans
 - ☐ A customer may have several agents at once
 - ☐ Not sure
 
-> Answer:
+> Answer: A customer has at most one agent at a time. The owner, or staff the owner allows, can move a customer to another agent, and every move is recorded. A customer may have no agent (for example, one who pays at the office)
 
 ## Q6. Customers and branches
 
@@ -70,7 +70,7 @@ Agents may record collections only for **their own** customers (your earlier ans
 - ☐ Customers don't belong to branches; every staff member sees every customer
 - ☐ Not sure
 
-> Answer:
+> Answer: Each customer belongs to one branch of the business. Staff limited to one branch see only that branch's customers
 
 ## Q7. How do customers sign in to the mobile app?
 
@@ -81,7 +81,7 @@ Agents may record collections only for **their own** customers (your earlier ans
   stage
 - ☐ Not sure
 
-> Answer:
+> Answer: With their email address and a password they set from a link the business sends them
 
 ## Q8. When a customer stops saving with a business
 
@@ -90,7 +90,7 @@ Agents may record collections only for **their own** customers (your earlier ans
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: The business can deactivate the customer: they can no longer sign in, and nothing new is recorded for them, but all their records stay. The business can reactivate them later
 
 ## Q9. Removing a customer's personal details (your rule 11.3)
 
@@ -103,7 +103,7 @@ records stay (with the name removed).* Who may do it, and when?
 - ☐ As above, and also an AlphaKolect super admin
 - ☐ Not sure
 
-> Answer:
+> Answer: Only the business owner, at the customer's request, and only once the customer has nothing left with the business (no savings to pay out, no loan still owed). It cannot be undone, and the activity record notes that it was done (never the details themselves)
 
 ---
 

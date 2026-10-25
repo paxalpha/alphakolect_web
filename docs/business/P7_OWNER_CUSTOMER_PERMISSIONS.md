@@ -25,7 +25,7 @@ As before, **"Not sure" is a fine answer**.
 - ☐ I approve it with these changes: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: I approve the wording as written
 
 ---
 

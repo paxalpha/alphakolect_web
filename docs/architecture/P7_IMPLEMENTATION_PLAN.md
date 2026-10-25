@@ -1,6 +1,6 @@
 # P7 implementation plan — customers
 
-**Status: revision 4 (2026-10-26) — built; the gate review's two findings resolved; awaiting its re-check.** Planned in one pass and built in one pass, as P6 was, at the
+**Status: revision 5 (2026-10-26) — CLOSED.** The independent reviewer accepted P7 for closure on its re-check, and the project lead approved moving on (§12). Planned in one pass and built in one pass, as P6 was, at the
 project lead's request ("execute P7 in one go after mapping everything out"). Decisions that would go to the project lead
 take the recommended option (his standing instruction) and are recorded in §7. **The owner answered** every question of
 `docs/business/P7_OWNER_CUSTOMERS.md` on 2026-10-25 with the suggested option; the plan follows those answers. He approved
@@ -133,6 +133,7 @@ email; customer KYC (OPEN-13).
 
 | Rev | Date | Change |
 |---|---|---|
+| 5 | 2026-10-26 | Closed: the reviewer's acceptance and the project lead's approval recorded (§12) |
 | 4 | 2026-10-26 | The gate review's findings resolved and the self-review that followed (§11); migration `20261026000100_customers_review` |
 | 3 | 2026-10-26 | Built as §9 maps; what the build changed is in §10 (decisions P7-12 to P7-17) |
 | 2 | 2026-10-25 | The owner's answers recorded (all suggested) and the permissions' wording approved; decisions P7-6 to P7-11; §9, the build map |
@@ -231,3 +232,18 @@ states two rules the review could otherwise ask about.
 | S1 (self-review) | Accepting a link checked the password rules only for an account without a password, so a weak password's answer told such an address from others (D12) | the rules are checked first, for every request (an existing account's password was set under the same rules); an API test shows the same 422 for an unknown address, a new one and an existing account |
 | S2 (self-review, a rule stated) | A customer who already signs in, whose email the business changes | the sign-in stays: it is the person's own account, and the business's address is a contact detail; a correction never locks the customer out. A new link is not needed (`already_linked`) |
 | S3 (self-review, a rule stated) | An agent deactivated while customers are assigned to them | the assignments stay recorded and do nothing: a deactivated agent cannot sign in (P4), and P8's rule (D1) is checked against the signed-in agent's own membership; the business reassigns the customers at will |
+
+## 12. Closure (2026-10-26)
+
+**The independent reviewer's verdict on its re-check of `b00dd41`: "P7 accepted for closure"** — "I found no outstanding
+P7 blockers." Both findings of the first review (§11, R1 and R2) are resolved, and the weak-password regression (S1)
+passes. The reviewer independently ran the contracts (87 passed), database (817 passed), concurrency (26 passed,
+including the 50-run deactivation-and-posting race) and focused customer API (10 passed) suites, lint, formatting, the
+type checks and the OpenAPI check. In the full API run, one unrelated retention-purge test timed out while the database
+and concurrency suites ran at the same time against the same database, and passed when rerun alone; gitleaks was not
+rerun by the reviewer (each commit was scanned by the commit gate before it was made).
+
+**The project lead approved the closure** the same day ("The reviewer has approved P7 closure, so we move to P8").
+
+Carried forward to P8: enrolment and BR-5.1 (P7-1); the agent rule (D1) checked with `customers.current_agent`; postings
+for a customer only while they are active (P7-13, already enforced by `ledger.post_entry`).

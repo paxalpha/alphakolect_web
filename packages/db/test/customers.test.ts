@@ -623,6 +623,54 @@ describe('the app link and the customer audience (Q7, P7-7 to P7-9)', () => {
     ).toHaveLength(2);
   });
 
+  it('R1: a link follows the address — changing the email revokes it, and a link is accepted only by the current address', async () => {
+    const b = await business();
+    const oldAddress = email('old');
+    const c = await create(b.session, b.branchA, { email: oldAddress });
+    const token = hash();
+    await issue(b.session, c.id!, token);
+    const oldIdentity = (await one(`SELECT id FROM identity.identities WHERE email = $1`, [oldAddress]))
+      .id as string;
+    expect((await update(b.session, c.id!, { email: email('new') })).outcome).toBe('ok');
+    expect(
+      (
+        await one(
+          `SELECT revoked_at IS NOT NULL AS revoked FROM customers.app_invitations WHERE token_hash = $1`,
+          [token],
+        )
+      ).revoked,
+    ).toBe(true);
+    expect((await accept(token, oldIdentity, ARGON)).outcome).toBe('invalid');
+    expect(
+      (await one(`SELECT identity_id FROM customers.customers WHERE id = $1`, [c.id])).identity_id,
+    ).toBeNull();
+    // Changing something else leaves the link alone.
+    const d = await create(b.session, b.branchA, { email: email('keep') });
+    const kept = hash();
+    await issue(b.session, d.id!, kept);
+    await update(b.session, d.id!, { nickname: 'Kept' });
+    expect(
+      (
+        await one(`SELECT revoked_at IS NULL AS open FROM customers.app_invitations WHERE token_hash = $1`, [
+          kept,
+        ])
+      ).open,
+    ).toBe(true);
+  });
+
+  it('R1: even were a link not revoked, it is accepted only by the account of the customer’s address now', async () => {
+    const b = await business();
+    const oldAddress = email('was');
+    const c = await create(b.session, b.branchA, { email: oldAddress });
+    const token = hash();
+    await issue(b.session, c.id!, token);
+    const oldIdentity = (await one(`SELECT id FROM identity.identities WHERE email = $1`, [oldAddress]))
+      .id as string;
+    // The address changed without the command (as the table owner): the second layer still refuses the old account.
+    await owner.query(`UPDATE customers.customers SET email = $2 WHERE id = $1`, [c.id, email('is')]);
+    expect((await accept(token, oldIdentity, ARGON)).outcome).toBe('invalid');
+  });
+
   it('refuses a customer without an email, one already signed in, a deactivated one; a re-issued link replaces the old', async () => {
     const b = await business();
     const noEmail = await create(b.session, b.branchA);

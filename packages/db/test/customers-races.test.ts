@@ -197,6 +197,58 @@ describe('the customers’ races, staged (P7 §5)', () => {
     }
   });
 
+  it(`R2: a customer deactivated while a posting to them waits — the posting is refused (${RUNS} runs)`, async () => {
+    const b = await business();
+    const { id: ledgerId } = (
+      await owner.query(`SELECT id FROM ledger.ledgers WHERE merchant_id = $1`, [b.merchantId])
+    ).rows[0];
+    const office = (
+      await owner.query(
+        `SELECT id FROM ledger.accounts WHERE ledger_id = $1 AND code = '1200' AND subject_id IS NULL`,
+        [ledgerId],
+      )
+    ).rows[0].id as string;
+    for (let i = 0; i < RUNS; i++) {
+      const customer = (await create(a1, b.ownerSession, b.branchId, phone())).id;
+      const savings = (
+        await owner.query(`SELECT id FROM ledger.accounts WHERE subject_id = $1 AND code = '2100'`, [
+          customer,
+        ])
+      ).rows[0].id as string;
+      const second = await race(
+        a1,
+        t2,
+        pid.t2,
+        (c) =>
+          c.query(`SELECT * FROM customers.set_customer_status($1, $2, 'deactivated')`, [
+            b.ownerSession,
+            customer,
+          ]),
+        (c) =>
+          c
+            .query(
+              `SELECT * FROM ledger.post_entry($1, $2, 'test', CURRENT_DATE, 'Race', NULL, NULL, $3, NULL, NULL)`,
+              [
+                ledgerId,
+                `race-${randomBytes(8).toString('hex')}`,
+                JSON.stringify([
+                  { accountId: office, side: 'debit', amountMinor: '10' },
+                  { accountId: savings, side: 'credit', amountMinor: '10' },
+                ]),
+              ],
+            )
+            .then((r) => r.rows[0] as { outcome: string }),
+      );
+      expect(second.outcome).toBe('inactive_account');
+      const { rows } = await owner.query(
+        `SELECT c.status, p.balance_minor::text AS b FROM customers.customers c
+           JOIN ledger.balance_projection p ON p.account_id = $2 WHERE c.id = $1`,
+        [customer, savings],
+      );
+      expect(rows[0]).toEqual({ status: 'deactivated', b: '0' });
+    }
+  });
+
   it(`a customer’s details removed while a posting to them waits — the posting is refused (${RUNS} runs)`, async () => {
     const b = await business();
     const { id: ledgerId } = (

@@ -206,14 +206,17 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
       'audit.audit_events',
     ],
   },
+  // P7 rev 4 (R1): an email change revokes the customer's open app link, under the customer's lock (16:W)
   'customers.update_customer': {
     class: 'operation',
-    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU'],
-    writes: ['customers.customers', 'audit.audit_events'],
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU', '16:W'],
+    writes: ['customers.customers', 'customers.app_invitations', 'audit.audit_events'],
   },
+  // P7 rev 4 (R2): the customer's balances held (14:S) before the customer, as removing the details does, so a posting
+  // either commits first or waits and sees the new status
   'customers.set_customer_status': {
     class: 'operation',
-    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU'],
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '14:S', '16:NKU'],
     writes: ['customers.customers', 'audit.audit_events'],
   },
   'customers.assign_agent': {

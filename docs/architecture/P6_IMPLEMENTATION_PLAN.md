@@ -1,14 +1,14 @@
 # P6 implementation plan — the ledger
 
-**Status: revision 2 (2026-10-24) — built; awaiting the gate review.** Planned and built in one pass at the project
+**Status: revision 3 (2026-10-25) — built; the gate review's two findings resolved; awaiting its re-check.** Planned and built in one pass at the project
 lead's request ("map everything out and implement it in one go"; "efficiency and speed of delivery is very important").
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
 §8. The owner answered both P6 forms on 2026-10-23, each with the suggested options:
 `docs/business/P6_OWNER_ACCOUNTS_AND_MAPPINGS.md` (the chart, the corrections, unearned loan interest, both debit
 records, transfers not now, the Directors' current account) and `docs/business/P6_OWNER_LEDGER_PERMISSIONS.md` (the
 permissions' wording, all three grantable to staff). The chart and the templates are data (§3.2, §4), so a later answer
-is a small forward migration, not a redesign. The gate review is the independent reviewer's; §9 lists what revision 2
-changed from revision 1, and §10 what was built.
+is a small forward migration, not a redesign. The gate review is the independent reviewer's; §9 lists what each
+revision changed, §10 what was built, and §11 the gate review's findings and their resolution.
 
 | | |
 |---|---|
@@ -55,7 +55,10 @@ before P8b (TA-2).
   credit-normal for liabilities, equity and revenue (credits − debits). A non-negative account (customer savings,
   loans, cash) can never go below zero: a posting that would make it so is refused (`insufficient_balance`) — BR-7.4
   rests on this.
-- Merchant-defined accounts (BR-9.1): any kind, any unused code; never a sub-account; archived, never deleted.
+- Merchant-defined accounts (BR-9.1): any kind, any unused code; never a sub-account; renamed, archived (only at a zero
+  balance) and restored, never deleted (`ledger.update_account`, rev 3). The chart's accounts and sub-accounts are the
+  system's: never renamed or archived by a business. A posting checks its accounts' status again once it holds their
+  projections, which archiving holds too, so a posting never lands on an account archived meanwhile.
 
 ### 3.2 The chart, as data
 
@@ -99,7 +102,8 @@ Definer reads, the business from the session (R19), permission-checked in the da
 
 - **Chart of accounts** with balances.
 - **Account statement**: an account's lines in a period, oldest first, with the opening balance, each line's running
-  balance and the closing balance; paginated.
+  balance and the closing balance; paginated. A control account's statement covers its sub-accounts' lines, so it
+  explains the balance the chart shows for it (rev 3; `ledger.read_statement`, `ledger.statement_balances`).
 - **Trial balance** at a date: each account's debit or credit balance; the two columns equal.
 - **Balance sheet** at a date: assets = liabilities + equity + the period's profit not yet closed.
 - **Profit and loss** for a period: revenue − expenses.
@@ -140,8 +144,12 @@ defines and tests the templates from the owner's documents, as corrected in the 
 | `directors.funding` | 1000 Cash at bank | 2400 Directors' current account | any | sheet "load wallet" (Q6) |
 | `wallet.loaded` | 1100 Business wallet | 1000 Cash at bank | P9 | Map "Load Wallet" |
 
-Templates live in `ledger.posting_templates` (code, ledger kind, description, lines as chart codes with side and
-subject, status); a template has one choice per row (rev 2: `withdrawal.*` and `investment.interest` no longer leave the
+Templates live in `ledger.posting_templates` (code, **version**, ledger kind, description, lines as chart codes with side
+and subject, status). A template is versioned (rev 3): a version never changes once written (a trigger refuses any
+change but retirement, and any deletion); a new mapping is a new version and the old one is retired; at most one version
+of a code is active. Every entry posted by a template records the version it was posted with
+(`journal_entries.template_version`, a foreign key to the version), so an entry can always be read against the
+mapping that produced it. A template has one choice per row (rev 2: `withdrawal.*` and `investment.interest` no longer leave the
 account to the caller) and every line takes the posting's one amount. `ledger.post_template(ledger, template, amount,
 subjects, …)` resolves the accounts — a subject's sub-account must already be open (`ledger.open_subaccount`) — and
 calls 3.3. The platform's template, `platform.subscription_received`, posts to the platform ledger. P6 tests every
@@ -153,6 +161,7 @@ template balances and moves the accounts named.
 |---|---|---|
 | `GET /v1/merchant/ledger/accounts` | `merchant.ledger.read` | the chart with balances |
 | `POST /v1/merchant/ledger/accounts` | `merchant.ledger.manage` | a merchant-defined account (BR-9.1) |
+| `PATCH /v1/merchant/ledger/accounts/{accountId}` | `merchant.ledger.manage` | rename, archive or restore one (rev 3) |
 | `GET /v1/merchant/ledger/accounts/{accountId}/statement` | `merchant.ledger.read` | period, cursor |
 | `GET /v1/merchant/ledger/entries/{entryId}` | `merchant.ledger.read` | an entry and its lines |
 | `POST /v1/merchant/ledger/entries` | `merchant.ledger.post` | a manual journal entry; `Idempotency-Key` |
@@ -161,7 +170,7 @@ template balances and moves the accounts named.
 | `GET /v1/merchant/reports/balance-sheet` | `merchant.ledger.read` | `asOf` |
 | `GET /v1/merchant/reports/profit-and-loss` | `merchant.ledger.read` | `from`, `to` |
 
-Activity events (atomic, pattern A): `ledger.account_created`, `ledger.manual_entry_posted`, `ledger.entry_reversed`,
+Activity events (atomic, pattern A): `ledger.account_created`, `ledger.account_updated` (rev 3), `ledger.manual_entry_posted`, `ledger.entry_reversed`,
 `ledger.capital_debited`, `ledger.income_debited`; refusals best effort (`denied`).
 
 The two posting endpoints answer `201 { entryId }` — the same answer to a retry — and the entry is read with
@@ -205,6 +214,9 @@ platform ledger's subscription income. OPEN-12 (before P8b): the custody ledger.
 | P6-8 | Posting answers (rev 2) | `{ entryId }`, the same for a retry; read the entry with GET |
 | P6-9 | Reversal by hand (rev 2) | manual entries only; a domain reverses its own entries |
 | P6-10 | Stale claims (rev 2) | a claim in progress for two minutes is taken over by the same request (a command that died); another request is refused |
+| P6-12 | Template versions (rev 3) | a version is fixed once written; a new mapping is a new version; one active per code; entries record theirs |
+| P6-13 | Statement of a control account (rev 3) | covers its sub-accounts' lines; opening and closing balances with every page |
+| P6-14 | Archiving (rev 3) | a business's own accounts only, at a zero balance; postings re-check status under their locks |
 | P6-11 | Customer subjects (rev 2) | a customer sub-account's subject is not checked until customers exist (P7); an agent's is an agent membership of the business |
 
 ## 9. Revision log
@@ -212,6 +224,7 @@ platform ledger's subscription income. OPEN-12 (before P8b): the custody ledger.
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-23 | First plan, written and built in one pass |
+| 3 | 2026-10-25 | The gate review's findings resolved (§11): versioned templates (§4, P6-12), the statement's opening and closing balances and a control account's sub-accounts (§3.5, P6-13); and, from the self-review that followed, archiving merchant accounts (§3.1, P6-14), the property tests strengthened to five runs checked after every operation (§6), the account answers taken from the database. Migration `20261025000100_ledger_review` |
 | 2 | 2026-10-24 | The owner's answers to both P6 forms recorded; built as §10 says. Changed from revision 1: the lock categories (P6-6), ledger opening (P6-7), the split templates (§4), the posting answers and error codes (§5, P6-8), reversal by hand (P6-9), stale claims (P6-10), customer subjects (P6-11) |
 
 ## 10. What was built
@@ -227,6 +240,22 @@ platform ledger's subscription income. OPEN-12 (before P8b): the custody ledger.
 | Contracts: nine endpoints, `SignedMoney`, the Idempotency-Key's characters, the three permissions | `packages/contracts/src/endpoints/ledger.ts` |
 | API: the ledger module (repository, service, routes), the idempotency store, header validation, the catalog mirror, refusal wording | `apps/api/src/modules/ledger/`, `apps/api/src/platform/idempotency.ts` |
 | API tests: the endpoints; the authorization, policy and isolation matrices and the activity-record guards cover them | `apps/api/test/ledger/ledger-api.test.ts` and the matrices |
+| Migration 4 (rev 3): versioned templates and the entries' version, the statement over sub-accounts with its balances, archiving, the status re-check under the locks | `…/20261025000100_ledger_review` |
 
 Passed on: P12 runs `ledger.verify_projections()` nightly and alerts (§7); idempotency records need a retention rule then
 too (completed records are kept until it exists).
+
+## 11. The gate review (2026-10-25) and its resolution
+
+The independent reviewer found P6 not ready to close, on two findings; both are resolved in revision 3. The project
+lead then asked for a self-review against this plan until it finds nothing more; what it found is resolved too.
+
+| # | Finding | Resolution |
+|---|---|---|
+| R1 | The account statement had no opening or closing balance, and a control account's statement left out the sub-accounts behind its balance (§3.5) | `ledger.read_statement` covers the account and its sub-accounts (each line names its account); `ledger.statement_balances` gives the period's opening and closing balances, on every page (`openingBalance`, `closingBalance`) |
+| R2 | Posting templates were not versioned (§4) | `posting_templates` keyed by (code, version), one active per code, a version fixed by trigger; entries record their version (foreign key); the entry read shows it (`templateVersion`) |
+| S1 (self-review) | §3.1's merchant accounts "archived, never deleted" had no way to archive | `ledger.update_account` and `PATCH …/accounts/{accountId}`: rename, archive at a zero balance, restore; the chart's accounts refused; `ledger.account_updated` recorded |
+| S2 (self-review) | With archiving, a posting checked account status before taking its locks | `ledger.post_entry` checks again under the projection locks, which archiving also takes; a staged race (50 runs) shows the posting refused and the account empty |
+| S3 (self-review) | §6 asks for property tests over "many runs", the reports balancing "at every point"; there was one run, checked at its end | five seeded runs of 80 operations; the trial balance and the balance sheet checked after every operation, every reversal checked to net its original to zero |
+| S4 (self-review) | For a session that may add accounts but not read the books, the new account's answer invented its creation time | `ledger.create_account` returns it; `ledger.update_account` returns the account |
+| S5 (self-review) | The test that every pre-P6 business got its ledger depended on test order, and never exercised the backfill (the fixtures bring their own ledgers) | replaced by two tests: only `identity.signup_merchant_owner` creates a business, and it opens the ledger; the migration's backfill statement, run on a business without a ledger, opens its 23 accounts |

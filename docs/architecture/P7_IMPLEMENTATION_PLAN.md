@@ -1,6 +1,6 @@
 # P7 implementation plan — customers
 
-**Status: revision 2 (2026-10-25) — mapped; building.** Planned in one pass and built in one pass, as P6 was, at the
+**Status: revision 3 (2026-10-26) — built; awaiting the gate review.** Planned in one pass and built in one pass, as P6 was, at the
 project lead's request ("execute P7 in one go after mapping everything out"). Decisions that would go to the project lead
 take the recommended option (his standing instruction) and are recorded in §7. **The owner answered** every question of
 `docs/business/P7_OWNER_CUSTOMERS.md` on 2026-10-25 with the suggested option; the plan follows those answers. He approved
@@ -133,6 +133,7 @@ email; customer KYC (OPEN-13).
 
 | Rev | Date | Change |
 |---|---|---|
+| 3 | 2026-10-26 | Built as §9 maps; what the build changed is in §10 (decisions P7-12 to P7-17) |
 | 2 | 2026-10-25 | The owner's answers recorded (all suggested) and the permissions' wording approved; decisions P7-6 to P7-11; §9, the build map |
 | 1 | 2026-10-25 | First plan; the owner's questions asked |
 
@@ -189,3 +190,28 @@ and the activity events.
   authorization matrix (the customer actor, branch-restricted staff now narrowed), the isolation matrix (the customer
   audience), the frozen route map.
 
+## 10. What the build changed, and what was built
+
+### 10.1 Decisions taken during the build (recommended options)
+
+| # | Decision | Taken |
+|---|---|---|
+| P7-12 | Agents and branches | agents serve every branch: P4 allows a branch restriction on staff memberships only (`merchant_memberships_branch_only_for_staff`), so no agent check depends on a branch |
+| P7-13 | Nothing new for a customer who is not active (owner Q8, Q9) | `ledger.post_entry` refuses a posting to the sub-account of a customer who is deactivated or whose details were removed, checked under the projection locks that removing the details also takes; a staged race (50 runs) shows the posting refused and the balance zero |
+| P7-14 | A command's answer | every customer command returns the customer it wrote (`customers.customer_result`), so a staff member allowed to change customers but not to see them still gets the customer they changed (as P6's account answers) |
+| P7-15 | The branch scope in the API | a branch resolver per branch-scoped endpoint (the customer's branch from `customers.branch_of`, the requested branch for a creation, the actor's own for a list), read after the permission check; the router refuses at startup a branch endpoint without one (`BRANCH_RESOLVED_ENDPOINTS`), and the middleware fails closed (500) if one is ever missing |
+| P7-16 | Rate limits of the app link | their own (`customer_app_invite`, `customer_app_accept`), so sending customers links never uses up a business's staff invitations |
+| P7-17 | One event per statement | the deactivation and reactivation events are written by separate inserts, so the writer guard names each pair's writer (as P6's debit events) |
+
+### 10.2 What was built
+
+| Part | Where |
+|---|---|
+| Migration 1: the three tables, the phone normalisation, RLS without app privilege, the customer audience (sessions, selection challenges, the activity record's audience; the identity functions), the ledger's customer check (P6-11 closed) | `packages/db/prisma/migrations/20261025000200_customers_core` |
+| Migration 2: the four permissions and the customer events; onboarding (business and agent), details, status, assignment, the app link and its acceptance, anonymisation; the reads; `current_agent` for P8; the posting refusal (P7-13) | `…/20261025000300_customers_functions` |
+| Database tests: onboarding, details, status, assignment, the branch scope, the app link and the customer audience, anonymisation, TA-14 (with a mutation); the P6 tests now use real customers | `packages/db/test/customers.test.ts` |
+| Races, 50 staged runs each: one phone number, one agent, anonymisation against a posting | `packages/db/test/customers-races.test.ts` (in `test:concurrency`) |
+| Guards: lock category 16 and every function's footprint; the grants inventory; R19; contested keys; the data rules; RLS lists | `packages/db/test/support/lock-*.ts` and the guard tests |
+| Contracts: 17 endpoints (10 for the business, 2 for agents, 5 for the customer audience) | `packages/contracts/src/endpoints/customers.ts` |
+| API: the customers module; the customer sign-in routes; the customer audience in tokens, sessions and authentication; the branch resolvers; the app-link emails | `apps/api/src/modules/customers/`, `apps/api/src/modules/identity/customer-routes.ts` |
+| API tests: the endpoints end to end, the customer's sign-in and own record; the authorization matrix (branch-restricted and archived-branch staff now narrowed), the policy and isolation matrices, the coverage and writer guards for every customer event | `apps/api/test/customers/customers-api.test.ts` and the matrices |

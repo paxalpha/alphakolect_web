@@ -4795,6 +4795,100 @@
         }
       }
     },
+    "/v1/merchant/ledger/accounts/{accountId}": {
+      "patch": {
+        "operationId": "updateLedgerAccount",
+        "summary": "Rename, archive or restore one of the business’s own accounts (BR-9.1; never deleted)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.ledger.manage",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "accountId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLedgerAccountRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The account",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LedgerAccount"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.ledger.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such account in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "SYSTEM_ACCOUNT — one of the chart’s accounts or sub-accounts, which the system keeps; BALANCE_NOT_ZERO — an account is archived only when empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/merchant/ledger/accounts/{accountId}/statement": {
       "get": {
         "operationId": "getAccountStatement",
@@ -5918,6 +6012,24 @@
           "expense"
         ],
         "description": "equity = capital; revenue = income"
+      },
+      "UpdateLedgerAccountRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          }
+        },
+        "description": "Rename, archive or restore one of the business’s own accounts (never deleted)"
       },
       "LedgerDate": {
         "type": "string",
@@ -7485,6 +7597,12 @@
           "to": {
             "$ref": "#/components/schemas/LedgerDate"
           },
+          "openingBalance": {
+            "$ref": "#/components/schemas/SignedMoney"
+          },
+          "closingBalance": {
+            "$ref": "#/components/schemas/SignedMoney"
+          },
           "items": {
             "type": "array",
             "items": {
@@ -7494,6 +7612,9 @@
                   "$ref": "#/components/schemas/Id"
                 },
                 "entryId": {
+                  "$ref": "#/components/schemas/Id"
+                },
+                "accountId": {
                   "$ref": "#/components/schemas/Id"
                 },
                 "effectiveDate": {
@@ -7518,6 +7639,7 @@
               "required": [
                 "lineId",
                 "entryId",
+                "accountId",
                 "effectiveDate",
                 "entryType",
                 "narrative",
@@ -7539,11 +7661,13 @@
           "account",
           "from",
           "to",
+          "openingBalance",
+          "closingBalance",
           "items",
           "nextCursor"
         ],
         "additionalProperties": false,
-        "description": "An account’s lines in a period, oldest first"
+        "description": "An account’s lines in a period, oldest first, with the opening, running and closing balances; a control account’s statement covers its sub-accounts"
       },
       "JournalEntry": {
         "type": "object",
@@ -7556,6 +7680,18 @@
           },
           "entryType": {
             "type": "string"
+          },
+          "templateVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "narrative": {
             "type": "string"
@@ -7656,6 +7792,7 @@
           "entryId",
           "effectiveDate",
           "entryType",
+          "templateVersion",
           "narrative",
           "source",
           "reversesEntryId",

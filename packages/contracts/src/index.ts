@@ -56,6 +56,7 @@ import {
   listLedgerAccounts,
   postJournalEntry,
   reverseJournalEntry,
+  updateLedgerAccount,
 } from './endpoints/ledger.js';
 import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
 import {
@@ -140,6 +141,7 @@ export const endpoints = {
   getAgentMembership,
   listLedgerAccounts,
   createLedgerAccount,
+  updateLedgerAccount,
   getAccountStatement,
   getJournalEntry,
   postJournalEntry,

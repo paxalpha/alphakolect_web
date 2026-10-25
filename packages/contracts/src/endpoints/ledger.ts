@@ -71,6 +71,19 @@ export const CreateLedgerAccountRequest = z
   .meta({ id: 'CreateLedgerAccountRequest', description: 'A business’s own account (BR-9.1)' });
 export type CreateLedgerAccountRequest = z.infer<typeof CreateLedgerAccountRequest>;
 
+export const UpdateLedgerAccountRequest = z
+  .object({
+    name: z.string().trim().min(1).max(120).optional(),
+    /** archived: only at a zero balance; active: restore. */
+    status: z.enum(['active', 'archived']).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.status !== undefined, 'name or status is required')
+  .meta({
+    id: 'UpdateLedgerAccountRequest',
+    description: 'Rename, archive or restore one of the business’s own accounts (never deleted)',
+  });
+export type UpdateLedgerAccountRequest = z.infer<typeof UpdateLedgerAccountRequest>;
+
 export const StatementQuery = PageQuery.extend({ from: LedgerDate, to: LedgerDate });
 export type StatementQuery = z.infer<typeof StatementQuery>;
 
@@ -79,12 +92,14 @@ const Side = z.enum(['debit', 'credit']).meta({ id: 'Side' });
 export const StatementLine = z.object({
   lineId: Id,
   entryId: Id,
+  /** The account the line posted to: the statement's account, or one of its sub-accounts. */
+  accountId: Id,
   effectiveDate: LedgerDate,
   entryType: z.string(),
   narrative: z.string(),
   side: Side,
   amount: Money,
-  /** The account's balance after this line. */
+  /** The account's balance after this line (a control account's: its sub-accounts' together). */
   balance: SignedMoney,
 });
 
@@ -93,10 +108,18 @@ export const AccountStatement = z
     account: LedgerAccount,
     from: LedgerDate,
     to: LedgerDate,
+    /** At the end of the day before `from`. */
+    openingBalance: SignedMoney,
+    /** At the end of `to`: the opening balance plus the period's lines. */
+    closingBalance: SignedMoney,
     items: z.array(StatementLine),
     nextCursor: z.string().nullable(),
   })
-  .meta({ id: 'AccountStatement', description: 'An account’s lines in a period, oldest first' });
+  .meta({
+    id: 'AccountStatement',
+    description:
+      'An account’s lines in a period, oldest first, with the opening, running and closing balances; a control account’s statement covers its sub-accounts',
+  });
 export type AccountStatement = z.infer<typeof AccountStatement>;
 
 export const JournalLine = z.object({
@@ -114,6 +137,8 @@ export const JournalEntry = z
     effectiveDate: LedgerDate,
     /** 'manual', 'reversal', or the posting template, e.g. collection.cash_confirmed. */
     entryType: z.string(),
+    /** The posting template's version, for an entry posted by a template. */
+    templateVersion: z.number().int().min(1).nullable(),
     narrative: z.string(),
     source: z.object({ type: z.string(), id: z.string() }).nullable(),
     reversesEntryId: Id.nullable(),
@@ -253,6 +278,25 @@ export const createLedgerAccount = defineEndpoint({
     201: { description: 'The account, with a zero balance', schema: LedgerAccount },
     ...forbidden('merchant.ledger.manage'),
     409: error('CODE_TAKEN — the chart already has an account with this code'),
+  },
+});
+
+export const updateLedgerAccount = defineEndpoint({
+  id: 'updateLedgerAccount',
+  method: 'patch',
+  path: '/v1/merchant/ledger/accounts/{accountId}',
+  authorization: { class: 'permission', permission: 'merchant.ledger.manage', branchScope: 'merchant_wide' },
+  audience: 'merchant',
+  security: ['cookieSession'],
+  summary: 'Rename, archive or restore one of the business’s own accounts (BR-9.1; never deleted)',
+  request: { params: z.object({ accountId: Id }), body: UpdateLedgerAccountRequest },
+  responses: {
+    200: { description: 'The account', schema: LedgerAccount },
+    ...forbidden('merchant.ledger.manage'),
+    404: error('NOT_FOUND — no such account in this business'),
+    422: error(
+      'SYSTEM_ACCOUNT — one of the chart’s accounts or sub-accounts, which the system keeps; BALANCE_NOT_ZERO — an account is archived only when empty',
+    ),
   },
 });
 

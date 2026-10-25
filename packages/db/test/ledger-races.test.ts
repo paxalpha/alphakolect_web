@@ -211,6 +211,39 @@ describe('the ledger’s races, staged (P6 §6)', () => {
     }
   });
 
+  it(`an account archived while a posting waits — the posting is refused, the account stays empty (${RUNS} runs)`, async () => {
+    const b = await business();
+    const capital = await account(b.ledgerId, '3000');
+    for (let i = 0; i < RUNS; i++) {
+      const code = String(600000 + i);
+      const created = (
+        await a1.query(`SELECT outcome, id FROM ledger.create_account($1, $2, 'Race', 'expense')`, [
+          b.session,
+          code,
+        ])
+      ).rows[0] as { outcome: string; id: string };
+      expect(created.outcome).toBe('ok');
+      const second = await race(
+        a1,
+        t2,
+        pid.t2,
+        (c) =>
+          c.query(`SELECT outcome FROM ledger.update_account($1, $2, NULL, 'archived')`, [
+            b.session,
+            created.id,
+          ]),
+        (c) => postOn(c, b.ledgerId, lines(created.id, capital, '10')),
+      );
+      expect(second.outcome).toBe('inactive_account');
+      const { rows } = await owner.query(
+        `SELECT a.status, p.balance_minor::text AS b FROM ledger.accounts a
+           JOIN ledger.balance_projection p ON p.account_id = a.id WHERE a.id = $1`,
+        [created.id],
+      );
+      expect(rows[0]).toEqual({ status: 'archived', b: '0' });
+    }
+  });
+
   it(`TA-6: two concurrent claims of one key — the second is told it is in progress (${RUNS} runs)`, async () => {
     const b = await business();
     for (let i = 0; i < RUNS; i++) {

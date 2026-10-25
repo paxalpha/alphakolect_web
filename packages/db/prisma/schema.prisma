@@ -126,10 +126,13 @@ model JournalEntry {
   reversesEntryId String?  @map("reverses_entry_id") @db.Uuid
   /// The identity that posted the entry (identity.identities).
   createdBy       String?  @map("created_by") @db.Uuid
+  /// The posting template's version, for an entry posted by a template (entry_type is then its code).
+  templateVersion Int?     @map("template_version")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   merchant   Merchant?      @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   ledger     Ledger?        @relation(fields: [merchantId, ledgerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
+  template   PostingTemplate? @relation(fields: [entryType, templateVersion], references: [code, version], onDelete: Restrict, onUpdate: Restrict, map: "journal_entries_template_fkey")
   reverses   JournalEntry?  @relation("EntryReversal", fields: [merchantId, reversesEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict)
   reversedBy JournalEntry[] @relation("EntryReversal")
   creator    Identity?      @relation("JournalEntryCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -200,12 +203,17 @@ model ChartTemplate {
 /// The transaction mappings (P6 plan §4; owner Q2, Q3, Q5, Q6): each line a chart code, a side and, for a control
 /// account, the subject; every line takes the posting's one amount.
 model PostingTemplate {
-  code        String @id
-  ledgerKind  String @map("ledger_kind")
+  code        String
+  /// A version never changes once written; a new mapping is a new version (P6 rev 3). At most one version of a code
+  /// is active (posting_templates_one_active, a partial unique index in the migration).
+  version     Int            @default(1)
+  ledgerKind  String         @map("ledger_kind")
   description String
   lines       Json
-  status      String @default("active")
+  status      String         @default("active")
+  entries     JournalEntry[]
 
+  @@id([code, version])
   @@map("posting_templates")
   @@schema("ledger")
 }

@@ -183,11 +183,30 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
     expect(rows.every((r) => r.is_system && r.balance === '0')).toBe(true);
   });
 
-  it('the businesses that existed before P6 were given their ledger by the migration (the fixtures have one too)', async () => {
+  it('a business is created only by signup, which opens its ledger', async () => {
     const { rows } = await owner.query(
-      `SELECT m.id FROM tenancy.merchants m WHERE NOT EXISTS (SELECT 1 FROM ledger.ledgers l WHERE l.merchant_id = m.id)`,
+      `SELECT n.nspname || '.' || p.proname AS fn, p.prosrc ~* 'ledger[.]open_ledger' AS opens
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE p.prosrc ~* 'insert[[:space:]]+into[[:space:]]+"?tenancy"?[[:space:]]*[.][[:space:]]*"?merchants'`,
     );
-    expect(rows).toEqual([]);
+    expect(rows).toEqual([{ fn: 'identity.signup_merchant_owner', opens: true }]);
+  });
+
+  it('a business without a ledger — as every business before P6 — is given one by the migration’s backfill', async () => {
+    await owner.query('BEGIN');
+    try {
+      const { id } = await one(`INSERT INTO tenancy.merchants (name) VALUES ('Before P6') RETURNING id`);
+      // The migration's statement, as written in 20261023000100_ledger_core.
+      await owner.query(`SELECT ledger.open_ledger('merchant', m.id) FROM tenancy.merchants m ORDER BY m.id`);
+      const { n } = await one(
+        `SELECT count(*)::int AS n FROM ledger.accounts a JOIN ledger.ledgers l ON l.id = a.ledger_id
+          WHERE l.merchant_id = $1`,
+        [id],
+      );
+      expect(n).toBe(23);
+    } finally {
+      await owner.query('ROLLBACK');
+    }
   });
 
   it('there is exactly one platform ledger, with no business, and its own chart', async () => {
@@ -753,11 +772,15 @@ async function reports(s: string, from: string | null, to: string) {
   };
 }
 
-describe('the properties (§6), over a random sequence of postings and reversals', () => {
-  it('every entry balances; every projection equals its lines; the trial balance and the balance sheet balance', async () => {
+describe('the properties (§6): many random runs of postings and reversals', () => {
+  // Five seeded runs of 80 operations each (every template, at random, with random amounts, customers and reversals).
+  // After every operation: the trial balance's columns are equal and the balance sheet balances. After every reversal:
+  // the original and its reversal net to zero on every account. After each run: every entry balances, every projection
+  // equals the sum of its lines, and no non-negative account is below zero.
+  it.each([0x5eed, 0xbeef, 0xc0ffee, 0x1d1e, 0xfade])('seed %i', async (seedValue) => {
     const b = await business();
     const agent = await member(b, 'agent');
-    let state = 0x5eed;
+    let state = seedValue;
     const rand = (n: number) => {
       state = (state * 1103515245 + 12345) & 0x7fffffff;
       return state % n;
@@ -768,27 +791,40 @@ describe('the properties (§6), over a random sequence of postings and reversals
     await subaccount(b.ledgerId, '1210', 'agent', agent.membershipId);
     const codes = (
       await owner.query(
-        `SELECT code FROM ledger.posting_templates WHERE ledger_kind = 'merchant' ORDER BY code`,
+        `SELECT code FROM ledger.posting_templates WHERE ledger_kind = 'merchant' AND status = 'active' ORDER BY code`,
       )
     ).rows.map((r) => r.code as string);
     await seed(b.ledgerId, await account(b.ledgerId, '1000'), 10_000_000n);
     const posted: string[] = [];
     const outcomes = new Set<string>();
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 80; i++) {
       if (posted.length > 0 && rand(5) === 0) {
-        const r = await reverse(b.ledgerId, posted[rand(posted.length)]!);
+        const original = posted[rand(posted.length)]!;
+        const r = await reverse(b.ledgerId, original);
         outcomes.add(r.outcome);
         expect(['ok', 'already_reversed', 'insufficient_balance']).toContain(r.outcome);
-        continue;
+        if (r.outcome === 'ok') {
+          const { rows: net } = await owner.query(
+            `SELECT l.account_id FROM ledger.journal_lines l WHERE l.entry_id IN ($1, $2)
+              GROUP BY l.account_id
+             HAVING sum(CASE l.side WHEN 'debit' THEN l.amount_minor ELSE -l.amount_minor END) <> 0`,
+            [original, r.entry_id],
+          );
+          expect(net, 'a reversal nets its original to zero').toEqual([]);
+        }
+      } else {
+        const code = codes[rand(codes.length)]!;
+        const r = await template(b.ledgerId, code, BigInt(1 + rand(50_000)), {
+          customer: customers[rand(customers.length)],
+          agent: agent.membershipId,
+        });
+        outcomes.add(r.outcome);
+        expect(['ok', 'insufficient_balance']).toContain(r.outcome);
+        if (r.outcome === 'ok') posted.push(r.entry_id!);
       }
-      const code = codes[rand(codes.length)]!;
-      const r = await template(b.ledgerId, code, BigInt(1 + rand(50_000)), {
-        customer: customers[rand(customers.length)],
-        agent: agent.membershipId,
-      });
-      outcomes.add(r.outcome);
-      expect(['ok', 'insufficient_balance']).toContain(r.outcome);
-      if (r.outcome === 'ok') posted.push(r.entry_id!);
+      const r = await reports(b.session, null, today());
+      expect(r.debits, `the trial balance after operation ${i}`).toBe(r.credits);
+      expect(r.assets, `the balance sheet after operation ${i}`).toBe(r.liabilities + r.equity + r.profit);
     }
     expect(outcomes.has('ok')).toBe(true);
 
@@ -810,10 +846,204 @@ describe('the properties (§6), over a random sequence of postings and reversals
       [b.ledgerId],
     );
     expect(negative).toEqual([]);
+  });
+});
 
-    const r = await reports(b.session, null, today());
-    expect(r.debits).toBe(r.credits);
-    expect(r.assets).toBe(r.liabilities + r.equity + r.profit);
+describe('versioned posting templates (§4, revision 3)', () => {
+  const inRollback = async (fn: () => Promise<void>) => {
+    await owner.query('BEGIN');
+    try {
+      await fn();
+    } finally {
+      await owner.query('ROLLBACK');
+    }
+  };
+
+  it('every template starts at version 1, active; an entry records the version it was posted with', async () => {
+    const { rows } = await owner.query(
+      `SELECT count(*)::int AS n, min(version) AS lo, max(version) AS hi FROM ledger.posting_templates WHERE status = 'active'`,
+    );
+    expect(rows[0]).toEqual({ n: 29, lo: 1, hi: 1 });
+    const b = await business();
+    const r = await template(b.ledgerId, 'directors.funding', 500n, {});
+    expect(
+      await one(`SELECT entry_type, template_version FROM ledger.journal_entries WHERE id = $1`, [
+        r.entry_id,
+      ]),
+    ).toEqual({ entry_type: 'directors.funding', template_version: 1 });
+    const manual = await post(b.ledgerId, [
+      { accountId: await account(b.ledgerId, '1000'), side: 'debit', amountMinor: '1' },
+      { accountId: await account(b.ledgerId, '3000'), side: 'credit', amountMinor: '1' },
+    ]);
+    expect(
+      (await one(`SELECT template_version FROM ledger.journal_entries WHERE id = $1`, [manual.entry_id]))
+        .template_version,
+    ).toBeNull();
+  });
+
+  it('a new mapping is a new version: the old one retired, later postings use the new one, earlier entries keep theirs', async () => {
+    const b = await business();
+    await template(b.ledgerId, 'directors.funding', 1000n, {});
+    const v1 = await template(b.ledgerId, 'wallet.loaded', 100n, {});
+    expect(v1.outcome).toBe('ok');
+    await inRollback(async () => {
+      await owner.query(
+        `UPDATE ledger.posting_templates SET status = 'retired' WHERE code = 'wallet.loaded' AND version = 1`,
+      );
+      await owner.query(
+        `INSERT INTO ledger.posting_templates (code, version, ledger_kind, description, lines)
+         SELECT code, 2, ledger_kind, description || ' (v2)', lines FROM ledger.posting_templates
+          WHERE code = 'wallet.loaded' AND version = 1`,
+      );
+      const v2 = await one(
+        `SELECT * FROM ledger.post_template($1, 'wallet.loaded', 100, '{}', $2, CURRENT_DATE, NULL, 'test', NULL, NULL, NULL)`,
+        [b.ledgerId, key()],
+      );
+      expect(v2.outcome).toBe('ok');
+      expect(
+        (await one(`SELECT template_version FROM ledger.journal_entries WHERE id = $1`, [v2.entry_id]))
+          .template_version,
+      ).toBe(2);
+      expect(
+        (await one(`SELECT template_version FROM ledger.journal_entries WHERE id = $1`, [v1.entry_id]))
+          .template_version,
+      ).toBe(1);
+    });
+  });
+
+  it('a version never changes, is never deleted or re-activated, and one version of a code is active at a time', async () => {
+    await inRollback(() =>
+      expectSqlState(
+        owner.query(
+          `UPDATE ledger.posting_templates SET lines = '[]' WHERE code = 'wallet.loaded' AND version = 1`,
+        ),
+        SQLSTATE.restrictViolation,
+      ).then(() => undefined),
+    );
+    await inRollback(() =>
+      expectSqlState(
+        owner.query(`DELETE FROM ledger.posting_templates WHERE code = 'wallet.loaded'`),
+        SQLSTATE.restrictViolation,
+      ).then(() => undefined),
+    );
+    await inRollback(() =>
+      expectSqlState(
+        owner.query(
+          `INSERT INTO ledger.posting_templates (code, version, ledger_kind, description, lines)
+           SELECT code, 2, ledger_kind, description, lines FROM ledger.posting_templates WHERE code = 'wallet.loaded'`,
+        ),
+        SQLSTATE.uniqueViolation,
+      ).then(() => undefined),
+    );
+    await inRollback(async () => {
+      await owner.query(
+        `UPDATE ledger.posting_templates SET status = 'retired' WHERE code = 'wallet.loaded'`,
+      );
+      await expectSqlState(
+        owner.query(`UPDATE ledger.posting_templates SET status = 'active' WHERE code = 'wallet.loaded'`),
+        SQLSTATE.restrictViolation,
+      );
+    });
+  });
+
+  it('an entry can name only a version that exists', async () => {
+    const b = await business();
+    await inRollback(() =>
+      expectSqlState(
+        owner.query(
+          `INSERT INTO ledger.journal_entries (merchant_id, ledger_id, effective_date, entry_type, narrative, idempotency_key, template_version)
+           VALUES ($1, $2, CURRENT_DATE, 'wallet.loaded', 'x', $3, 7)`,
+          [b.merchantId, b.ledgerId, key()],
+        ),
+        SQLSTATE.foreignKeyViolation,
+      ).then(() => undefined),
+    );
+  });
+});
+
+describe('a business’s own account: renamed, archived, restored, never deleted (§3.1, BR-9.1)', () => {
+  const update = (s: string, accountId: string, name: string | null, status: string | null) =>
+    app
+      .query(`SELECT * FROM ledger.update_account($1, $2, $3, $4, NULL, NULL, $5)`, [
+        s,
+        accountId,
+        name,
+        status,
+        `lg-${randomBytes(6).toString('hex')}`,
+      ])
+      .then((r) => r.rows[0] as { outcome: string; id: string | null });
+  const create = async (b: Business, code: string) =>
+    (await app.query(`SELECT * FROM ledger.create_account($1, $2, 'Rent', 'expense')`, [b.session, code]))
+      .rows[0].id as string;
+
+  it('renamed and archived at a zero balance, recorded; then refused to postings; restored', async () => {
+    const b = await business();
+    const rent = await create(b, '6100');
+    expect(await update(b.session, rent, 'Office rent', null)).toMatchObject({
+      outcome: 'ok',
+      id: rent,
+      name: 'Office rent',
+    });
+    expect(await update(b.session, rent, null, 'archived')).toMatchObject({
+      outcome: 'ok',
+      id: rent,
+      status: 'archived',
+      balance_minor: '0',
+    });
+    expect(
+      await one(
+        `SELECT name, status, archived_at IS NOT NULL AS archived FROM ledger.accounts WHERE id = $1`,
+        [rent],
+      ),
+    ).toEqual({
+      name: 'Office rent',
+      status: 'archived',
+      archived: true,
+    });
+    const { rows } = await owner.query(
+      `SELECT summary FROM audit.audit_events WHERE action = 'ledger.account_updated' AND target_id = $1 ORDER BY occurred_at, id`,
+      [rent],
+    );
+    expect(rows.map((r) => r.summary)).toEqual([
+      { name: 'Office rent', status: 'active' },
+      { name: 'Office rent', status: 'archived' },
+    ]);
+    expect(
+      (
+        await post(b.ledgerId, [
+          { accountId: rent, side: 'debit', amountMinor: '1' },
+          { accountId: await account(b.ledgerId, '3000'), side: 'credit', amountMinor: '1' },
+        ])
+      ).outcome,
+    ).toBe('inactive_account');
+    expect(await update(b.session, rent, null, 'active')).toMatchObject({
+      outcome: 'ok',
+      id: rent,
+      status: 'active',
+    });
+    expect(await one(`SELECT status, archived_at FROM ledger.accounts WHERE id = $1`, [rent])).toEqual({
+      status: 'active',
+      archived_at: null,
+    });
+  });
+
+  it('refuses archiving an account with a balance, the chart’s accounts, another business’s, and an empty change', async () => {
+    const b = await business();
+    const rent = await create(b, '6100');
+    await post(b.ledgerId, [
+      { accountId: rent, side: 'debit', amountMinor: '5' },
+      { accountId: await account(b.ledgerId, '3000'), side: 'credit', amountMinor: '5' },
+    ]);
+    expect((await update(b.session, rent, null, 'archived')).outcome).toBe('balance_not_zero');
+    expect((await update(b.session, await account(b.ledgerId, '1000'), 'Bank', null)).outcome).toBe(
+      'system_account',
+    );
+    const other = await business();
+    expect((await update(other.session, rent, 'Mine', null)).outcome).toBe('not_found');
+    expect((await update(b.session, rent, null, null)).outcome).toBe('invalid');
+    expect((await update(b.session, rent, null, 'deleted')).outcome).toBe('invalid');
+    const staff = await member(b, 'staff', ['merchant.ledger.read']);
+    expect((await update(staff.session, rent, 'Nope', null)).outcome).toBe('forbidden');
   });
 });
 
@@ -1133,6 +1363,48 @@ describe('the reads (§3.5): the business from the session', () => {
     expect(
       (await app.query(`SELECT * FROM ledger.read_account($1, $2)`, [b.session, customerSavings])).rows[0],
     ).toMatchObject({ balance_minor: '1150' });
+  });
+
+  it('a control account’s statement covers its sub-accounts, with the period’s opening and closing balances', async () => {
+    const control = await account(b.ledgerId, '2100');
+    const { rows } = await app.query(
+      `SELECT * FROM ledger.read_statement($1, $2, '2000-01-01', CURRENT_DATE, 10)`,
+      [b.session, control],
+    );
+    expect(rows.map((r) => [r.side, r.amount_minor, r.balance_minor])).toEqual([
+      ['credit', '1000', '1000'],
+      ['credit', '500', '1500'],
+      ['credit', '250', '1750'],
+      ['debit', '100', '1650'],
+    ]);
+    expect(rows.every((r) => r.account_id !== control)).toBe(true);
+    const from = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+    const period = (
+      await app.query(`SELECT * FROM ledger.read_statement($1, $2, $3, CURRENT_DATE, 10)`, [
+        b.session,
+        control,
+        from,
+      ])
+    ).rows;
+    expect(period.map((r) => r.balance_minor)).toEqual(['1750', '1650']);
+    const balances = async (accountId: string, f: string, t: string) =>
+      (
+        await app.query(`SELECT * FROM ledger.statement_balances($1, $2, $3, $4)`, [
+          b.session,
+          accountId,
+          f,
+          t,
+        ])
+      ).rows[0];
+    expect(await balances(control, from, today())).toEqual({ opening_minor: '1500', closing_minor: '1650' });
+    expect(await balances(customerSavings, from, today())).toEqual({
+      opening_minor: '1000',
+      closing_minor: '1150',
+    });
+    expect(await balances(customerSavings, '2000-01-01', '2000-12-31')).toEqual({
+      opening_minor: '0',
+      closing_minor: '0',
+    });
   });
 
   it('a statement: the lines in date order with running balances, paginated', async () => {

@@ -157,7 +157,9 @@ const EXPECTED: Record<string, Grantee[]> = {
   // P6: the posting core (TA-3, TA-4, TA-5, §4) — called by the commands below and later phases' domain functions,
   // never by the app; the projections' check is the operator's (§3.4)
   'ledger.lock_projections(uuid[], uuid[])': OWNER_ONLY,
-  'ledger.post_entry(uuid, text, text, date, text, text, text, jsonb, uuid, uuid, uuid)': OWNER_ONLY,
+  'ledger.post_entry(uuid, text, text, date, text, text, text, jsonb, uuid, uuid, uuid, integer)': OWNER_ONLY,
+  // P6 rev 3: a posting template's version never changes (its trigger)
+  'ledger.protect_posting_template()': OWNER_ONLY,
   'ledger.post_reversal(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
   'ledger.open_subaccount(uuid, text, text, uuid)': OWNER_ONLY,
   'ledger.post_template(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)': OWNER_ONLY,
@@ -169,6 +171,8 @@ const EXPECTED: Record<string, Grantee[]> = {
   'ledger.list_accounts(uuid, boolean)': APP,
   'ledger.read_account(uuid, uuid)': APP,
   'ledger.read_statement(uuid, uuid, date, date, integer, date, uuid)': APP,
+  'ledger.statement_balances(uuid, uuid, date, date)': APP,
+  'ledger.update_account(uuid, uuid, text, text, text, text, text)': APP,
   'ledger.read_entry(uuid, uuid)': APP,
   'ledger.account_movements(uuid, date, date)': APP,
   // util — id default and RLS helper run as the querying role; the rate limiter is a request path

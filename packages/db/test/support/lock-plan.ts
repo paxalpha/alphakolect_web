@@ -150,6 +150,13 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:S', '+13', '+14'],
     writes: ['ledger.accounts', 'ledger.balance_projection', 'audit.audit_events'],
   },
+  // P6 rev 3: a business's own account renamed or archived — the account (NKU) and its projection (S), held against a
+  // posting while it is archived; the UPDATE writes the held row
+  'ledger.update_account': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '13:NKU', '14:S'],
+    writes: ['ledger.accounts', 'audit.audit_events'],
+  },
   'ledger.post_manual_entry': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '7:S', '12:NKU', '14:NKU', '+15'],
@@ -483,6 +490,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'ledger.list_accounts': { class: 'reader' },
   'ledger.read_account': { class: 'reader' },
   'ledger.read_statement': { class: 'reader' },
+  'ledger.statement_balances': { class: 'reader' },
   'ledger.read_entry': { class: 'reader' },
   'ledger.account_movements': { class: 'reader' },
   'ledger.verify_projections': { class: 'reader' },
@@ -498,6 +506,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'util.reject_modification': { class: 'trigger' },
   // the ledger's P1 invariants: the commit-time balance check, lock-free
   'ledger.check_entry_balanced_trigger': { class: 'trigger' },
+  'ledger.protect_posting_template': { class: 'trigger' },
   'ledger.assert_entry_balanced': { class: 'reader' },
 
   // ── a request path called in its own statement, never inside a transaction ──
@@ -559,6 +568,7 @@ export const MERCHANT_SCOPED_READS: readonly string[] = [
   'ledger.read_account',
   'ledger.read_entry',
   'ledger.read_statement',
+  'ledger.statement_balances',
   'tenancy.list_branches',
   'tenancy.list_invitations',
   'tenancy.list_members',

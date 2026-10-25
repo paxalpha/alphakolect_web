@@ -1,6 +1,6 @@
 # P6 implementation plan — the ledger
 
-**Status: revision 3 (2026-10-25) — built; the gate review's two findings resolved; awaiting its re-check.** Planned and built in one pass at the project
+**Status: revision 4 (2026-10-25) — CLOSED.** The independent reviewer accepted P6 for closure on its re-check, and the project lead approved the closure (§12). Planned and built in one pass at the project
 lead's request ("map everything out and implement it in one go"; "efficiency and speed of delivery is very important").
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
 §8. The owner answered both P6 forms on 2026-10-23, each with the suggested options:
@@ -224,6 +224,7 @@ platform ledger's subscription income. OPEN-12 (before P8b): the custody ledger.
 | Rev | Date | Change |
 |---|---|---|
 | 1 | 2026-10-23 | First plan, written and built in one pass |
+| 4 | 2026-10-25 | Closed: the reviewer's acceptance and the project lead's approval recorded (§12) |
 | 3 | 2026-10-25 | The gate review's findings resolved (§11): versioned templates (§4, P6-12), the statement's opening and closing balances and a control account's sub-accounts (§3.5, P6-13); and, from the self-review that followed, archiving merchant accounts (§3.1, P6-14), the property tests strengthened to five runs checked after every operation (§6), the account answers taken from the database. Migration `20261025000100_ledger_review` |
 | 2 | 2026-10-24 | The owner's answers to both P6 forms recorded; built as §10 says. Changed from revision 1: the lock categories (P6-6), ledger opening (P6-7), the split templates (§4), the posting answers and error codes (§5, P6-8), reversal by hand (P6-9), stale claims (P6-10), customer subjects (P6-11) |
 
@@ -259,3 +260,18 @@ lead then asked for a self-review against this plan until it finds nothing more;
 | S3 (self-review) | §6 asks for property tests over "many runs", the reports balancing "at every point"; there was one run, checked at its end | five seeded runs of 80 operations; the trial balance and the balance sheet checked after every operation, every reversal checked to net its original to zero |
 | S4 (self-review) | For a session that may add accounts but not read the books, the new account's answer invented its creation time | `ledger.create_account` returns it; `ledger.update_account` returns the account |
 | S5 (self-review) | The test that every pre-P6 business got its ledger depended on test order, and never exercised the backfill (the fixtures bring their own ledgers) | replaced by two tests: only `identity.signup_merchant_owner` creates a business, and it opens the ledger; the migration's backfill statement, run on a business without a ledger, opens its 23 accounts |
+
+## 12. Closure (2026-10-25)
+
+**The independent reviewer's verdict on its re-check of `60410d8`: "P6 accepted for closure."** Both findings of the
+first review (§11, R1 and R2) are resolved, and the self-review's five changes are present. The reviewer independently
+ran the contracts (75 passed), database (779 passed), API (1,423 passed) and concurrency (22 passed, the five ledger races
+at 50 runs each) suites, the OpenAPI check, both typechecks, lint and the format check, and found the worktree clean:
+"No remaining P6 closure blockers found." The reviewer did not rerun gitleaks (each commit was scanned by the commit gate
+before it was made), and noted that the remote branch then pointed to `1fa6872`, not the reviewed HEAD.
+
+**The project lead approved the closure** the same day ("I approve the closure also. Let us close this and move to P7").
+
+Carried forward: the obligations of §7 (P12: the nightly projection check and a retention rule for idempotency records;
+P8–P11: post only through templates; P10: the platform ledger's subscription income; OPEN-12 before P8b); the branch is
+rebased onto `main` once PR #7 merges, and pushed by the project lead.

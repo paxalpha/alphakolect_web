@@ -8,7 +8,7 @@ approval of these four. They follow your answers on customers (25 October 2026).
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ______________________ **Date:** ______________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 25th of October, 2026
 
 ---
 

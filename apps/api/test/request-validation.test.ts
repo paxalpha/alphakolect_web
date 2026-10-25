@@ -1,4 +1,4 @@
-import { defineEndpoint, ErrorResponse, Id } from '@alphakolect/contracts';
+import { defineEndpoint, ErrorResponse, Id, IdempotencyKeyHeader } from '@alphakolect/contracts';
 import express from 'express';
 import { pino } from 'pino';
 import { pinoHttp } from 'pino-http';
@@ -62,12 +62,48 @@ describe('request body validation', () => {
     expect(JSON.stringify(res.body)).not.toContain(SECRET);
   });
 
-  it('refuses at startup a contract with request parts it does not check yet', () => {
+  it('refuses at startup a contract whose header names are not lower case', () => {
     expect(() =>
       validateRequest(
-        defineEndpoint({ ...endpoint, request: { headers: z.object({ 'x-thing': z.string() }) } }),
+        defineEndpoint({ ...endpoint, request: { headers: z.object({ 'X-Thing': z.string() }) } }),
       ),
-    ).toThrow(/request\.headers validation is not implemented/);
+    ).toThrow(/request header names must be lower case/);
+  });
+});
+
+// P6 (TA-6): declared headers are checked like the other parts — a missing or malformed one is refused with 400,
+// naming the header but never echoing its value; other headers pass untouched.
+describe('request header validation', () => {
+  const withHeader = defineEndpoint({
+    ...endpoint,
+    id: 'headerProbe',
+    request: { headers: IdempotencyKeyHeader },
+  });
+  const headerApp = express();
+  headerApp.use(pinoHttp({ logger: pino({ level: 'silent' }), genReqId: honourRequestId }));
+  headerApp.post(endpoint.path, validateRequest(withHeader), (req, res) => {
+    res.json({ key: req.get('idempotency-key') });
+  });
+  headerApp.use(errorHandler);
+
+  it('passes a well-formed header through', async () => {
+    const res = await request(headerApp).post(endpoint.path).set('Idempotency-Key', 'order-2026-0001');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ key: 'order-2026-0001' });
+  });
+
+  it.each([
+    ['a missing header', undefined],
+    ['a header too short', 'short'],
+    ['a header with a space', 'has a space-inside'],
+  ])('refuses %s with 400, naming the header', async (_label, value) => {
+    const req = request(headerApp).post(endpoint.path);
+    const res = await (value === undefined ? req : req.set('Idempotency-Key', value));
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.issues).toEqual([
+      { path: 'headers.idempotency-key', message: expect.any(String) },
+    ]);
+    if (value) expect(JSON.stringify(res.body)).not.toContain(value);
   });
 });
 

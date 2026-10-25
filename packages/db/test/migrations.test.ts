@@ -49,9 +49,11 @@ const TABLES = [
   'identity.totp_credentials',
   'ledger.accounts',
   'ledger.balance_projection',
+  'ledger.chart_template',
   'ledger.journal_entries',
   'ledger.journal_lines',
   'ledger.ledgers',
+  'ledger.posting_templates',
   'tenancy.branches',
   'tenancy.invitations',
   'tenancy.merchant_memberships',
@@ -59,6 +61,7 @@ const TABLES = [
   'tenancy.role_permissions',
   'tenancy.roles',
   'util.authorization_containment',
+  'util.idempotency_records',
   'util.rate_limit_counters',
 ];
 

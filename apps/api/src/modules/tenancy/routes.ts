@@ -26,7 +26,7 @@ import type {
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import { tenantContextOf } from '../../platform/tenant.js';
-import type { RequestContext } from '../identity/sessions.js';
+import type { RequestContext } from '../../platform/request-context.js';
 import type { MerchantLifecycleService } from './merchant-lifecycle.js';
 import { toBranch, toRole, type MerchantSettingsService } from './merchant-settings.js';
 import { toInvitation, type InvitationService } from './invitations.js';

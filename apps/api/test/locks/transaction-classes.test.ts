@@ -27,7 +27,7 @@ import {
 // reachable — nothing is tolerated (the lock-order guard fails if a tolerated list is exported again).
 
 const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger'];
 const owner = new pg.Client({ connectionString: inject('ownerDatabaseUrl') });
 let catalog: Catalog;
 let rules: ClassRules;
@@ -128,6 +128,11 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'InvitationService.accept',
       'InvitationService.create',
       'InvitationService.revoke',
+      // P6: the ledger's commands — each one call of its planned operation (the account read back after creation)
+      'LedgerService.createAccount',
+      'LedgerService.postEntry',
+      'LedgerService.reverseEntry',
+      'LedgerService.updateAccount',
       'MembershipService.change',
       'MerchantLifecycleService.change',
       'MerchantLifecycleService.transferOwnership',

@@ -43,7 +43,7 @@ import {
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
 
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger'];
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
 ) as { commit: string; functions: FnRow[] };
@@ -107,6 +107,16 @@ describe('enforcing mode (R34): no finding at all', () => {
       'identity.platform_membership_grants(platform_membership_id, permission)',
       'identity.platform_memberships(identity_id)',
       'identity.totp_credentials(identity_id)',
+      // P6: a ledger opened with its system accounts and their projections (at signup; one platform ledger)
+      'ledger.accounts(ledger_id, code, subject_type, subject_id)',
+      'ledger.balance_projection(account_id)',
+      'ledger.balance_projection(merchant_id, account_id)',
+      // P6: a posting's entry, under its key and (a reversal) its original (TA-4)
+      'ledger.journal_entries(ledger_id, idempotency_key)',
+      'ledger.journal_entries(merchant_id, idempotency_key)',
+      'ledger.journal_entries(reverses_entry_id) partial',
+      'ledger.ledgers(merchant_id)',
+      'ledger.ledgers(owner_kind) partial',
       // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))
       'tenancy.branches(merchant_id, <expr>) partial',
       'tenancy.invitations(merchant_id, email) partial',
@@ -117,6 +127,8 @@ describe('enforcing mode (R34): no finding at all', () => {
       'tenancy.roles(merchant_id, <expr>) partial',
       // P5.5 step 6: the containment switch's one-row key (updated only, never inserted by a function)
       'util.authorization_containment(id)',
+      // P6 (TA-6): a command's claim
+      'util.idempotency_records(merchant_id, identity_id, operation, idem_key)',
       'util.rate_limit_counters(key, window_start)',
     ]);
   });
@@ -603,7 +615,7 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
       cls: undefined as unknown as FnClass,
     },
     outside: {
-      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM ledger.assert_entry_balanced(NULL); END $$`,
+      sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN PERFORM loans.no_such_function(NULL); END $$`,
       cls: IDENTITY,
     },
     // schema-level constructs on a table in scope: a default and a CHECK calling a non-allowlisted function, a cascading

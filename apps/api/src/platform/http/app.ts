@@ -16,6 +16,8 @@ import {
   selectionHandlers,
 } from '../../modules/identity/routes.js';
 import { SecretBox, type EncryptionKey } from '../../modules/identity/secret-box.js';
+import { LedgerService } from '../../modules/ledger/service.js';
+import { ledgerHandlers } from '../../modules/ledger/routes.js';
 import { AuditReadService } from '../../modules/audit/reads.js';
 import { auditReadHandlers } from '../../modules/audit/routes.js';
 import { PlatformMerchantListService } from '../../modules/platform/merchant-lists.js';
@@ -35,6 +37,7 @@ import { authorize } from '../authorization.js';
 import type { TrustedProxies } from '../config.js';
 import type { Db } from '../db.js';
 import { Mailer, type EmailSender } from '../email.js';
+import { IdempotencyStore } from '../idempotency.js';
 import { HTTP_LOG_SERIALIZERS, routeProps } from '../logger.js';
 import { authenticate, type AuthDeps } from './authenticate.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
@@ -149,6 +152,7 @@ export function createApp({
     }),
     ...invitationAcceptHandlers({ invitations }),
     ...agentHandlers({ identity: auth.identity, sessions, limiter, settings }),
+    ...ledgerHandlers({ books: new LedgerService({ db, audit, idempotency: new IdempotencyStore(db) }) }),
   };
 
   // All endpoints are versioned (§17) and come from the contract registry (packages/contracts).

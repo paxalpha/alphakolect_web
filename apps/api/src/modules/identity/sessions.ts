@@ -2,7 +2,7 @@ import type { LoginRequest, LoginResponse, Session } from '@alphakolect/contract
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
-import type { AuditLog } from '../audit/audit-log.js';
+import type { AuditLog } from '../audit/index.js';
 import type { AccessTokens, SessionAudience } from './access-tokens.js';
 import { burnPasswordCheck, hashPassword, needsRehash, verifyPassword } from './passwords.js';
 import type { RateLimiter } from './rate-limits.js';
@@ -24,7 +24,8 @@ const ENROLMENT_LIFETIME: SessionLifetime = { idleSeconds: 900, absoluteSeconds:
 /** The audiences of the cookie (web) refresh endpoint; agents refresh on their own endpoint (ADR-15 T12). */
 const WEB_AUDIENCES: readonly SessionAudience[] = ['platform', 'merchant'];
 
-export type RequestContext = { ip: string; userAgent: string | null; requestId: string };
+import type { RequestContext } from '../../platform/request-context.js';
+export type { RequestContext };
 
 /** Credentials for any audience: the web login (platform, merchant) or the agent login (ADR-15 T12). */
 export type SignInRequest = Omit<LoginRequest, 'audience'> & { audience: SessionAudience };

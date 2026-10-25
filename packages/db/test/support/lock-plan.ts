@@ -142,6 +142,43 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['A1:S'],
     writes: ['audit.audit_events'],
   },
+  // the ledger's commands (P6, plan §5): the merchant, the actor (the authority lock), the actor's role; creation's
+  // contested inserts last (L3). A posting command locks its idempotency claim (12) before the posting's projections
+  // (14) and its contested entry insert (+15), and completes the held claim after it.
+  'ledger.create_account': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '+13', '+14'],
+    writes: ['ledger.accounts', 'ledger.balance_projection', 'audit.audit_events'],
+  },
+  // P6 rev 3: a business's own account renamed or archived — the account (NKU) and its projection (S), held against a
+  // posting while it is archived; the UPDATE writes the held row
+  'ledger.update_account': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '13:NKU', '14:S'],
+    writes: ['ledger.accounts', 'audit.audit_events'],
+  },
+  'ledger.post_manual_entry': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '12:NKU', '14:NKU', '+15'],
+    writes: [
+      'util.idempotency_records',
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'ledger.reverse_entry': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '12:NKU', '14:NKU', '+15'],
+    writes: [
+      'util.idempotency_records',
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -360,8 +397,52 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.create_mfa_challenge': { class: 'identity', writes: ['identity.mfa_challenges'] },
   'identity.signup_merchant_owner': {
     class: 'identity',
-    writes: ['identity.identities', 'tenancy.merchants', 'tenancy.merchant_memberships'],
+    writes: [
+      'identity.identities',
+      'tenancy.merchants',
+      'tenancy.merchant_memberships',
+      'ledger.ledgers',
+      'ledger.accounts',
+      'ledger.balance_projection',
+    ],
   },
+  // P6: a ledger opened with its system accounts and their projections (at signup, and for the platform) — inserts
+  // only, waiting for nothing
+  'ledger.open_ledger': {
+    class: 'identity',
+    writes: ['ledger.ledgers', 'ledger.accounts', 'ledger.balance_projection'],
+  },
+  // P6, the posting core (TA-3–TA-5, TA-7): the lines' projections in one sorted acquisition (14), then the entry —
+  // the contested insert — and its lines; the held projections updated; capital and income debits recorded
+  'ledger.post_entry': {
+    class: 'identity',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'ledger.post_reversal': {
+    class: 'identity',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'ledger.post_template': {
+    class: 'identity',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  // a sub-account opened before any posting uses it (TA-5): its contested inserts, waiting for nothing else
+  'ledger.open_subaccount': { class: 'identity', writes: ['ledger.accounts', 'ledger.balance_projection'] },
   'identity.resolve_login_membership': {
     class: 'identity',
     writes: ['identity.membership_selection_challenges'],
@@ -381,6 +462,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.lock_one_time_tokens': { class: 'helper' },
   'tenancy.lock_roles': { class: 'helper' },
   'tenancy.lock_branches': { class: 'helper' },
+  'ledger.lock_projections': { class: 'helper' },
 
   // ── lock-free readers ──
   'identity.account_for_email': { class: 'reader' },
@@ -404,6 +486,14 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.read_profile': { class: 'reader' },
   // the platform team (P5.7): B1 reader of platform.staff.manage
   'identity.list_platform_staff': { class: 'reader' },
+  // the ledger's B1 reads (P6) and the operator's projection check
+  'ledger.list_accounts': { class: 'reader' },
+  'ledger.read_account': { class: 'reader' },
+  'ledger.read_statement': { class: 'reader' },
+  'ledger.statement_balances': { class: 'reader' },
+  'ledger.read_entry': { class: 'reader' },
+  'ledger.account_movements': { class: 'reader' },
+  'ledger.verify_projections': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -414,9 +504,16 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'identity.protect_permission_catalog': { class: 'trigger' },
   'tenancy.merchant_keeps_one_owner': { class: 'trigger' },
   'util.reject_modification': { class: 'trigger' },
+  // the ledger's P1 invariants: the commit-time balance check, lock-free
+  'ledger.check_entry_balanced_trigger': { class: 'trigger' },
+  'ledger.protect_posting_template': { class: 'trigger' },
+  'ledger.assert_entry_balanced': { class: 'reader' },
 
   // ── a request path called in its own statement, never inside a transaction ──
   'util.rate_limit_hit': { class: 'standalone', writes: ['util.rate_limit_counters'] },
+  // P6 (TA-6): a command's key is claimed, or released, in its own transaction
+  'util.claim_idempotency': { class: 'standalone', writes: ['util.idempotency_records'] },
+  'util.release_idempotency': { class: 'standalone', writes: ['util.idempotency_records'] },
 };
 
 /**
@@ -466,6 +563,12 @@ export const BASELINE: readonly string[] = [
 export const MERCHANT_SCOPED_READS: readonly string[] = [
   'audit.read_merchant_events',
   'identity.session_authority',
+  'ledger.account_movements',
+  'ledger.list_accounts',
+  'ledger.read_account',
+  'ledger.read_entry',
+  'ledger.read_statement',
+  'ledger.statement_balances',
   'tenancy.list_branches',
   'tenancy.list_invitations',
   'tenancy.list_members',
@@ -499,6 +602,10 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
   'identity.eligible_memberships': 'the login flow’s list of the memberships an identity may choose from',
   'identity.permissions_of':
     'the permissions of a membership session_authority or assert_authority has already resolved from the session',
+  'ledger.verify_projections':
+    'the operator’s nightly check of every projection against its lines (§3.4, P12): all businesses by design',
+  'ledger.assert_entry_balanced':
+    'the commit-time balance check of one entry (P1), called by its constraint trigger with the entry being written',
 };
 
 /**
@@ -593,4 +700,7 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   "tenancy.transfer_ownership: mm.kind = 'staff'",
   "tenancy.transfer_ownership: kind = 'staff'",
   "tenancy.transfer_ownership: kind = 'owner'",
+  // P6: an agent's sub-account (cash with agents, 1210) belongs to an agent membership of the business — a subject
+  // check, not authority
+  "ledger.open_subaccount: m.kind = 'agent'",
 ];

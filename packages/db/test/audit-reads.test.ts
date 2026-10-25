@@ -101,9 +101,15 @@ async function platformMember(role: 'super_admin' | 'support', grants: string[] 
   return { identityId, membershipId, session: await session(identityId, 'platform', membershipId) };
 }
 
-/** A window of its own, years ahead: [from, from + 10 days). */
+/** A window of its own, years ahead: [from, from + 10 days). A year is drawn at most once per run, so two windows
+ * never share events (two draws of one year made the platform read flaky). */
+const usedYears = new Set<number>();
 const windowAt = () => {
-  const from = new Date(Date.UTC(2090 + Math.floor(Math.random() * 400), 0, 1));
+  let year: number;
+  do year = 2090 + Math.floor(Math.random() * 400);
+  while (usedYears.has(year));
+  usedYears.add(year);
+  const from = new Date(Date.UTC(year, 0, 1));
   return {
     from: from.toISOString(),
     to: new Date(from.getTime() + 10 * 86_400_000).toISOString(),

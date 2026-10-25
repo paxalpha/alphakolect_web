@@ -23,7 +23,8 @@ afterAll(async () => {
   await Promise.all([owner.end(), app.end(), readonly.end()]);
 });
 
-/** The catalog frozen in P5.0 (plan §6): identifier, scope, grantable. */
+/** The catalog frozen in P5.0 (plan §6), and the books' permissions of P6 (decision P6-3): identifier, scope,
+ * grantable. */
 const CATALOG: ReadonlyArray<readonly [string, 'merchant' | 'platform', boolean]> = [
   ['merchant.profile.read', 'merchant', true],
   ['merchant.profile.update', 'merchant', true],
@@ -36,6 +37,9 @@ const CATALOG: ReadonlyArray<readonly [string, 'merchant' | 'platform', boolean]
   ['merchant.invitations.read', 'merchant', true],
   ['merchant.invitations.manage', 'merchant', false],
   ['merchant.audit.read', 'merchant', false],
+  ['merchant.ledger.read', 'merchant', true],
+  ['merchant.ledger.manage', 'merchant', true],
+  ['merchant.ledger.post', 'merchant', true],
   ['platform.merchants.read', 'platform', true],
   ['platform.audit.read', 'platform', true],
   ['platform.merchants.lifecycle', 'platform', false],

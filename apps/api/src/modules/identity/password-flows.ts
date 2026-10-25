@@ -7,7 +7,7 @@ import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { Mailer } from '../../platform/email.js';
 import type { AuthContext } from '../../platform/http/authenticate.js';
-import type { AuditLog } from '../audit/audit-log.js';
+import type { AuditLog } from '../audit/index.js';
 import { invalidOrExpiredToken } from './accounts.js';
 import {
   ACCOUNT_SETUP_TTL_SECONDS,

@@ -2,7 +2,7 @@ import type { ResendVerificationRequest, SignupRequest } from '@alphakolect/cont
 import type { Db } from '../../platform/db.js';
 import { AppError } from '../../platform/errors.js';
 import type { Mailer } from '../../platform/email.js';
-import type { AuditLog } from '../audit/audit-log.js';
+import type { AuditLog } from '../audit/index.js';
 import { EMAIL_VERIFICATION_TTL_SECONDS, verificationEmail } from './emails.js';
 import { checkPasswordPolicy, hashPassword } from './passwords.js';
 import type { RateLimiter } from './rate-limits.js';

@@ -41,6 +41,14 @@ const denial = { reason, kind } as const;
 const member = { kind, status: status16, roleId: nullableUuid, branchId: nullableUuid } as const;
 /** A role's or a platform staff member's permission set (P5.6, the list rule): at most 32 catalog identifiers. */
 const permissionList = { type: 'string_list', maxItems: 32, max: 100 } as const;
+/** A debit to a capital or an income account (P6, owner Q4). */
+const ledgerDebit = {
+  entryId: uuid,
+  entryType: { type: 'string', max: 100 },
+  accountId: uuid,
+  accountCode: { type: 'string', max: 6 },
+  amountMinor: { type: 'string', max: 20 },
+} as const;
 
 const atomicB = <I extends string, O extends Outcome, S extends Record<string, FieldRule>>(
   identifier: I,
@@ -159,6 +167,18 @@ export const AUDIT_CATALOG = [
     formerOwnerRoleId: uuid,
     formerOwnerDeactivated: flag,
   }),
+  // the ledger (P6): the books' commands, and every debit to capital or income (owner Q4), written by ledger.post_entry
+  atomicA('ledger.account_created', { code: { type: 'string', max: 6 }, name, type: status16 }),
+  atomicA('ledger.account_updated', { name, status: status16 }),
+  atomicA('ledger.manual_entry_posted', {
+    entryId: uuid,
+    lineCount: { type: 'integer' },
+    totalMinor: { type: 'string', max: 20 },
+    effectiveDate: { type: 'string', max: 10 },
+  }),
+  atomicA('ledger.entry_reversed', { entryId: uuid, reversalId: uuid }),
+  atomicA('ledger.capital_debited', ledgerDebit),
+  atomicA('ledger.income_debited', ledgerDebit),
   // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
   sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
   sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
@@ -231,6 +251,10 @@ export const AUDIT_CATALOG = [
   bestEffort('platform.merchant_members_read', 'denied', { reason }),
   bestEffort('merchant.audit_read', 'denied', { reason }),
   bestEffort('platform.audit_read', 'denied', { reason }),
+  bestEffort('ledger.account_created', 'denied', denial),
+  bestEffort('ledger.account_updated', 'denied', denial),
+  bestEffort('ledger.manual_entry_posted', 'denied', denial),
+  bestEffort('ledger.entry_reversed', 'denied', denial),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

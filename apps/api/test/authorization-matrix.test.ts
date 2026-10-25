@@ -6,6 +6,7 @@ import type { PermissionRequirement } from '../src/platform/authorization.js';
 import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 import { requiredQuery } from './support/required-query.js';
+import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
 
 // The authorization matrix (P5.9; P5 plan §10 P5.9, §13 exit criterion 2): every permission endpoint of the registry,
 // called by every kind of actor, the expected answer computed from the endpoint's declaration — its class, audience and
@@ -162,6 +163,7 @@ async function setUp() {
     target,
     support,
     invitationId: invited.body.invitationId as string,
+    ledger: await ledgerResources(owner, b.merchantId),
   };
 }
 
@@ -175,8 +177,12 @@ const PARAMS: Record<string, (w: World, allowed: boolean) => string> = {
   invitationId: (w) => w.invitationId,
   merchantId: (w, allowed) => (allowed ? ELSEWHERE : w.merchantId),
   platformMembershipId: (w) => w.support.membershipId,
+  accountId: (w) => w.ledger.accountId,
+  entryId: (w) => w.ledger.entryId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
+  ...ledgerBodies,
+  postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -198,7 +204,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
 function send(id: keyof typeof endpoints, e: EndpointContract, caller: Caller, w: World, allowed: boolean) {
   const path =
     e.path.replace(/\{([A-Za-z]+)\}/g, (_, p: string) => PARAMS[p]!(w, allowed)) + requiredQuery(id);
-  let req = request(app)[e.method](path);
+  let req = request(app)[e.method](path).set(requiredHeaders(id));
   if (caller.kind === 'bearer') req = req.set('Authorization', `Bearer ${caller.token}`);
   if (caller.kind === 'cookie')
     req = req
@@ -228,7 +234,8 @@ const snapshot = async (merchantId: string, platformMembershipId: string) =>
                        WHERE pm.id = $2
                           OR pm.identity_id IN (SELECT id FROM identity.identities WHERE email LIKE 'matrix-staff-%')),
          'platformGrants', (SELECT json_agg(g.permission ORDER BY g.permission)
-                              FROM identity.platform_membership_grants g WHERE g.platform_membership_id = $2)
+                              FROM identity.platform_membership_grants g WHERE g.platform_membership_id = $2),
+         ${LEDGER_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId, platformMembershipId],
     )

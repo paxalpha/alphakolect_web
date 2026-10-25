@@ -28,15 +28,10 @@ const NoStore = z.object({
 });
 
 /** A phone number as written: spaces, dashes and brackets allowed; stored normalised (0803… → +234803…). */
-const PhoneInput = z
-  .string()
-  .trim()
-  .min(7)
-  .max(24)
-  .meta({
-    description: 'A phone number; 0XXXXXXXXXX is read as a Nigerian number (+234)',
-    example: '0803 123 4567',
-  });
+const PhoneInput = z.string().trim().min(7).max(24).meta({
+  description: 'A phone number; 0XXXXXXXXXX is read as a Nigerian number (+234)',
+  example: '0803 123 4567',
+});
 const FullName = z.string().trim().min(1).max(120);
 const Address = z.string().trim().min(1).max(300);
 const Nickname = z.string().trim().min(1).max(60);

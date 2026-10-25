@@ -1,6 +1,6 @@
 # P7 implementation plan — customers
 
-**Status: revision 3 (2026-10-26) — built; awaiting the gate review.** Planned in one pass and built in one pass, as P6 was, at the
+**Status: revision 4 (2026-10-26) — built; the gate review's two findings resolved; awaiting its re-check.** Planned in one pass and built in one pass, as P6 was, at the
 project lead's request ("execute P7 in one go after mapping everything out"). Decisions that would go to the project lead
 take the recommended option (his standing instruction) and are recorded in §7. **The owner answered** every question of
 `docs/business/P7_OWNER_CUSTOMERS.md` on 2026-10-25 with the suggested option; the plan follows those answers. He approved
@@ -133,6 +133,7 @@ email; customer KYC (OPEN-13).
 
 | Rev | Date | Change |
 |---|---|---|
+| 4 | 2026-10-26 | The gate review's findings resolved and the self-review that followed (§11); migration `20261026000100_customers_review` |
 | 3 | 2026-10-26 | Built as §9 maps; what the build changed is in §10 (decisions P7-12 to P7-17) |
 | 2 | 2026-10-25 | The owner's answers recorded (all suggested) and the permissions' wording approved; decisions P7-6 to P7-11; §9, the build map |
 | 1 | 2026-10-25 | First plan; the owner's questions asked |
@@ -215,3 +216,18 @@ and the activity events.
 | Contracts: 17 endpoints (10 for the business, 2 for agents, 5 for the customer audience) | `packages/contracts/src/endpoints/customers.ts` |
 | API: the customers module; the customer sign-in routes; the customer audience in tokens, sessions and authentication; the branch resolvers; the app-link emails | `apps/api/src/modules/customers/`, `apps/api/src/modules/identity/customer-routes.ts` |
 | API tests: the endpoints end to end, the customer's sign-in and own record; the authorization matrix (branch-restricted and archived-branch staff now narrowed), the policy and isolation matrices, the coverage and writer guards for every customer event | `apps/api/test/customers/customers-api.test.ts` and the matrices |
+
+## 11. The gate review (2026-10-26) and its resolution
+
+The independent reviewer found P7 not ready to close, on two findings; both are resolved in revision 4, in the forward
+migration `20261026000100_customers_review` (P7's earlier migrations were already on the remote branch). The project lead
+then asked for every blocker to be checked and fixed; the self-review that followed found one more, also resolved, and
+states two rules the review could otherwise ask about.
+
+| # | Finding | Resolution |
+|---|---|---|
+| R1 | Changing a customer's email left an open app link usable, and acceptance did not check the link against the customer's address | `customers.update_customer` revokes the customer's open link when the email changes (under the customer's lock: footprint `16:W` added); `customers.accept_app_invitation` accepts a link only for the account of the customer's address now. Tests: the old link refused after a change (database and API), refused even were it not revoked (the second layer alone), and a change of anything else leaves the link alone |
+| R2 | Deactivation was not serialised with postings: a posting could pass its status check while the customer was being deactivated | `customers.set_customer_status` holds the customer's balances (`14:S`) before the customer, as removing the details does, so a posting either commits first or waits and then sees the customer deactivated (`ledger.post_entry` reads the status under the same locks). A staged race (50 runs) shows the posting waits and is refused and the balance stays zero |
+| S1 (self-review) | Accepting a link checked the password rules only for an account without a password, so a weak password's answer told such an address from others (D12) | the rules are checked first, for every request (an existing account's password was set under the same rules); an API test shows the same 422 for an unknown address, a new one and an existing account |
+| S2 (self-review, a rule stated) | A customer who already signs in, whose email the business changes | the sign-in stays: it is the person's own account, and the business's address is a contact detail; a correction never locks the customer out. A new link is not needed (`already_linked`) |
+| S3 (self-review, a rule stated) | An agent deactivated while customers are assigned to them | the assignments stay recorded and do nothing: a deactivated agent cannot sign in (P4), and P8's rule (D1) is checked against the signed-in agent's own membership; the business reassigns the customers at will |

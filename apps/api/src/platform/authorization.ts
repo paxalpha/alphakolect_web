@@ -1,5 +1,5 @@
 import type { Authorization, EndpointContract, Permission } from '@alphakolect/contracts';
-import type { RequestHandler } from 'express';
+import type { Request, RequestHandler } from 'express';
 import type { Logger } from 'pino';
 import type { AuditLog } from '../modules/audit/audit-log.js';
 import { AppError } from './errors.js';
@@ -79,6 +79,11 @@ const REFUSAL_MESSAGE: Record<Permission, string> = {
   'merchant.ledger.read': ASK_THE_OWNER,
   'merchant.ledger.manage': ASK_THE_OWNER,
   'merchant.ledger.post': ASK_THE_OWNER,
+  // P7: customers (the owner's answers of 2026-10-25): three grantable, removing details the owner's alone (Q9)
+  'merchant.customers.read': ASK_THE_OWNER,
+  'merchant.customers.manage': ASK_THE_OWNER,
+  'merchant.customers.assign': ASK_THE_OWNER,
+  'merchant.customers.anonymise': OWNER_ONLY,
   'platform.merchants.read': ASK_A_SUPER_ADMIN,
   'platform.audit.read': ASK_A_SUPER_ADMIN,
   'platform.merchants.lifecycle': 'Only a platform super admin may change a merchant’s status',
@@ -98,9 +103,19 @@ export function authorizationResolutionFailure(logger: Pick<Logger, 'error'>, re
   );
 }
 
+/**
+ * The branch of the resource a `branch` endpoint addresses (P5 §7.6, P7-2), read before the decision: the resource's
+ * own branch from the database (null when it does not exist, or is another business's — either way "not found" for a
+ * restricted staff member), the requested branch for a creation, or the actor's own branch for a list, which the
+ * database narrows to it. The database decides again in every function.
+ */
+export type BranchResolver = (req: Request, auth: AuthContext) => Promise<{ branchId: string | null }>;
+
 export type AuthorizeDeps = {
   audit: Pick<AuditLog, 'recordBestEffort'>;
   logger: Pick<Logger, 'error'>;
+  /** One per `branch` endpoint, by operation id; the router refuses to mount a branch endpoint without its own. */
+  branchResolvers?: Readonly<Record<string, BranchResolver>>;
 };
 
 /** Mounted by the router on every `permission` endpoint, and only there (route parity). */
@@ -109,14 +124,21 @@ export function authorize(endpoint: EndpointContract, deps: AuthorizeDeps): Requ
   if (required.class !== 'permission') {
     throw new Error(`${endpoint.id}: authorize is mounted only on permission endpoints`);
   }
+  // A branch endpoint without its resolver fails closed on every request (500 and the resolution signal); the router
+  // refuses at startup a branch endpoint the API has no resolver for (routes.ts, BRANCH_RESOLVED_ENDPOINTS).
+  const resolve = deps.branchResolvers?.[endpoint.id];
   return async function authorizeRequest(req, _res, next) {
     let decision: Decision;
     let auth: AuthContext;
     try {
       if (!req.auth) throw new Error('a permission endpoint was reached without an authenticated session');
       auth = req.auth;
-      // Every P5 endpoint is merchant-wide; the router refuses a branch endpoint until its resource resolver exists.
-      decision = decide(auth, required);
+      // The permission first; only then, for a branch endpoint, the resource's branch (P7: customers).
+      decision = decide(auth, { ...required, branchScope: 'merchant_wide' });
+      if (decision.allowed && required.branchScope === 'branch') {
+        // Without a resolver, decide() refuses to guess: an error, so a 500 (fail closed).
+        decision = decide(auth, required, resolve ? await resolve(req, auth) : undefined);
+      }
     } catch (err) {
       authorizationResolutionFailure(deps.logger, req.id);
       next(err);

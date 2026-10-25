@@ -165,7 +165,8 @@ describe('audience-checked rotation (T12)', () => {
 
   it('the endpoint must say which audiences it serves', async () => {
     const b = await business();
-    for (const audiences of [null, [], ['customer'], ['agent', 'admin']]) {
+    // P7: 'customer' is an audience now; an unknown one is still refused.
+    for (const audiences of [null, [], ['shopper'], ['agent', 'admin']]) {
       await expectSqlState(rotate(b.agent.refresh, audiences), SQLSTATE.checkViolation);
     }
   });

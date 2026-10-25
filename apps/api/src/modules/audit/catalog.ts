@@ -179,6 +179,21 @@ export const AUDIT_CATALOG = [
   atomicA('ledger.entry_reversed', { entryId: uuid, reversalId: uuid }),
   atomicA('ledger.capital_debited', ledgerDebit),
   atomicA('ledger.income_debited', ledgerDebit),
+  // customers (P7): identifiers, statuses and field names only — never a customer's personal details (TA-14)
+  atomicA('customer.created', { branchId: uuid, agentMembershipId: nullableUuid, via: status16 }),
+  atomicA('customer.updated', {
+    fields: { type: 'string_list', maxItems: 6, max: 16 },
+    branchId: uuid,
+  }),
+  atomicA('customer.deactivated', {}),
+  atomicA('customer.reactivated', {}),
+  atomicA('customer.agent_assigned', {
+    agentMembershipId: nullableUuid,
+    previousAgentMembershipId: nullableUuid,
+  }),
+  atomicA('customer.app_invited', { delivery: status16 }),
+  atomicA('customer.app_access_accepted', { path: status16 }),
+  atomicA('customer.anonymised', {}),
   // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
   sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
   sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
@@ -255,6 +270,18 @@ export const AUDIT_CATALOG = [
   bestEffort('ledger.account_updated', 'denied', denial),
   bestEffort('ledger.manual_entry_posted', 'denied', denial),
   bestEffort('ledger.entry_reversed', 'denied', denial),
+  ...(
+    [
+      'customer.created',
+      'customer.updated',
+      'customer.deactivated',
+      'customer.reactivated',
+      'customer.agent_assigned',
+      'customer.app_invited',
+      'customer.anonymised',
+    ] as const
+  ).map((identifier) => bestEffort(identifier, 'denied', denial)),
+  bestEffort('customer.app_access_accepted', 'failure', { reason }),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

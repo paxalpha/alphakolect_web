@@ -17,6 +17,8 @@ const LIFETIMES: Readonly<Record<SessionAudience, SessionLifetime>> = {
   platform: { idleSeconds: 3600, absoluteSeconds: 43200 },
   merchant: { idleSeconds: 86400, absoluteSeconds: 1209600 },
   agent: { idleSeconds: 2592000, absoluteSeconds: 7776000 },
+  // P7: the customer's mobile app, as agents (identity.session_limits)
+  customer: { idleSeconds: 2592000, absoluteSeconds: 7776000 },
 };
 /** D8: the session of a platform identity that must enrol TOTP first. */
 const ENROLMENT_LIFETIME: SessionLifetime = { idleSeconds: 900, absoluteSeconds: 900 };
@@ -193,7 +195,7 @@ export class SessionService {
     challengeHash: string | null,
     selectionId: string,
     ctx: RequestContext,
-    audience: 'merchant' | 'agent' = 'merchant',
+    audience: 'merchant' | 'agent' | 'customer' = 'merchant',
   ): Promise<IssuedSession> {
     const { db, identity, audit } = this.deps;
     const request = { ip: ctx.ip, userAgent: ctx.userAgent, requestId: ctx.requestId };

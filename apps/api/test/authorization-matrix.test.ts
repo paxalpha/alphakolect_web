@@ -7,6 +7,8 @@ import { createTestApp, TEST_WEB_ORIGIN } from './support/app.js';
 import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 import { requiredQuery } from './support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
+import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from './support/customers.js';
+import { BRANCH_RESOLVED_ENDPOINTS } from '../src/platform/http/routes.js';
 
 // The authorization matrix (P5.9; P5 plan §10 P5.9, §13 exit criterion 2): every permission endpoint of the registry,
 // called by every kind of actor, the expected answer computed from the endpoint's declaration — its class, audience and
@@ -16,14 +18,15 @@ import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } f
 // archived branch, an agent, the super admin, platform staff with every grantable platform permission, platform staff
 // without any, and platform staff whose grants were revoked. A refusal changes nothing (the business's and the platform's
 // rows compared before and after); an allowed call passes both layers (the API policy and the database's own check).
-// Every merchant endpoint is merchant-wide in P5 (the router refuses a branch scope without a resolver, §7.6), so a
-// branch restriction — even to an archived branch — narrows none of them.
+// P5's merchant endpoints are merchant-wide: a branch restriction narrows none of them. P7's customer endpoints are
+// branch-scoped (§7.6): the restricted staff member reaches the world's branch, where its customer lives, and a
+// restriction to an archived branch reaches nothing ("not found").
 
 const { app, auth } = await createTestApp();
 const fx = tenancyFixtures(app, auth);
 const { owner } = fx;
 
-type Expected = 'allowed' | 'unauthenticated' | 'forbidden' | 'wrong_audience';
+type Expected = 'allowed' | 'unauthenticated' | 'forbidden' | 'wrong_audience' | 'not_found';
 type Caller = { kind: 'cookie' | 'bearer' | 'none'; token: string };
 type ActorName =
   | 'anonymous'
@@ -72,8 +75,11 @@ function expected(actor: ActorName, e: EndpointContract): Expected {
     if (actor === 'agent') return 'unauthenticated';
     if (platformSide.includes(actor)) return 'wrong_audience';
     if (actor === 'owner') return 'allowed';
-    if (['staff, granted', 'staff, branch-restricted', 'staff, archived branch'].includes(actor))
-      return GRANTABLE.has(permission) ? 'allowed' : 'forbidden';
+    if (['staff, granted', 'staff, branch-restricted', 'staff, archived branch'].includes(actor)) {
+      if (!GRANTABLE.has(permission)) return 'forbidden';
+      const branchScoped = (e.authorization as PermissionRequirement).branchScope === 'branch';
+      return actor === 'staff, archived branch' && branchScoped ? 'not_found' : 'allowed';
+    }
     return 'forbidden';
   }
   // platform
@@ -164,6 +170,7 @@ async function setUp() {
     support,
     invitationId: invited.body.invitationId as string,
     ledger: await ledgerResources(owner, b.merchantId),
+    customerId: await customerOf(owner, b.merchantId, b.branchId),
   };
 }
 
@@ -179,10 +186,12 @@ const PARAMS: Record<string, (w: World, allowed: boolean) => string> = {
   platformMembershipId: (w) => w.support.membershipId,
   accountId: (w) => w.ledger.accountId,
   entryId: (w) => w.ledger.entryId,
+  customerId: (w) => w.customerId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   ...ledgerBodies,
   postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
+  ...customerBodies,
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -235,7 +244,8 @@ const snapshot = async (merchantId: string, platformMembershipId: string) =>
                           OR pm.identity_id IN (SELECT id FROM identity.identities WHERE email LIKE 'matrix-staff-%')),
          'platformGrants', (SELECT json_agg(g.permission ORDER BY g.permission)
                               FROM identity.platform_membership_grants g WHERE g.platform_membership_id = $2),
-         ${LEDGER_SNAPSHOT_SQL}
+         ${LEDGER_SNAPSHOT_SQL},
+         ${CUSTOMERS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId, platformMembershipId],
     )
@@ -275,12 +285,14 @@ describe('the authorization matrix (P5.9): every permission endpoint, every acto
     expect(PERMISSION_ENDPOINTS.some(([, e]) => !GRANTABLE.has(permissionOf(e)))).toBe(true);
     for (const [, e] of PERMISSION_ENDPOINTS)
       for (const p of Object.keys(e.request?.params?.shape ?? {})) expect(PARAMS, p).toHaveProperty(p);
-    // Every merchant endpoint is merchant-wide: a branch restriction narrows none of them in P5 (§7.6).
+    // The branch-scoped endpoints are exactly those the API resolves a branch for (§7.6; P7: the customers').
     expect(
       PERMISSION_ENDPOINTS.filter(
-        ([, e]) => (e.authorization as PermissionRequirement).branchScope !== 'merchant_wide',
-      ),
-    ).toEqual([]);
+        ([, e]) => (e.authorization as PermissionRequirement).branchScope === 'branch',
+      )
+        .map(([id]) => id)
+        .sort(),
+    ).toEqual([...BRANCH_RESOLVED_ENDPOINTS].sort());
   });
 
   it.each(CASES)('%s as %s', async (id, actor, e) => {
@@ -298,6 +310,10 @@ describe('the authorization matrix (P5.9): every permission endpoint, every acto
     if (want === 'forbidden') {
       expect(res.status, detail).toBe(403);
       expect(res.body.error.code, detail).toBe('FORBIDDEN');
+    }
+    if (want === 'not_found') {
+      expect(res.status, detail).toBe(404);
+      expect(res.body.error.code, detail).toBe('NOT_FOUND');
     }
     if (want === 'wrong_audience') {
       expect(res.status, detail).toBe(403);

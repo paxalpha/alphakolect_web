@@ -35,6 +35,16 @@ const APPROVED: Record<string, string> = {
     'See the accounts and their balances, account statements, journal entries and the financial reports.',
   'merchant.ledger.manage': "Add the business's own accounts to its chart of accounts.",
   'merchant.ledger.post': 'Post manual journal entries, and reverse them.',
+  // P7: the customers' permissions — approved by the owner as written on 2026-10-25
+  // (docs/business/P7_OWNER_CUSTOMER_PERMISSIONS.md)
+  'merchant.customers.read':
+    "See the business's customers, with their phone number, email, address and agent.",
+  'merchant.customers.manage':
+    'Add customers, change their details or branch, deactivate or reactivate them, and send them the link to the mobile app.',
+  'merchant.customers.assign':
+    'Give a customer to an agent, move them to another agent, or take them off their agent.',
+  'merchant.customers.anonymise':
+    "Remove a customer's personal details at their request, once they have nothing left with the business. Owner only.",
 };
 
 describe('the merchant permission descriptions (O13)', () => {

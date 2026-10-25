@@ -473,7 +473,13 @@ describe('a business’s own account: renamed, archived, restored (§3.1, BR-9.1
 describe('a control account’s statement and a template entry’s version (§3.5, §4)', () => {
   it('covers its sub-accounts; an entry posted by a template shows its version', async () => {
     const bk = await books();
-    const customer = '01900000-0000-7000-8000-0000000c0001';
+    const customer = (
+      await owner.query(
+        `INSERT INTO customers.customers (merchant_id, branch_id, full_name, phone)
+         VALUES ($1, $2, 'Statement customer', '+2348000000001') RETURNING id`,
+        [bk.b.merchantId, bk.b.branchId],
+      )
+    ).rows[0].id as string;
     const { rows } = await owner.query(
       `SELECT s.account_id FROM ledger.ledgers l, ledger.open_subaccount(l.id, '2100', 'customer', $2) s
         WHERE l.merchant_id = $1`,

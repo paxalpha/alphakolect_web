@@ -65,6 +65,26 @@ const EXPECTED: Record<string, Grantee[]> = {
   'audit.request_purge_report(text)': OWNER_ONLY,
   'audit.reserve_purge_run(timestamp with time zone)': OWNER_ONLY,
   'audit.validate_event()': OWNER_ONLY,
+  // customers (P7): the commands and reads the app calls, each deciding authority inside; the onboarding core, the
+  // phone normalisation and P8's current-agent lookup are called only by definer functions
+  'customers.accept_app_invitation(text, uuid, text, text, text, text)': APP,
+  'customers.agent_create_customer(uuid, uuid, text, text, text, text, text, text, text, text)': APP,
+  'customers.agent_customers(uuid, uuid, text, integer, timestamp with time zone, uuid)': APP,
+  'customers.anonymise_customer(uuid, uuid, text, text, text)': APP,
+  'customers.assign_agent(uuid, uuid, uuid, text, text, text)': APP,
+  'customers.branch_of(uuid, uuid)': APP,
+  'customers.create_customer(uuid, uuid, text, text, text, text, text, uuid, text, text, text)': APP,
+  'customers.current_agent(uuid, uuid)': OWNER_ONLY,
+  'customers.customer_result(text, uuid)': OWNER_ONLY,
+  'customers.insert_customer_locked(uuid, uuid, text, text, text, text, text, uuid, uuid, uuid, text, text, text, text)':
+    OWNER_ONLY,
+  'customers.issue_app_invitation(uuid, uuid, text, integer, text, text, text)': APP,
+  'customers.list_assignments(uuid, uuid)': APP,
+  'customers.list_customers(uuid, uuid, text, uuid, text, integer, timestamp with time zone, uuid)': APP,
+  'customers.normalise_phone(text)': OWNER_ONLY,
+  'customers.read_self(uuid)': APP,
+  'customers.set_customer_status(uuid, uuid, text, text, text, text)': APP,
+  'customers.update_customer(uuid, uuid, jsonb, text, text, text)': APP,
   // identity — request paths (P3/P4)
   'identity.accept_totp_step(uuid, bigint)': APP,
   'identity.account_for_email(text)': APP,

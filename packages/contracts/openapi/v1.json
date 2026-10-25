@@ -5514,6 +5514,1512 @@
           }
         }
       }
+    },
+    "/v1/merchant/customers": {
+      "get": {
+        "operationId": "listCustomers",
+        "summary": "The business’s customers (a branch-restricted staff member’s branch only), searchable, a page at a time",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "branchId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "$ref": "#/components/schemas/CustomerStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of customers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createCustomer",
+        "summary": "Add a customer, with their agent if any (their ledger accounts open with them)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — the branch is not one you can reach",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PHONE_TAKEN — another customer of the business has this phone number",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_BRANCH — not an active branch of yours; INVALID_AGENT — not an active agent of the business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}": {
+      "get": {
+        "operationId": "getCustomer",
+        "summary": "One customer",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "operationId": "updateCustomer",
+        "summary": "Change a customer’s details or branch",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PHONE_TAKEN; INVALID_LIFECYCLE_TRANSITION — the customer’s details were removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_BRANCH — not an active branch of yours",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/deactivate": {
+      "post": {
+        "operationId": "deactivateCustomer",
+        "summary": "Deactivate a customer: no sign-in, nothing new recorded; every record stays",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already so, or the customer’s details were removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/reactivate": {
+      "post": {
+        "operationId": "reactivateCustomer",
+        "summary": "Reactivate a deactivated customer",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already so, or the customer’s details were removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/agent": {
+      "put": {
+        "operationId": "assignCustomerAgent",
+        "summary": "Give a customer to an agent, move them, or take them off their agent (every move recorded)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.assign",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignAgentRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.assign",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_AGENT — not an active agent of the business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/assignments": {
+      "get": {
+        "operationId": "listCustomerAssignments",
+        "summary": "Every agent the customer has had",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The history, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerAssignmentList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/app-invitation": {
+      "post": {
+        "operationId": "inviteCustomerToApp",
+        "summary": "Email the customer the link to the mobile app (a new link replaces an unused one)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Sent — the answer is the same whatever the email address belongs to"
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "NO_EMAIL — the customer has no email address; ALREADY_LINKED — the customer already signs in; EMAIL_IN_USE — another customer signs in with this email; INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/anonymisation": {
+      "post": {
+        "operationId": "anonymiseCustomer",
+        "summary": "Remove a customer’s personal details at their request, once nothing is left with the business (BR-11.3; cannot be undone; the owner only)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.customers.anonymise",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer, without their details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Customer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.customers.anonymise",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "BALANCE_NOT_ZERO — the customer still has savings or a loan with the business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agent/customers": {
+      "get": {
+        "operationId": "listAgentCustomers",
+        "summary": "The signed-in agent’s own customers",
+        "tags": [
+          "agent"
+        ],
+        "x-audience": "agent",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of the agent’s customers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCustomerList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgentCustomer",
+        "summary": "Add a customer in the field; the customer is the agent’s",
+        "tags": [
+          "agent"
+        ],
+        "x-audience": "agent",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCreateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCustomer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "PHONE_TAKEN — another customer of the business has this phone number",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_BRANCH — not an active branch of the business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/customer/login": {
+      "post": {
+        "operationId": "customerLogin",
+        "summary": "Customer sign-in (mobile): tokens in the body, or the businesses to choose from",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "x-authorization": {
+          "class": "capability",
+          "capability": "credentials"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerLoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in, or a choice is needed",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "Tokens are never cached",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "Tokens are never cached"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerLoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_CREDENTIALS — identical for every reason, including \"not a customer\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "EMAIL_VERIFICATION_REQUIRED — only after correct credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/customer/login/select": {
+      "post": {
+        "operationId": "customerSelectMembership",
+        "summary": "Finish customer sign-in by choosing a business (the selection token is used up either way)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "x-authorization": {
+          "class": "capability",
+          "capability": "selection_challenge"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerSelectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "Tokens are never cached",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "Tokens are never cached"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerTokens"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the same for every reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/customer/refresh": {
+      "post": {
+        "operationId": "customerRefresh",
+        "summary": "Rotate a customer refresh token: new tokens; the old one is spent (reuse ends the session)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "x-authorization": {
+          "class": "capability",
+          "capability": "refresh_token"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomerRefreshRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "New tokens",
+            "headers": {
+              "Cache-Control": {
+                "required": true,
+                "description": "Tokens are never cached",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store",
+                  "description": "Tokens are never cached"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerTokens"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "INVALID_OR_EXPIRED_TOKEN — the same for every reason (also for another audience’s token)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/auth/customer/invitation/accept": {
+      "post": {
+        "operationId": "acceptCustomerInvitation",
+        "summary": "Accept a business’s app link: a new person sets their password; an existing account confirms with its own (then sign in)",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "x-authorization": {
+          "class": "capability",
+          "capability": "invitation_token"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptCustomerInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted: the customer can sign in from now on"
+          },
+          "400": {
+            "description": "INVALID_INVITATION — the same for every reason; or VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "WEAK_PASSWORD — a new password that is too short or too common",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customer/me": {
+      "get": {
+        "operationId": "getCustomerSelf",
+        "summary": "The signed-in customer’s own record and business, as of this request",
+        "tags": [
+          "customer"
+        ],
+        "x-audience": "customer",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerSelf"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -6103,6 +7609,196 @@
           }
         }
       },
+      "CustomerStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "deactivated",
+          "anonymised"
+        ]
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "properties": {
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "fullName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 24,
+            "description": "A phone number; 0XXXXXXXXXX is read as a Nigerian number (+234)",
+            "example": "0803 123 4567"
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "address": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "nickname": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "agentMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "branchId",
+          "fullName",
+          "phone"
+        ]
+      },
+      "UpdateCustomerRequest": {
+        "type": "object",
+        "properties": {
+          "fullName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 24,
+            "description": "A phone number; 0XXXXXXXXXX is read as a Nigerian number (+234)",
+            "example": "0803 123 4567"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Email"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "address": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nickname": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        }
+      },
+      "AssignAgentRequest": {
+        "type": "object",
+        "properties": {
+          "agentMembershipId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "agentMembershipId"
+        ]
+      },
+      "AgentCreateCustomerRequest": {
+        "type": "object",
+        "properties": {
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "fullName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "phone": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 24,
+            "description": "A phone number; 0XXXXXXXXXX is read as a Nigerian number (+234)",
+            "example": "0803 123 4567"
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "address": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "nickname": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        "required": [
+          "branchId",
+          "fullName",
+          "phone"
+        ],
+        "description": "A customer an agent adds is the agent’s"
+      },
+      "CustomerLoginRequest": {
+        "$ref": "#/components/schemas/AgentLoginRequest"
+      },
+      "CustomerSelectRequest": {
+        "$ref": "#/components/schemas/AgentSelectRequest"
+      },
+      "CustomerRefreshRequest": {
+        "$ref": "#/components/schemas/AgentRefreshRequest"
+      },
+      "AcceptCustomerInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "email": {
+            "$ref": "#/components/schemas/Email"
+          },
+          "password": {
+            "$ref": "#/components/schemas/NewPassword"
+          }
+        },
+        "required": [
+          "token",
+          "email",
+          "password"
+        ]
+      },
       "Currency": {
         "type": "string",
         "const": "NGN",
@@ -6263,7 +7959,8 @@
         "enum": [
           "platform",
           "merchant",
-          "agent"
+          "agent",
+          "customer"
         ]
       },
       "CurrentSession": {
@@ -8136,6 +9833,349 @@
         ],
         "additionalProperties": false,
         "description": "Income and expenses in a period, both days included"
+      },
+      "CustomerList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Customer"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nickname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CustomerStatus"
+          },
+          "agentMembershipId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "appAccess": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deactivatedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "anonymisedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "customerId",
+          "branchId",
+          "fullName",
+          "phone",
+          "email",
+          "address",
+          "nickname",
+          "status",
+          "agentMembershipId",
+          "appAccess",
+          "createdAt",
+          "updatedAt",
+          "deactivatedAt",
+          "anonymisedAt"
+        ],
+        "additionalProperties": false,
+        "description": "One of the business’s customers"
+      },
+      "CustomerAssignmentList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerAssignment"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "description": "Every agent the customer has had, newest first"
+      },
+      "CustomerAssignment": {
+        "type": "object",
+        "properties": {
+          "assignmentId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "agentMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "assignedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "endedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "assignedByMembershipId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "endedByMembershipId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "assignmentId",
+          "agentMembershipId",
+          "assignedAt",
+          "endedAt",
+          "assignedByMembershipId",
+          "endedByMembershipId"
+        ],
+        "additionalProperties": false
+      },
+      "AgentCustomerList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentCustomer"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "The agent’s customers now, oldest first"
+      },
+      "AgentCustomer": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nickname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/CustomerStatus"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "customerId",
+          "branchId",
+          "fullName",
+          "phone",
+          "email",
+          "address",
+          "nickname",
+          "status",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "One of the agent’s own customers"
+      },
+      "CustomerLoginResponse": {
+        "$ref": "#/components/schemas/AgentLoginResponse"
+      },
+      "CustomerTokens": {
+        "description": "A signed-in customer session",
+        "$ref": "#/components/schemas/AgentTokens"
+      },
+      "CustomerSelf": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "merchant": {
+            "type": "object",
+            "properties": {
+              "merchantId": {
+                "$ref": "#/components/schemas/Id"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "merchantId",
+              "name"
+            ],
+            "additionalProperties": false
+          },
+          "branchId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "fullName": {
+            "type": "string"
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nickname": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "customerId",
+          "merchant",
+          "branchId",
+          "fullName",
+          "phone",
+          "email",
+          "address",
+          "nickname"
+        ],
+        "additionalProperties": false,
+        "description": "The signed-in customer’s own record and business"
       },
       "Money": {
         "type": "object",

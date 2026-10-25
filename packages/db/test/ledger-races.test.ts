@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { connectAs } from './support/db.js';
@@ -115,6 +115,26 @@ const account = async (ledgerId: string, code: string) =>
       [ledgerId, code],
     )
   ).rows[0].id as string;
+/** A customer of the business (P7: a customer sub-account is opened only for one). */
+async function newCustomer(merchantId: string) {
+  const branch = (
+    await owner.query(`INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+      merchantId,
+      `Branch ${randomBytes(4).toString('hex')}`,
+    ])
+  ).rows[0].id as string;
+  return (
+    await owner.query(
+      `INSERT INTO customers.customers (merchant_id, branch_id, full_name, phone) VALUES ($1, $2, 'Race', $3)
+       RETURNING id`,
+      [
+        merchantId,
+        branch,
+        `+234${String(randomBytes(5).readUIntBE(0, 5) % 10_000_000_000).padStart(10, '0')}`,
+      ],
+    )
+  ).rows[0].id as string;
+}
 const lines = (debit: string, credit: string, amount: string) =>
   JSON.stringify([
     { accountId: debit, side: 'debit', amountMinor: amount },
@@ -162,7 +182,7 @@ describe('the ledger’s races, staged (P6 §6)', () => {
   it(`TA-5: two concurrent openings of one customer’s sub-account — one account (${RUNS} runs)`, async () => {
     const b = await business();
     for (let i = 0; i < RUNS; i++) {
-      const customer = randomUUID();
+      const customer = await newCustomer(b.merchantId);
       const open = async (c: pg.Client) =>
         (
           await c.query(`SELECT * FROM ledger.open_subaccount($1, '2100', 'customer', $2)`, [
@@ -195,7 +215,7 @@ describe('the ledger’s races, staged (P6 §6)', () => {
       const savings = (
         await owner.query(`SELECT * FROM ledger.open_subaccount($1, '2100', 'customer', $2)`, [
           b.ledgerId,
-          randomUUID(),
+          await newCustomer(b.merchantId),
         ])
       ).rows[0].account_id as string;
       await postOn(owner, b.ledgerId, lines(office, capital, '100'));

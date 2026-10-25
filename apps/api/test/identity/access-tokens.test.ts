@@ -94,7 +94,8 @@ describe('forgeries and misuse verify to null', () => {
   it.each([
     ['expired', { exp: nowSec() - 10, iat: nowSec() - 1000 }],
     ['a foreign issuer', { iss: 'someone-else' }],
-    ['an unknown audience', { aud: 'customer' }],
+    // P7: 'customer' is an audience now; an unknown one is still refused.
+    ['an unknown audience', { aud: 'shopper' }],
     ['no session id', { sid: undefined }],
     ['no membership id', { mid: undefined }],
   ])('%s', async (_label, overrides) => {

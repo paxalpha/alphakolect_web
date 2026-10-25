@@ -127,6 +127,32 @@ const subaccount = async (ledgerId: string, code: string, type: string, subjectI
   return r as { outcome: string; account_id: string };
 };
 
+/** A customer of the business (P7: a customer sub-account is opened only for one), in a branch of its own. */
+const customerBranches = new Map<string, string>();
+async function newCustomer(b: { merchantId: string }) {
+  let branch = customerBranches.get(b.merchantId);
+  if (!branch) {
+    branch = (
+      await one(`INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, $2) RETURNING id`, [
+        b.merchantId,
+        unique('Branch'),
+      ])
+    ).id as string;
+    customerBranches.set(b.merchantId, branch);
+  }
+  return (
+    await one(
+      `INSERT INTO customers.customers (merchant_id, branch_id, full_name, phone) VALUES ($1, $2, 'Test customer', $3)
+       RETURNING id`,
+      [
+        b.merchantId,
+        branch,
+        `+234${String(randomBytes(5).readUIntBE(0, 5) % 10_000_000_000).padStart(10, '0')}`,
+      ],
+    )
+  ).id as string;
+}
+
 type Line = { accountId: string; side: 'debit' | 'credit'; amountMinor: string };
 const post = async (
   ledgerId: string,
@@ -250,7 +276,7 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
 describe('sub-accounts (TA-5)', () => {
   it('a customer sub-account opens once: a second opening returns the same account', async () => {
     const b = await business();
-    const customer = randomUUID();
+    const customer = await newCustomer(b);
     const first = await subaccount(b.ledgerId, '2100', 'customer', customer);
     const second = await subaccount(b.ledgerId, '2100', 'customer', customer);
     expect(first.outcome).toBe('ok');
@@ -275,6 +301,8 @@ describe('sub-accounts (TA-5)', () => {
       'not_a_control_account',
     );
     expect((await subaccount(b.ledgerId, '1210', 'agent', randomUUID())).outcome).toBe('unknown_subject');
+    // P7 (closes P6-11): a customer subject is a customer of the business.
+    expect((await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).outcome).toBe('unknown_subject');
     const agent = await member(b, 'agent');
     expect((await subaccount(b.ledgerId, '1210', 'agent', agent.membershipId)).outcome).toBe('ok');
   });
@@ -300,7 +328,7 @@ describe('the posting function (TA-3)', () => {
     b = await business();
     cash = await account(b.ledgerId, '1000');
     capital = await account(b.ledgerId, '3000');
-    savings = (await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).account_id;
+    savings = (await subaccount(b.ledgerId, '2100', 'customer', await newCustomer(b))).account_id;
   });
 
   it('posts a balanced entry and moves each projection in its normal direction', async () => {
@@ -643,7 +671,7 @@ describe('reversal (TA-4, BR-11.1)', () => {
   });
 
   it('a reversal that would take a non-negative account below zero is refused', async () => {
-    const savings = (await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).account_id;
+    const savings = (await subaccount(b.ledgerId, '2100', 'customer', await newCustomer(b))).account_id;
     const office = await account(b.ledgerId, '1200');
     const deposit = await post(b.ledgerId, [
       { accountId: office, side: 'debit', amountMinor: '400' },
@@ -675,7 +703,7 @@ describe('every posting template (§4) balances and moves the accounts it names'
   it('each merchant template', async () => {
     const b = await business();
     const agent = await member(b, 'agent');
-    const subjects = { customer: randomUUID(), agent: agent.membershipId };
+    const subjects = { customer: await newCustomer(b), agent: agent.membershipId };
     const templates = (
       await owner.query(
         `SELECT code, lines FROM ledger.posting_templates WHERE ledger_kind = 'merchant' AND status = 'active' ORDER BY code`,
@@ -785,7 +813,7 @@ describe('the properties (§6): many random runs of postings and reversals', () 
       state = (state * 1103515245 + 12345) & 0x7fffffff;
       return state % n;
     };
-    const customers = [randomUUID(), randomUUID(), randomUUID()];
+    const customers = [await newCustomer(b), await newCustomer(b), await newCustomer(b)];
     for (const c of customers)
       for (const code of ['1300', '2100', '2110', '2120']) await subaccount(b.ledgerId, code, 'customer', c);
     await subaccount(b.ledgerId, '1210', 'agent', agent.membershipId);
@@ -1166,7 +1194,7 @@ describe('the session commands (§5; P6-3)', () => {
     const k = key();
     const fp = hash();
     await claim(b.session, 'ledger.manual_entry', k, fp);
-    const savings = (await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).account_id;
+    const savings = (await subaccount(b.ledgerId, '2100', 'customer', await newCustomer(b))).account_id;
     const r = await manual(b.session, k, fp, [
       { accountId: savings, side: 'debit', amountMinor: '1' },
       { accountId: await account(b.ledgerId, '1200'), side: 'credit', amountMinor: '1' },
@@ -1319,8 +1347,8 @@ describe('the reads (§3.5): the business from the session', () => {
   let entryId: string;
   beforeAll(async () => {
     b = await business();
-    const c1 = (await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).account_id;
-    const c2 = (await subaccount(b.ledgerId, '2100', 'customer', randomUUID())).account_id;
+    const c1 = (await subaccount(b.ledgerId, '2100', 'customer', await newCustomer(b))).account_id;
+    const c2 = (await subaccount(b.ledgerId, '2100', 'customer', await newCustomer(b))).account_id;
     customerSavings = c1;
     const office = await account(b.ledgerId, '1200');
     const day = (n: number) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);

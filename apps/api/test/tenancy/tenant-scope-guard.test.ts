@@ -5,6 +5,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { tenancyRepository } from '../../src/modules/tenancy/repository.js';
 import { ledgerRepository } from '../../src/modules/ledger/repository.js';
+import { customersRepository } from '../../src/modules/customers/repository.js';
 
 // ADR-15 T14 — no unscoped repository for tenant data — checked against the source. The tenant tables are read from
 // the migrated database (every table under row-level security), so a new tenant table is covered without editing
@@ -18,6 +19,7 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../sr
 const SCOPED_REPOSITORIES: Record<string, object> = {
   'modules/tenancy/repository.ts': tenancyRepository,
   'modules/ledger/repository.ts': ledgerRepository, // P6
+  'modules/customers/repository.ts': customersRepository, // P7
 };
 /** Writes tenant audit events inside a transaction that sets that event's tenant (AuditLog). */
 const TENANT_SELF_SCOPING = ['modules/audit/audit-log.ts'];

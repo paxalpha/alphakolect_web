@@ -12,14 +12,16 @@ export const Email = z.email().max(254).meta({ id: 'Email', example: 'owner@exam
 /** Audiences that sign in on the web in P3 (D3). Agents and customers (bearer) arrive later. */
 export const WebAudience = z.enum(['platform', 'merchant']).meta({ id: 'WebAudience' });
 
-export const SessionAudience = z.enum(['platform', 'merchant', 'agent']).meta({ id: 'SessionAudience' });
+export const SessionAudience = z
+  .enum(['platform', 'merchant', 'agent', 'customer'])
+  .meta({ id: 'SessionAudience' });
 
 export const Session = z
   .object({
     identityId: Id,
     audience: SessionAudience,
     membershipId: Id,
-    /** The tenant of a merchant or agent session; null for platform sessions. */
+    /** The tenant of a merchant, agent or customer session; null for platform sessions. */
     merchantId: Id.nullable(),
     /** 'mfa_enrollment': a platform identity that must set up TOTP before anything else (D8). */
     scope: z.enum(['full', 'mfa_enrollment']),

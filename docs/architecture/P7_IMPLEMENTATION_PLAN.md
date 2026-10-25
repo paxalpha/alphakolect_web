@@ -1,9 +1,11 @@
 # P7 implementation plan — customers
 
-**Status: revision 1 (2026-10-25) — planned; the owner's answers asked.** Planned in one pass, to be built in one pass, as
-P6 was. Decisions that would go to the project lead take the recommended option (his standing instruction) and are
-recorded in §8. The owner's decisions are asked in `docs/business/P7_OWNER_CUSTOMERS.md`; until they arrive, the plan
-follows that form's suggested answers. The gate review is the independent reviewer's.
+**Status: revision 2 (2026-10-25) — mapped; building.** Planned in one pass and built in one pass, as P6 was, at the
+project lead's request ("execute P7 in one go after mapping everything out"). Decisions that would go to the project lead
+take the recommended option (his standing instruction) and are recorded in §7. **The owner answered** every question of
+`docs/business/P7_OWNER_CUSTOMERS.md` on 2026-10-25 with the suggested option; the plan follows those answers. He approved
+the four new permissions' wording the same day (`docs/business/P7_OWNER_CUSTOMER_PERMISSIONS.md`). §9 is the build map: every table, function, endpoint and guard P7 adds or changes. The gate review is the
+independent reviewer's.
 
 | | |
 |---|---|
@@ -120,8 +122,70 @@ email; customer KYC (OPEN-13).
 | P7-4 | Customer sign-in | email and password via the business's invitation (until the owner answers Q7 otherwise) |
 | P7-5 | Gate | one review of P7 by the independent reviewer at the end |
 
+| P7-6 | Agents' customer endpoints | class `self` (ADR-16 A4: agents hold no merchant permission, "self only until P7/P8"): an agent reaches only the customers assigned to them, decided in the database |
+| P7-7 | Customer sessions | a session of the customer audience names the customer record (`identity.sessions.customer_id`), not a team membership: customers stay out of the team's lists, roles, billing counts and ownership rules |
+| P7-8 | Ending a customer's access | a deactivated or anonymised customer's sessions fail validation at once (the session check requires an active customer); they are not revoked row by row, which keeps the lock order simple |
+| P7-9 | The app invitation | a table of its own (`customers.app_invitations`), accepted at its own capability endpoint: a new person sets a password with the link; an existing account confirms with its password (T11). The staff invitation flow is untouched |
+| P7-10 | Phone numbers | stored normalised: spaces, dashes and brackets removed; a Nigerian number written 0XXXXXXXXXX stored as +234XXXXXXXXXX; unique per business among customers not anonymised |
+| P7-11 | Lock order | the customer tables are category 16, after the ledger: anonymisation holds the customer's sub-account balances (14) before the customer (16), so no posting can change them meanwhile; P8's postings for a customer take the same order |
+
 ## 8. Revision log
 
 | Rev | Date | Change |
 |---|---|---|
+| 2 | 2026-10-25 | The owner's answers recorded (all suggested) and the permissions' wording approved; decisions P7-6 to P7-11; §9, the build map |
 | 1 | 2026-10-25 | First plan; the owner's questions asked |
+
+## 9. The build map
+
+### 9.1 Database
+
+**Migration 1 — `customers_core`:**
+
+- `customers.customers` (tenant table: RLS, an app policy, no app privilege — B1): `id`, `merchant_id`, `branch_id`
+  (composite FK to `tenancy.branches`), `full_name`, `phone`, `email`, `address`, `nickname`, `status` (active /
+  deactivated / anonymised), `identity_id` (the app sign-in; one customer record per person per business),
+  `created_by_membership_id`, `created_at`, `updated_at`, `deactivated_at`, `anonymised_at`. CHECKs: the name trimmed,
+  1–120; phone normalised (P7-10); email lower-case; an anonymised row has no phone, email, address, nickname or
+  identity and the placeholder name. Unique `(merchant_id, phone)` among rows not anonymised; unique
+  `(merchant_id, identity_id)`.
+- `customers.assignments`: `id`, `merchant_id`, `customer_id`, `agent_membership_id` (composite FKs), `assigned_at`,
+  `ended_at`, `assigned_by_membership_id`, `ended_by_membership_id`; one open row per customer (partial unique).
+- `customers.app_invitations`: `id`, `merchant_id`, `customer_id`, `identity_id`, `token_hash` (unique), `expires_at`,
+  `accepted_at`, `revoked_at`, `created_at`; one open invitation per customer.
+- The customer audience (P7-7): `identity.sessions.customer_id` (FK); the audience CHECKs of sessions, selection
+  challenges and the activity record admit `customer`; `identity.active_membership`, `eligible_memberships`,
+  `login_candidate`, `session_limits` (as agents: 30 days idle, 90 absolute), `create_session`, `validate_session`
+  (the customer's business and branch; kind `customer`) and `rotate_refresh_token` learn the customer audience.
+  `identity.permissions_of` gives a customer session no permission.
+- `ledger.open_subaccount`: a customer subject must be an active customer of the business (closes P6-11).
+- Lock categories (P7-11): `customers.customers`, `customers.assignments`, `customers.app_invitations` → 16.
+
+**Migration 2 — `customers_functions`:** the definer functions below, the four permissions with their descriptions,
+and the activity events.
+
+| Function | Who (decided inside) | What |
+|---|---|---|
+| `customers.create_customer(session, branch, name, phone, email, address, nickname, agent, …)` | `merchant.customers.manage` within the actor's branch; or an agent (assigned to themselves) | inserts the customer (phone contested), the assignment if any, opens the four sub-accounts; `customer.created` |
+| `customers.update_customer(session, customer, fields…)` | `merchant.customers.manage`, branch-scoped | details and branch; `customer.updated` (the fields changed, by name only) |
+| `customers.set_customer_status(session, customer, status)` | `merchant.customers.manage`, branch-scoped | deactivate / reactivate; `customer.deactivated` / `customer.reactivated` |
+| `customers.assign_agent(session, customer, agent or null)` | `merchant.customers.assign`, branch-scoped | ends the open assignment, opens the new one; the agent active, of the business, in the customer's branch when restricted; `customer.agent_assigned` |
+| `customers.issue_app_invitation(session, customer, token hash, ttl)` | `merchant.customers.manage`, branch-scoped | the customer active with an email and no sign-in yet; finds or creates the identity (passwordless); replaces an open invitation; `customer.app_invited` (delivery: setup / accept) |
+| `customers.app_invitation_identity(token hash)` · `customers.accept_app_invitation(token hash, identity, new password hash, …)` | the link (and, for an existing account, its password, checked by the API) | links the identity to the customer; sets the password and verifies the email for a new person; `customer.app_access_accepted` |
+| `customers.anonymise_customer(session, customer, …)` | `merchant.customers.anonymise` (owner only) | refused while any sub-account has a balance; clears the personal details, the sign-in and the open assignment and invitation; `customer.anonymised` |
+| reads: `customers.list_customers` (search, page, branch-scoped), `read_customer`, `list_assignments`, `agent_customers` (the agent's own), `read_self` (the customer's own), `current_agent` (for P8) | `merchant.customers.read` / the agent / the customer | B1 and R19: the business from the session |
+
+### 9.2 Contracts and API
+
+- Contracts: `endpoints/customers.ts` (merchant), agent customer endpoints, `endpoints/customer.ts` (the customer
+  audience: login, selection, refresh, `me`, invitation acceptance); permissions; `branchScope: 'branch'` on the
+  merchant customer endpoints.
+- API: the `customers` module (repository, service, routes; module boundaries: audit, identity, tenancy); the customer
+  audience in sessions, access tokens and authentication (bearer, D7); the branch-scope resolver (§7.6): the customer's
+  branch from the database before the policy decision, the database deciding again; the invitation emails; rate
+  limits on sign-in and acceptance; the catalog mirror and refusal wording.
+- Guards: lock order (category 16, every function classified and footprinted), grants inventory, R19, RLS and
+  tenant-schema lists, the TA-14 catalog guard, the transaction classes, the writer and coverage guards, the
+  authorization matrix (the customer actor, branch-restricted staff now narrowed), the isolation matrix (the customer
+  audience), the frozen route map.
+

@@ -4,6 +4,25 @@
 import { agentLogin, agentRefresh, agentSelectMembership, getAgentMembership } from './endpoints/agent.js';
 import { listMerchantAuditEvents, listPlatformAuditEvents } from './endpoints/audit.js';
 import {
+  acceptCustomerInvitation,
+  anonymiseCustomer,
+  assignCustomerAgent,
+  createAgentCustomer,
+  createCustomer,
+  customerLogin,
+  customerRefresh,
+  customerSelectMembership,
+  deactivateCustomer,
+  getCustomer,
+  getCustomerSelf,
+  inviteCustomerToApp,
+  listAgentCustomers,
+  listCustomerAssignments,
+  listCustomers,
+  reactivateCustomer,
+  updateCustomer,
+} from './endpoints/customers.js';
+import {
   acceptInvitation,
   beginTotpEnrollment,
   changePassword,
@@ -80,6 +99,7 @@ export * from './endpoints/platform.js';
 export * from './endpoints/platform-team.js';
 export * from './endpoints/audit.js';
 export * from './endpoints/ledger.js';
+export * from './endpoints/customers.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
 /** Every endpoint of the v1 API, keyed by operation id. Add new endpoints here. */
@@ -149,6 +169,23 @@ export const endpoints = {
   getTrialBalance,
   getBalanceSheet,
   getProfitAndLoss,
+  listCustomers,
+  createCustomer,
+  getCustomer,
+  updateCustomer,
+  deactivateCustomer,
+  reactivateCustomer,
+  assignCustomerAgent,
+  listCustomerAssignments,
+  inviteCustomerToApp,
+  anonymiseCustomer,
+  listAgentCustomers,
+  createAgentCustomer,
+  customerLogin,
+  customerSelectMembership,
+  customerRefresh,
+  acceptCustomerInvitation,
+  getCustomerSelf,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

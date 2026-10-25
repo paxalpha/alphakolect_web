@@ -48,8 +48,9 @@ describe('login membership choices are exposed by one operation only (ADR-15 T4)
     expect(spec.components.schemas.MembershipChoice).toBeDefined();
   });
 
-  // P4.7: agents get their choices in the body of the agent login response — also only after the password check.
-  it('only agentLogin can return AgentMembershipChoice', () => {
+  // P4.7: agents get their choices in the body of the agent login response — also only after the password check. P7:
+  // customers who save with several businesses get theirs the same way, in the customer login response.
+  it('only the agent and customer logins can return AgentMembershipChoice', () => {
     const exposing: string[] = [];
     for (const methods of Object.values(spec.paths)) {
       for (const op of Object.values(methods)) {
@@ -58,6 +59,6 @@ describe('login membership choices are exposed by one operation only (ADR-15 T4)
       }
     }
     expect(spec.components.schemas.AgentMembershipChoice).toBeDefined();
-    expect(exposing).toEqual(['agentLogin']);
+    expect(exposing.sort()).toEqual(['agentLogin', 'customerLogin']);
   });
 });

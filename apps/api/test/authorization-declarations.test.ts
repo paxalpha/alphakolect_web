@@ -79,6 +79,7 @@ const FROZEN: Record<string, unknown> = {
   // P6: the books (plan §5; the owner's answers: all three grantable)
   listLedgerAccounts: perm('merchant.ledger.read'),
   createLedgerAccount: perm('merchant.ledger.manage'),
+  updateLedgerAccount: perm('merchant.ledger.manage'),
   getAccountStatement: perm('merchant.ledger.read'),
   getJournalEntry: perm('merchant.ledger.read'),
   postJournalEntry: perm('merchant.ledger.post'),
@@ -89,11 +90,11 @@ const FROZEN: Record<string, unknown> = {
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 64 operations, one class each', () => {
+  it('declare exactly the frozen route map: 65 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(64);
+    expect(Object.keys(declared)).toHaveLength(65);
     expect(declared).toEqual(FROZEN);
   });
 

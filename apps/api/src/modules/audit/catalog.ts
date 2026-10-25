@@ -169,6 +169,7 @@ export const AUDIT_CATALOG = [
   }),
   // the ledger (P6): the books' commands, and every debit to capital or income (owner Q4), written by ledger.post_entry
   atomicA('ledger.account_created', { code: { type: 'string', max: 6 }, name, type: status16 }),
+  atomicA('ledger.account_updated', { name, status: status16 }),
   atomicA('ledger.manual_entry_posted', {
     entryId: uuid,
     lineCount: { type: 'integer' },
@@ -251,6 +252,7 @@ export const AUDIT_CATALOG = [
   bestEffort('merchant.audit_read', 'denied', { reason }),
   bestEffort('platform.audit_read', 'denied', { reason }),
   bestEffort('ledger.account_created', 'denied', denial),
+  bestEffort('ledger.account_updated', 'denied', denial),
   bestEffort('ledger.manual_entry_posted', 'denied', denial),
   bestEffort('ledger.entry_reversed', 'denied', denial),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires

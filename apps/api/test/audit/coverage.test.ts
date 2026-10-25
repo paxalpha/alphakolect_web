@@ -990,6 +990,30 @@ const CASES: Case[] = [
       };
     },
   },
+  {
+    pair: 'ledger.account_updated/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const code = `9${String(randomBytes(3).readUIntBE(0, 3) % 100000).padStart(5, '0')}`;
+      const created = await asOwner(b, 'post', '/v1/merchant/ledger/accounts', markerRequestId('cov-setup'), {
+        code,
+        name: 'Coverage account',
+        type: 'expense',
+      });
+      const accountId = created.body.accountId as string;
+      const res = await asOwner(b, 'patch', `/v1/merchant/ledger/accounts/${accountId}`, rid, {
+        name: 'Renamed coverage account',
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'ledger_account', target_id: accountId },
+        changed: async () =>
+          (await one(`SELECT name FROM ledger.accounts WHERE id = $1`, [accountId])).name ===
+          'Renamed coverage account',
+      };
+    },
+  },
   ...(['posted', 'reversed'] as const).map((step): Case => ({
     pair: step === 'posted' ? 'ledger.manual_entry_posted/success' : 'ledger.entry_reversed/success',
     status: 201,

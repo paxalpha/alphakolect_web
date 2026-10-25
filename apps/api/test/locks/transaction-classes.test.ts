@@ -132,6 +132,7 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'LedgerService.createAccount',
       'LedgerService.postEntry',
       'LedgerService.reverseEntry',
+      'LedgerService.updateAccount',
       'MembershipService.change',
       'MerchantLifecycleService.change',
       'MerchantLifecycleService.transferOwnership',

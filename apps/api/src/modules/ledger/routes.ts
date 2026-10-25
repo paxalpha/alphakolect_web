@@ -14,6 +14,7 @@ import type {
   ReverseJournalEntryRequest,
   StatementQuery,
   TrialBalance,
+  UpdateLedgerAccountRequest,
 } from '@alphakolect/contracts';
 import type { Request, RequestHandler } from 'express';
 import type { RequestContext } from '../../platform/request-context.js';
@@ -50,6 +51,16 @@ export function ledgerHandlers({ books }: { books: LedgerService }) {
       contextOf(req),
     );
     res.status(201).json(body);
+  };
+
+  const updateLedgerAccount: RequestHandler = async (req, res) => {
+    const body: LedgerAccount = await books.updateAccount(
+      tenant(req),
+      String(req.params.accountId),
+      req.body as UpdateLedgerAccountRequest,
+      contextOf(req),
+    );
+    res.json(body);
   };
 
   const getAccountStatement: RequestHandler = async (req, res) => {
@@ -109,6 +120,7 @@ export function ledgerHandlers({ books }: { books: LedgerService }) {
   return {
     listLedgerAccounts,
     createLedgerAccount,
+    updateLedgerAccount,
     getAccountStatement,
     getJournalEntry,
     postJournalEntry,

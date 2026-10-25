@@ -8,6 +8,7 @@ import type {
   PostJournalEntryRequest,
   ProfitAndLoss,
   TrialBalance,
+  UpdateLedgerAccountRequest,
 } from '@alphakolect/contracts';
 import { refusalMessage } from '../../platform/authorization.js';
 import type { Db } from '../../platform/db.js';
@@ -151,7 +152,7 @@ export class LedgerService {
             subject_type: null,
             subject_id: null,
             balance_minor: '0',
-            created_at: new Date(),
+            created_at: result.created_at!,
           },
         );
       case 'code_taken':
@@ -160,6 +161,50 @@ export class LedgerService {
         throw new AppError(400, 'VALIDATION_ERROR', 'The account is not valid');
       case 'forbidden':
         await this.denied(tenant, 'ledger.account_created', 'ledger_account', null, ctx);
+        throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.ledger.manage'));
+    }
+  }
+
+  /** Rename, archive or restore one of the business's own accounts (§3.1, BR-9.1). */
+  async updateAccount(
+    tenant: TenantContext,
+    accountId: string,
+    change: UpdateLedgerAccountRequest,
+    ctx: RequestContext,
+  ): Promise<LedgerAccount> {
+    const result = await withTenant(this.deps.db, tenant, (tx) =>
+      repo.updateAccount(tx, accountId, change, ctx),
+    );
+    switch (result.outcome) {
+      case 'ok':
+        return toAccount({
+          id: result.id!,
+          code: result.code!,
+          name: result.name!,
+          type: result.type!,
+          status: result.status!,
+          non_negative: false,
+          is_system: false,
+          parent_account_id: null,
+          subject_type: null,
+          subject_id: null,
+          balance_minor: result.balance_minor!,
+          created_at: result.created_at!,
+        });
+      case 'not_found':
+        throw new AppError(404, 'NOT_FOUND', 'Account not found');
+      case 'invalid':
+        throw new AppError(400, 'VALIDATION_ERROR', 'The change is not valid');
+      case 'system_account':
+        throw new AppError(
+          422,
+          'SYSTEM_ACCOUNT',
+          'The chart’s accounts and their sub-accounts are kept by the system',
+        );
+      case 'balance_not_zero':
+        throw new AppError(422, 'BALANCE_NOT_ZERO', 'An account is archived only when its balance is zero');
+      case 'forbidden':
+        await this.denied(tenant, 'ledger.account_updated', 'ledger_account', accountId, ctx);
         throw new AppError(403, 'FORBIDDEN', refusalMessage('merchant.ledger.manage'));
     }
   }
@@ -178,8 +223,9 @@ export class LedgerService {
     const after = position ? { date: STATEMENT_DAY.exec(position.at)?.[1] ?? '', lineId: position.id } : null;
     if (after && !after.date)
       throw new AppError(400, 'INVALID_CURSOR', 'This cursor does not belong to this list');
-    const { account, rows } = await withTenant(this.deps.db, tenant, async (tx) => ({
+    const { account, balances, rows } = await withTenant(this.deps.db, tenant, async (tx) => ({
       account: await repo.account(tx, accountId),
+      balances: await repo.statementBalances(tx, accountId, query),
       rows: await repo.statement(tx, accountId, query, query.limit + 1, after),
     }));
     if (!account) throw new AppError(404, 'NOT_FOUND', 'Account not found');
@@ -189,9 +235,12 @@ export class LedgerService {
       account: toAccount(account),
       from: query.from,
       to: query.to,
+      openingBalance: money(balances.opening_minor),
+      closingBalance: money(balances.closing_minor),
       items: items.map((r) => ({
         lineId: r.line_id,
         entryId: r.entry_id,
+        accountId: r.account_id,
         effectiveDate: r.effective_date,
         entryType: r.entry_type,
         narrative: r.narrative,
@@ -214,6 +263,7 @@ export class LedgerService {
       entryId: first.id,
       effectiveDate: first.effective_date,
       entryType: first.entry_type,
+      templateVersion: first.template_version,
       narrative: first.narrative,
       source: first.source_type && first.source_id ? { type: first.source_type, id: first.source_id } : null,
       reversesEntryId: first.reverses_entry_id,
@@ -344,7 +394,11 @@ export class LedgerService {
   /** A refusal by the database alone (a permission withdrawn between the two checks), recorded best effort. */
   private denied(
     tenant: TenantContext,
-    action: 'ledger.account_created' | 'ledger.manual_entry_posted' | 'ledger.entry_reversed',
+    action:
+      | 'ledger.account_created'
+      | 'ledger.account_updated'
+      | 'ledger.manual_entry_posted'
+      | 'ledger.entry_reversed',
     targetType: string,
     targetId: string | null,
     ctx: RequestContext,

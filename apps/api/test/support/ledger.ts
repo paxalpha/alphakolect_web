@@ -53,6 +53,7 @@ export const ledgerBodies = {
     ],
   }),
   reverseJournalEntry: () => ({}),
+  updateLedgerAccount: () => ({ name: `Account ${randomBytes(3).toString('hex')}` }),
 };
 
 /** The headers an endpoint requires before any check can answer it: a fresh Idempotency-Key on a posting command. */

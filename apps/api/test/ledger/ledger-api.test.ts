@@ -151,6 +151,7 @@ describe('manual journal entries (TA-6)', () => {
     const read = await call(bk.b.owner.token, 'get', `/v1/merchant/ledger/entries/${first.body.entryId}`);
     expect(JournalEntry.parse(read.body)).toMatchObject({
       entryType: 'manual',
+      templateVersion: null,
       narrative: 'Opening balance',
       createdBy: bk.b.owner.identityId,
       reversesEntryId: null,
@@ -294,6 +295,8 @@ describe('statements and reports', () => {
     const page1 = AccountStatement.parse((await call(bk.b.owner.token, 'get', `${base}&limit=2`)).body);
     expect(page1.items.map((i) => i.balance.amountMinor)).toEqual(['1000', '1250']);
     expect(page1.account.balance.amountMinor).toBe('1000');
+    // The period's opening and closing balances, the same on every page.
+    expect([page1.openingBalance.amountMinor, page1.closingBalance.amountMinor]).toEqual(['0', '1000']);
     const page2 = AccountStatement.parse(
       (await call(bk.b.owner.token, 'get', `${base}&limit=2&cursor=${page1.nextCursor}`)).body,
     );
@@ -400,5 +403,106 @@ describe('permissions (P6-3; the owner’s answers)', () => {
     const agent = await member(bk.b, 'agent');
     const res = await call(agent.token, 'get', '/v1/merchant/ledger/accounts');
     expect([401, 403]).toContain(res.status);
+  });
+});
+
+describe('a business’s own account: renamed, archived, restored (§3.1, BR-9.1)', () => {
+  it('renamed; archived only when empty, then refused to postings; restored; the chart’s accounts are kept', async () => {
+    const bk = await books();
+    const created = LedgerAccount.parse(
+      (
+        await call(bk.b.owner.token, 'post', '/v1/merchant/ledger/accounts', {
+          code: '6100',
+          name: 'Rent',
+          type: 'expense',
+        })
+      ).body,
+    );
+    const path = `/v1/merchant/ledger/accounts/${created.accountId}`;
+    const renamed = await call(bk.b.owner.token, 'patch', path, { name: 'Office rent' });
+    expect(renamed.status).toBe(200);
+    expect(LedgerAccount.parse(renamed.body)).toMatchObject({ name: 'Office rent', status: 'active' });
+    expect(await auditFor(renamed)).toEqual([
+      expect.objectContaining({
+        action: 'ledger.account_updated',
+        target_id: created.accountId,
+        summary: { name: 'Office rent', status: 'active' },
+      }),
+    ]);
+
+    const spend = entry([
+      [created.accountId, 'debit', '50'],
+      [bk.id('3000'), 'credit', '50'],
+    ]);
+    expect((await postWithKey(bk.b.owner.token, '/v1/merchant/ledger/entries', key(), spend)).status).toBe(
+      201,
+    );
+    expectError(await call(bk.b.owner.token, 'patch', path, { status: 'archived' }), 422, 'BALANCE_NOT_ZERO');
+    const back = entry([
+      [bk.id('3000'), 'debit', '50'],
+      [created.accountId, 'credit', '50'],
+    ]);
+    expect((await postWithKey(bk.b.owner.token, '/v1/merchant/ledger/entries', key(), back)).status).toBe(
+      201,
+    );
+    const archived = await call(bk.b.owner.token, 'patch', path, { status: 'archived' });
+    expect(LedgerAccount.parse(archived.body)).toMatchObject({
+      status: 'archived',
+      balance: { amountMinor: '0' },
+    });
+    expectError(
+      await postWithKey(bk.b.owner.token, '/v1/merchant/ledger/entries', key(), spend),
+      422,
+      'ACCOUNT_NOT_POSTABLE',
+    );
+    expect((await call(bk.b.owner.token, 'patch', path, { status: 'active' })).body.status).toBe('active');
+
+    expectError(
+      await call(bk.b.owner.token, 'patch', `/v1/merchant/ledger/accounts/${bk.id('1000')}`, {
+        name: 'Bank',
+      }),
+      422,
+      'SYSTEM_ACCOUNT',
+    );
+    expectError(await call(bk.b.owner.token, 'patch', path, {}), 400, 'VALIDATION_ERROR');
+    const other = await books();
+    expectError(await call(other.b.owner.token, 'patch', path, { name: 'Mine' }), 404, 'NOT_FOUND');
+  });
+});
+
+describe('a control account’s statement and a template entry’s version (§3.5, §4)', () => {
+  it('covers its sub-accounts; an entry posted by a template shows its version', async () => {
+    const bk = await books();
+    const customer = '01900000-0000-7000-8000-0000000c0001';
+    const { rows } = await owner.query(
+      `SELECT s.account_id FROM ledger.ledgers l, ledger.open_subaccount(l.id, '2100', 'customer', $2) s
+        WHERE l.merchant_id = $1`,
+      [bk.b.merchantId, customer],
+    );
+    const posted = await owner.query(
+      `SELECT p.entry_id FROM ledger.ledgers l,
+              ledger.post_template(l.id, 'collection.live', 700, $2::jsonb, 'cov-tpl', CURRENT_DATE, NULL, 'test', NULL, NULL, NULL) p
+        WHERE l.merchant_id = $1`,
+      [bk.b.merchantId, JSON.stringify({ customer })],
+    );
+    const entryId = posted.rows[0].entry_id as string;
+    const statement = AccountStatement.parse(
+      (
+        await call(
+          bk.b.owner.token,
+          'get',
+          `/v1/merchant/ledger/accounts/${bk.id('2100')}/statement?from=2000-01-01&to=${today()}`,
+        )
+      ).body,
+    );
+    expect(statement.items.map((i) => [i.accountId, i.balance.amountMinor])).toEqual([
+      [rows[0].account_id, '700'],
+    ]);
+    expect(statement.closingBalance.amountMinor).toBe('700');
+    expect(statement.account.balance.amountMinor).toBe('700');
+    const read = JournalEntry.parse(
+      (await call(bk.b.owner.token, 'get', `/v1/merchant/ledger/entries/${entryId}`)).body,
+    );
+    expect(read).toMatchObject({ entryType: 'collection.live', templateVersion: 1 });
   });
 });

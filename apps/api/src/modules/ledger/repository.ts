@@ -23,6 +23,7 @@ export type AccountRow = {
 export type StatementRow = {
   line_id: string;
   entry_id: string;
+  account_id: string;
   effective_date: string;
   entry_type: string;
   narrative: string;
@@ -31,10 +32,14 @@ export type StatementRow = {
   balance_minor: string;
 };
 
+/** A statement period's opening and closing balances (ledger.statement_balances). */
+export type StatementBalances = { opening_minor: string; closing_minor: string };
+
 export type EntryLineRow = {
   id: string;
   effective_date: string;
   entry_type: string;
+  template_version: number | null;
   narrative: string;
   source_type: string | null;
   source_id: string | null;
@@ -60,7 +65,13 @@ export type MovementRow = {
 };
 
 export type CreateAccountOutcome = 'ok' | 'forbidden' | 'invalid' | 'code_taken';
-export type CreatedAccount = { outcome: CreateAccountOutcome; id: string | null };
+export type CreatedAccount = { outcome: CreateAccountOutcome; id: string | null; created_at: Date | null };
+export type UpdateAccountOutcome =
+  'ok' | 'forbidden' | 'not_found' | 'invalid' | 'system_account' | 'balance_not_zero';
+/** The account as changed (merchant-defined: active or archived, no subject). */
+export type UpdatedAccount = { outcome: UpdateAccountOutcome } & Partial<
+  Pick<AccountRow, 'id' | 'code' | 'name' | 'type' | 'status' | 'balance_minor' | 'created_at'>
+>;
 /** ledger.post_manual_entry / ledger.reverse_entry: their own refusals and ledger.post_entry's. */
 export type PostingOutcome =
   | 'ok'
@@ -83,7 +94,7 @@ export type Posting = { outcome: PostingOutcome; entry_id: string | null };
 const ACCOUNT_COLUMNS = `id, code, name, type, status, non_negative, is_system, parent_account_id, subject_type,
               subject_id, balance_minor, created_at`;
 // Dates as the database holds them (YYYY-MM-DD): pg would turn a date into a local-midnight Date.
-const ENTRY_COLUMNS = `id, effective_date::text AS effective_date, entry_type, narrative, source_type, source_id,
+const ENTRY_COLUMNS = `id, effective_date::text AS effective_date, entry_type, template_version, narrative, source_type, source_id,
               reverses_entry_id, reversed_by_entry_id, created_by, created_at, line_id, account_id, account_code,
               account_name, side, amount_minor`;
 
@@ -117,11 +128,25 @@ export const ledgerRepository = {
   ): Promise<StatementRow[]> {
     const { sessionId } = scopeOf(tx);
     return tx.query<StatementRow>(
-      `SELECT line_id, entry_id, effective_date::text AS effective_date, entry_type, narrative, side, amount_minor,
-              balance_minor
+      `SELECT line_id, entry_id, account_id, effective_date::text AS effective_date, entry_type, narrative, side,
+              amount_minor, balance_minor
          FROM ledger.read_statement($1, $2, $3::date, $4::date, $5, $6::date, $7)`,
       [sessionId, accountId, period.from, period.to, limit, after?.date ?? null, after?.lineId ?? null],
     );
+  },
+
+  /** ledger.statement_balances: the period's opening and closing balances, sub-accounts included. */
+  async statementBalances(
+    tx: TenantTx,
+    accountId: string,
+    period: { from: string; to: string },
+  ): Promise<StatementBalances> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<StatementBalances>(
+      `SELECT opening_minor, closing_minor FROM ledger.statement_balances($1, $2, $3::date, $4::date)`,
+      [sessionId, accountId, period.from, period.to],
+    );
+    return row!;
   },
 
   /** ledger.read_entry: an entry of the business, one row per line. */
@@ -151,8 +176,32 @@ export const ledgerRepository = {
   ): Promise<CreatedAccount> {
     const { sessionId } = scopeOf(tx);
     const [row] = await tx.query<CreatedAccount>(
-      `SELECT outcome, id FROM ledger.create_account($1, $2, $3, $4, $5, $6, $7)`,
+      `SELECT outcome, id, created_at FROM ledger.create_account($1, $2, $3, $4, $5, $6, $7)`,
       [sessionId, account.code, account.name, account.type, ctx.ip, ctx.userAgent, ctx.requestId],
+    );
+    return row!;
+  },
+
+  /** ledger.update_account (BR-9.1): renamed, archived or restored — decided and recorded in the database. */
+  async updateAccount(
+    tx: TenantTx,
+    accountId: string,
+    change: { name?: string | undefined; status?: 'active' | 'archived' | undefined },
+    ctx: RequestContext,
+  ): Promise<UpdatedAccount> {
+    const { sessionId } = scopeOf(tx);
+    const [row] = await tx.query<UpdatedAccount>(
+      `SELECT outcome, id, code, name, type, status, balance_minor, created_at
+         FROM ledger.update_account($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        sessionId,
+        accountId,
+        change.name ?? null,
+        change.status ?? null,
+        ctx.ip,
+        ctx.userAgent,
+        ctx.requestId,
+      ],
     );
     return row!;
   },

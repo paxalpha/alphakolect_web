@@ -48,11 +48,27 @@ INSERT INTO audit.event_catalog (identifier, outcome, class, writer_pattern, sum
   ('customer.anonymised', 'denied', 'best_effort', NULL,
    '{"reason": {"type": "string", "max": 64}, "kind": {"type": "string", "max": 16}}');
 
+-- ── a command's answer: the customer it wrote (or none, with a refusal) ──
+-- So that a session allowed to change customers but not to read them still gets the customer it changed. Called only by
+-- the commands below, with the customer they hold.
+CREATE FUNCTION customers.customer_result(p_outcome text, p_customer_id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+  SELECT p_outcome, c.id, c.branch_id, c.full_name, c.phone, c.email, c.address, c.nickname, c.status,
+         (SELECT a.agent_membership_id FROM customers.assignments a
+           WHERE a.merchant_id = c.merchant_id AND a.customer_id = c.id AND a.ended_at IS NULL),
+         c.identity_id IS NOT NULL, c.created_at, c.updated_at, c.deactivated_at, c.anonymised_at
+    FROM (SELECT 1) x LEFT JOIN customers.customers c ON c.id = p_customer_id;
+$function$;
+
 -- ── onboarding, after the caller's own authority: the customer, the agent's assignment, the ledger sub-accounts ──
 -- Called only by customers.create_customer and customers.agent_create_customer, which hold the business, the actor
 -- and the branch. Outcomes: 'ok', 'invalid', 'phone_taken'.
 CREATE FUNCTION customers.insert_customer_locked(p_merchant_id uuid, p_branch_id uuid, p_full_name text, p_phone text, p_email text, p_address text, p_nickname text, p_agent_membership_id uuid, p_actor_identity_id uuid, p_actor_membership_id uuid, p_actor_audience text, p_ip text, p_user_agent text, p_request_id text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -67,7 +83,7 @@ BEGIN
      OR (p_email IS NOT NULL AND lower(btrim(p_email)) !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$')
      OR (p_address IS NOT NULL AND char_length(btrim(p_address)) NOT BETWEEN 1 AND 300)
      OR (p_nickname IS NOT NULL AND char_length(btrim(p_nickname)) NOT BETWEEN 1 AND 60) THEN
-    RETURN QUERY SELECT 'invalid', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid', NULL);
     RETURN;
   END IF;
   -- The contested inserts last (L3): the phone number is unique among the business's customers (Q2).
@@ -78,7 +94,7 @@ BEGIN
             btrim(p_nickname), p_actor_membership_id)
     RETURNING customers.customers.id INTO v_id;
   EXCEPTION WHEN unique_violation THEN
-    RETURN QUERY SELECT 'phone_taken', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('phone_taken', NULL);
     RETURN;
   END;
   IF p_agent_membership_id IS NOT NULL THEN
@@ -97,14 +113,14 @@ BEGIN
           v_id::text, 'success', p_ip, left(p_user_agent, 512), p_request_id,
           jsonb_build_object('branchId', p_branch_id::text, 'agentMembershipId', p_agent_membership_id::text,
                              'via', p_actor_audience));
-  RETURN QUERY SELECT 'ok', v_id;
+  RETURN QUERY SELECT * FROM customers.customer_result('ok', v_id);
 END
 $function$;
 
 -- ── onboarding by the business (Q4): merchant.customers.manage, within the actor's branch ──
 -- Outcomes: 'ok', 'forbidden', 'invalid', 'invalid_branch', 'invalid_agent', 'phone_taken'.
 CREATE FUNCTION customers.create_customer(p_session_id uuid, p_branch_id uuid, p_full_name text, p_phone text, p_email text DEFAULT NULL::text, p_address text DEFAULT NULL::text, p_nickname text DEFAULT NULL::text, p_agent_membership_id uuid DEFAULT NULL::uuid, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -121,7 +137,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_role, v_actor_branch
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_merchant FOR SHARE;
@@ -131,14 +147,14 @@ BEGIN
   v_branches := ARRAY[p_branch_id, v_actor_branch];
   PERFORM tenancy.lock_branches(v_branches, NULL);
   IF tenancy.assert_authority(p_session_id, 'merchant.customers.manage') <> 'ok' THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   -- An active branch of the business; the actor's own when the actor is restricted to one (P5 §7.6).
   IF NOT EXISTS (SELECT 1 FROM tenancy.branches b
                   WHERE b.merchant_id = v_merchant AND b.id = p_branch_id AND b.status = 'active')
      OR (v_actor_branch IS NOT NULL AND v_actor_branch <> p_branch_id) THEN
-    RETURN QUERY SELECT 'invalid_branch', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_branch', NULL);
     RETURN;
   END IF;
   -- An active agent of the business (Q5). Agents serve every branch (P4: a branch restriction is for staff only).
@@ -146,11 +162,11 @@ BEGIN
        SELECT 1 FROM tenancy.merchant_memberships mm
         WHERE mm.merchant_id = v_merchant AND mm.id = p_agent_membership_id AND mm.kind = 'agent'
           AND mm.status = 'active') THEN
-    RETURN QUERY SELECT 'invalid_agent', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_agent', NULL);
     RETURN;
   END IF;
   RETURN QUERY
-    SELECT r.outcome, r.id
+    SELECT r.*
       FROM customers.insert_customer_locked(v_merchant, p_branch_id, p_full_name, p_phone, p_email, p_address,
                                             p_nickname, p_agent_membership_id, v_actor_identity, v_actor, 'merchant',
                                             p_ip, p_user_agent, p_request_id) r;
@@ -160,7 +176,7 @@ $function$;
 -- ── onboarding by an agent (Q4, P7-6): the customer is the agent's ──
 -- Outcomes: 'ok', 'forbidden', 'invalid', 'invalid_branch', 'phone_taken'.
 CREATE FUNCTION customers.agent_create_customer(p_session_id uuid, p_branch_id uuid, p_full_name text, p_phone text, p_email text DEFAULT NULL::text, p_address text DEFAULT NULL::text, p_nickname text DEFAULT NULL::text, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -176,7 +192,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_branch
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'agent' AND v.kind = 'agent';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   PERFORM 1 FROM tenancy.merchants m WHERE m.id = v_merchant FOR SHARE;
@@ -186,17 +202,17 @@ BEGIN
   PERFORM tenancy.lock_branches(v_branches, NULL);
   -- The agent, again under its lock: active, of an active business. Agents serve every branch (P4).
   IF identity.active_membership(v_actor_identity, 'agent', v_actor) IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM tenancy.branches b
                   WHERE b.merchant_id = v_merchant AND b.id = p_branch_id AND b.status = 'active')
      OR (v_actor_branch IS NOT NULL AND v_actor_branch <> p_branch_id) THEN
-    RETURN QUERY SELECT 'invalid_branch', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_branch', NULL);
     RETURN;
   END IF;
   RETURN QUERY
-    SELECT r.outcome, r.id
+    SELECT r.*
       FROM customers.insert_customer_locked(v_merchant, p_branch_id, p_full_name, p_phone, p_email, p_address,
                                             p_nickname, v_actor, v_actor_identity, v_actor, 'agent', p_ip,
                                             p_user_agent, p_request_id) r;
@@ -208,7 +224,7 @@ $function$;
 -- optional ones), branchId. Outcomes: 'ok', 'forbidden', 'not_found', 'invalid', 'invalid_branch', 'phone_taken',
 -- 'invalid_status' (an anonymised customer has no details to change).
 CREATE FUNCTION customers.update_customer(p_session_id uuid, p_customer_id uuid, p_change jsonb, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -229,7 +245,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_role, v_actor_branch
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = p_customer_id AND c.merchant_id = v_merchant;
@@ -243,7 +259,7 @@ BEGIN
   PERFORM tenancy.lock_branches(v_branches, NULL);
   PERFORM 1 FROM customers.customers c WHERE c.id = v_customer.id FOR NO KEY UPDATE;
   IF tenancy.assert_authority(p_session_id, 'merchant.customers.manage') <> 'ok' THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = v_customer.id;
@@ -251,18 +267,18 @@ BEGIN
   IF v_customer.id IS NULL
      OR (v_actor_branch IS NOT NULL AND (v_customer.branch_id <> v_actor_branch OR NOT EXISTS (
            SELECT 1 FROM tenancy.branches b WHERE b.id = v_actor_branch AND b.status = 'active'))) THEN
-    RETURN QUERY SELECT 'not_found', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('not_found', NULL);
     RETURN;
   END IF;
   IF v_customer.status = 'anonymised' THEN
-    RETURN QUERY SELECT 'invalid_status', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_status', NULL);
     RETURN;
   END IF;
   IF p_change IS NULL OR jsonb_typeof(p_change) <> 'object'
      OR EXISTS (SELECT 1 FROM jsonb_object_keys(p_change) k
                  WHERE k NOT IN ('fullName', 'phone', 'email', 'address', 'nickname', 'branchId'))
      OR (SELECT count(*) FROM jsonb_object_keys(p_change)) = 0 THEN
-    RETURN QUERY SELECT 'invalid', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid', NULL);
     RETURN;
   END IF;
   v_phone := CASE WHEN p_change ? 'phone' THEN customers.normalise_phone(p_change ->> 'phone') ELSE v_customer.phone END;
@@ -273,7 +289,7 @@ BEGIN
      OR (p_change ->> 'address' IS NOT NULL AND char_length(btrim(p_change ->> 'address')) NOT BETWEEN 1 AND 300)
      OR (p_change ->> 'nickname' IS NOT NULL AND char_length(btrim(p_change ->> 'nickname')) NOT BETWEEN 1 AND 60)
      OR (p_change ? 'branchId' AND (p_change ->> 'branchId') IS DISTINCT FROM v_branch::text) THEN
-    RETURN QUERY SELECT 'invalid', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid', NULL);
     RETURN;
   END IF;
   -- A new branch: active, and the actor's own when restricted. The customer's agent serves every branch.
@@ -281,7 +297,7 @@ BEGIN
        NOT EXISTS (SELECT 1 FROM tenancy.branches b
                     WHERE b.merchant_id = v_merchant AND b.id = v_branch AND b.status = 'active')
        OR (v_actor_branch IS NOT NULL AND v_actor_branch <> v_branch)) THEN
-    RETURN QUERY SELECT 'invalid_branch', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_branch', NULL);
     RETURN;
   END IF;
   SELECT coalesce(array_agg(k ORDER BY k), '{}') INTO v_fields FROM jsonb_object_keys(p_change) k;
@@ -296,7 +312,7 @@ BEGIN
            updated_at = now()
      WHERE c.id = v_customer.id;
   EXCEPTION WHEN unique_violation THEN
-    RETURN QUERY SELECT 'phone_taken', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('phone_taken', NULL);
     RETURN;
   END;
   INSERT INTO audit.audit_events
@@ -305,14 +321,14 @@ BEGIN
   VALUES (v_merchant, v_actor_identity, 'merchant', v_actor, 'customer.updated', 'customer', v_customer.id::text,
           'success', p_ip, left(p_user_agent, 512), p_request_id,
           jsonb_build_object('fields', to_jsonb(v_fields), 'branchId', v_branch::text));
-  RETURN QUERY SELECT 'ok', v_customer.id;
+  RETURN QUERY SELECT * FROM customers.customer_result('ok', v_customer.id);
 END
 $function$;
 
 -- ── deactivation and reactivation (Q8) ──
 -- Outcomes: 'ok', 'forbidden', 'not_found', 'invalid', 'invalid_transition'.
 CREATE FUNCTION customers.set_customer_status(p_session_id uuid, p_customer_id uuid, p_status text, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -329,7 +345,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_role, v_actor_branch
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = p_customer_id AND c.merchant_id = v_merchant;
@@ -339,35 +355,43 @@ BEGIN
   PERFORM tenancy.lock_branches(ARRAY[v_actor_branch], NULL);
   PERFORM 1 FROM customers.customers c WHERE c.id = v_customer.id FOR NO KEY UPDATE;
   IF tenancy.assert_authority(p_session_id, 'merchant.customers.manage') <> 'ok' THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = v_customer.id;
   IF v_customer.id IS NULL
      OR (v_actor_branch IS NOT NULL AND (v_customer.branch_id <> v_actor_branch OR NOT EXISTS (
            SELECT 1 FROM tenancy.branches b WHERE b.id = v_actor_branch AND b.status = 'active'))) THEN
-    RETURN QUERY SELECT 'not_found', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('not_found', NULL);
     RETURN;
   END IF;
   IF p_status IS NULL OR p_status NOT IN ('active', 'deactivated') THEN
-    RETURN QUERY SELECT 'invalid', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid', NULL);
     RETURN;
   END IF;
   IF v_customer.status = 'anonymised' OR v_customer.status = p_status THEN
-    RETURN QUERY SELECT 'invalid_transition', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_transition', NULL);
     RETURN;
   END IF;
   -- A deactivated customer's sessions fail validation from now on (P7-8); every record stays.
   UPDATE customers.customers c
      SET status = p_status, deactivated_at = CASE WHEN p_status = 'deactivated' THEN now() END, updated_at = now()
    WHERE c.id = v_customer.id;
-  INSERT INTO audit.audit_events
-    (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
-     ip, user_agent, request_id, summary)
-  VALUES (v_merchant, v_actor_identity, 'merchant', v_actor,
-          CASE p_status WHEN 'deactivated' THEN 'customer.deactivated' ELSE 'customer.reactivated' END,
-          'customer', v_customer.id::text, 'success', p_ip, left(p_user_agent, 512), p_request_id, '{}');
-  RETURN QUERY SELECT 'ok', v_customer.id;
+  -- One statement per event, so each names its own catalog pair.
+  IF p_status = 'deactivated' THEN
+    INSERT INTO audit.audit_events
+      (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
+       ip, user_agent, request_id, summary)
+    VALUES (v_merchant, v_actor_identity, 'merchant', v_actor, 'customer.deactivated', 'customer',
+            v_customer.id::text, 'success', p_ip, left(p_user_agent, 512), p_request_id, '{}');
+  ELSE
+    INSERT INTO audit.audit_events
+      (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
+       ip, user_agent, request_id, summary)
+    VALUES (v_merchant, v_actor_identity, 'merchant', v_actor, 'customer.reactivated', 'customer',
+            v_customer.id::text, 'success', p_ip, left(p_user_agent, 512), p_request_id, '{}');
+  END IF;
+  RETURN QUERY SELECT * FROM customers.customer_result('ok', v_customer.id);
 END
 $function$;
 
@@ -375,7 +399,7 @@ $function$;
 -- p_agent_membership_id NULL takes the customer off their agent. Outcomes: 'ok', 'forbidden', 'not_found',
 -- 'invalid_agent', 'invalid_status'.
 CREATE FUNCTION customers.assign_agent(p_session_id uuid, p_customer_id uuid, p_agent_membership_id uuid, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -393,7 +417,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_role, v_actor_branch
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = p_customer_id AND c.merchant_id = v_merchant;
@@ -403,32 +427,32 @@ BEGIN
   PERFORM tenancy.lock_branches(ARRAY[v_actor_branch], NULL);
   PERFORM 1 FROM customers.customers c WHERE c.id = v_customer.id FOR NO KEY UPDATE;
   IF tenancy.assert_authority(p_session_id, 'merchant.customers.assign') <> 'ok' THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = v_customer.id;
   IF v_customer.id IS NULL
      OR (v_actor_branch IS NOT NULL AND (v_customer.branch_id <> v_actor_branch OR NOT EXISTS (
            SELECT 1 FROM tenancy.branches b WHERE b.id = v_actor_branch AND b.status = 'active'))) THEN
-    RETURN QUERY SELECT 'not_found', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('not_found', NULL);
     RETURN;
   END IF;
   IF v_customer.status <> 'active' THEN
-    RETURN QUERY SELECT 'invalid_status', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_status', NULL);
     RETURN;
   END IF;
   IF p_agent_membership_id IS NOT NULL AND NOT EXISTS (
        SELECT 1 FROM tenancy.merchant_memberships mm
         WHERE mm.merchant_id = v_merchant AND mm.id = p_agent_membership_id AND mm.kind = 'agent'
           AND mm.status = 'active') THEN
-    RETURN QUERY SELECT 'invalid_agent', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_agent', NULL);
     RETURN;
   END IF;
   SELECT a.agent_membership_id INTO v_previous
     FROM customers.assignments a WHERE a.customer_id = v_customer.id AND a.ended_at IS NULL;
   -- The same agent again changes nothing and records nothing.
   IF v_previous IS NOT DISTINCT FROM p_agent_membership_id THEN
-    RETURN QUERY SELECT 'ok', v_customer.id;
+    RETURN QUERY SELECT * FROM customers.customer_result('ok', v_customer.id);
     RETURN;
   END IF;
   -- The customer is held (NKU): its assignment rows change only here, under that lock.
@@ -445,7 +469,7 @@ BEGIN
           v_customer.id::text, 'success', p_ip, left(p_user_agent, 512), p_request_id,
           jsonb_build_object('agentMembershipId', p_agent_membership_id::text,
                              'previousAgentMembershipId', v_previous::text));
-  RETURN QUERY SELECT 'ok', v_customer.id;
+  RETURN QUERY SELECT * FROM customers.customer_result('ok', v_customer.id);
 END
 $function$;
 
@@ -595,7 +619,7 @@ $function$;
 -- Holds the customer's sub-accounts' balances (14) before the customer (16, P7-11), so no posting changes them
 -- meanwhile. Outcomes: 'ok', 'forbidden', 'not_found', 'invalid_status' (already removed), 'balance_not_zero'.
 CREATE FUNCTION customers.anonymise_customer(p_session_id uuid, p_customer_id uuid, p_ip text DEFAULT NULL::text, p_user_agent text DEFAULT NULL::text, p_request_id text DEFAULT NULL::text)
- RETURNS TABLE(outcome text, id uuid)
+ RETURNS TABLE(outcome text, id uuid, branch_id uuid, full_name text, phone text, email text, address text, nickname text, status text, agent_membership_id uuid, app_access boolean, created_at timestamp with time zone, updated_at timestamp with time zone, deactivated_at timestamp with time zone, anonymised_at timestamp with time zone)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -612,7 +636,7 @@ BEGIN
     INTO v_merchant, v_actor, v_actor_identity, v_actor_role
     FROM identity.validate_session(p_session_id) v WHERE v.audience = 'merchant';
   IF v_merchant IS NULL THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = p_customer_id AND c.merchant_id = v_merchant;
@@ -625,22 +649,22 @@ BEGIN
   PERFORM ledger.lock_projections(v_accounts, NULL);
   PERFORM 1 FROM customers.customers c WHERE c.id = v_customer.id FOR NO KEY UPDATE;
   IF tenancy.assert_authority(p_session_id, 'merchant.customers.anonymise') <> 'ok' THEN
-    RETURN QUERY SELECT 'forbidden', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('forbidden', NULL);
     RETURN;
   END IF;
   SELECT * INTO v_customer FROM customers.customers c WHERE c.id = v_customer.id;
   IF v_customer.id IS NULL THEN
-    RETURN QUERY SELECT 'not_found', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('not_found', NULL);
     RETURN;
   END IF;
   IF v_customer.status = 'anonymised' THEN
-    RETURN QUERY SELECT 'invalid_status', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('invalid_status', NULL);
     RETURN;
   END IF;
   -- Nothing left with the business: no savings to pay out, no loan still owed (Q9).
   IF EXISTS (SELECT 1 FROM ledger.balance_projection p WHERE p.account_id = ANY (v_accounts) AND p.balance_minor <> 0)
   THEN
-    RETURN QUERY SELECT 'balance_not_zero', NULL::uuid;
+    RETURN QUERY SELECT * FROM customers.customer_result('balance_not_zero', NULL);
     RETURN;
   END IF;
   -- Irreversible: the details and the sign-in go; the record, its ids and every money row stay (BR-11.1). Its
@@ -658,7 +682,7 @@ BEGIN
      ip, user_agent, request_id, summary)
   VALUES (v_merchant, v_actor_identity, 'merchant', v_actor, 'customer.anonymised', 'customer', v_customer.id::text,
           'success', p_ip, left(p_user_agent, 512), p_request_id, '{}');
-  RETURN QUERY SELECT 'ok', v_customer.id;
+  RETURN QUERY SELECT * FROM customers.customer_result('ok', v_customer.id);
 END
 $function$;
 
@@ -968,6 +992,7 @@ BEGIN
 END
 $function$;
 
+REVOKE ALL ON FUNCTION customers.customer_result(text, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION customers.insert_customer_locked(uuid, uuid, text, text, text, text, text, uuid, uuid, uuid, text, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION customers.create_customer(uuid, uuid, text, text, text, text, text, uuid, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION customers.agent_create_customer(uuid, uuid, text, text, text, text, text, text, text, text) FROM PUBLIC;

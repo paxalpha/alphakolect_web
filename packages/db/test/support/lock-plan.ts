@@ -574,6 +574,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'customers.agent_customers': { class: 'reader' },
   'customers.read_self': { class: 'reader' },
   'customers.current_agent': { class: 'reader' },
+  'customers.customer_result': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -689,6 +690,8 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
     'the permissions of a membership session_authority or assert_authority has already resolved from the session',
   'ledger.verify_projections':
     'the operator’s nightly check of every projection against its lines (§3.4, P12): all businesses by design',
+  'customers.customer_result':
+    'a customer command’s answer: the customer the command holds and wrote, returned by that definer command',
   'customers.current_agent':
     'P8’s check that an agent records collections only for their own customers (D1): called by its definer functions',
   'ledger.assert_entry_balanced':

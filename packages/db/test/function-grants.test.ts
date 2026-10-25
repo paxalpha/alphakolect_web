@@ -75,6 +75,7 @@ const EXPECTED: Record<string, Grantee[]> = {
   'customers.branch_of(uuid, uuid)': APP,
   'customers.create_customer(uuid, uuid, text, text, text, text, text, uuid, text, text, text)': APP,
   'customers.current_agent(uuid, uuid)': OWNER_ONLY,
+  'customers.customer_result(text, uuid)': OWNER_ONLY,
   'customers.insert_customer_locked(uuid, uuid, text, text, text, text, text, uuid, uuid, uuid, text, text, text, text)':
     OWNER_ONLY,
   'customers.issue_app_invitation(uuid, uuid, text, integer, text, text, text)': APP,

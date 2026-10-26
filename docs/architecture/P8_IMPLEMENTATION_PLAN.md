@@ -1,6 +1,6 @@
 # P8 implementation plan — savings
 
-**Status: revision 2 (2026-10-26) — the owner's answers recorded; built as §9 maps; awaiting the gate review.** Planned in one pass, to be built in one pass, as
+**Status: revision 3 (2026-10-26) — the gate review's two findings resolved (§10); awaiting its re-check.** Planned in one pass, to be built in one pass, as
 P6 and P7 were ("map everything out and execute in one go"). Decisions that would go to the project lead take the
 recommended option (his standing instruction) and are recorded in §7. The owner answered
 `docs/business/P8_OWNER_SAVINGS.md` (Q1–Q11) on 25 October 2026, signed; every answer is the suggested option, so the
@@ -70,9 +70,10 @@ withdrawals paid to a bank account (OPEN-7).
 - Approval, per collection, in ascending id: `collection.cash_confirmed` (Dr 1200 / Cr 1210 agent; Dr 2190 / Cr 2100
   customer), then the fee as its own entry — `fee.first_contribution` or `fee.percentage`, with the narrative BR-6.2
   asks for, e.g. "2% deducted for merchant on 2026-10-26 09:14".
-- Lock order: the collections (one sorted helper call), then **every projection the approval will post to, in one sorted
-  acquisition**, before the first entry is inserted; each posting then re-takes projections it already holds, so nothing
-  is waited for after a contested insert (L3).
+- Lock order: **every projection the approval will post to, in one sorted acquisition** (14), then the customers'
+  enrolments and the collections (17, one sorted helper call each), before the first entry is inserted; each posting goes
+  through the `…_locked` core, which re-asserts its projections NOWAIT, so nothing is waited for after a contested
+  insert (L3; P8-10 as revised).
 
 ### 3.5 Withdrawals and target savings (owner Q7, Q8, Q9; BR-7.1–7.4)
 
@@ -138,14 +139,15 @@ savings interest and charges; maker-checker for withdrawals if a business asks (
 | P8-7 | A package's terms | never change once written: a package is renamed or archived only; other terms are a new package (the cycles and fees already taken stay explainable) |
 | P8-8 | The remittance's cash | the cash counted equals the total of the collections approved (`cash_mismatch` otherwise); a shortfall is the agent's collections left recorded |
 | P8-9 | Idempotency | a recording and a money movement carry the actor's key on their own row (unique per agent or staff member), checked under the posting's locks; the same request returns the first answer, another with the key is refused. An approval and a cancellation are idempotent by the collection's status: a retry is answered 409 and credits nothing. P6's claim records stay for the ledger's own commands |
-| P8-10 | The lock-order guard and the posting core | a posting re-takes the projections its command already holds FOR NO KEY UPDATE; the guard counts that acquisition as no new wait only then (held FOR SHARE, or not at all, it is a wait after the customer and fails). Self-tests show all three |
+| P8-10 | The lock-order guard and the posting core | revised after the gate review (R2): no exception in the guard. The posting core is split — `ledger.post_entry` takes the lines' projections and calls `ledger.post_entry_locked`, which re-asserts them NOWAIT and waits for nothing (L6); a savings command, which takes every projection it posts to in its own footprint, posts through the `…_locked` forms |
 | P8-11 | The lists' branch scope | the collection and remittance lists are branch-scoped as the customer list is (P7): a restricted staff member sees their branch's customers' collections, and the remittances made of them only; packages are business-wide |
-| P8-12 | Which cycle a collection belongs to | decided at approval by the day it was collected: after the latest cycle's 31 days it opens the next; otherwise it belongs to the latest (a collection approved late joins the cycle running) |
+| P8-12 | Which cycle a collection belongs to | revised after the gate review (R1): the cycle whose 31 days hold the day it was collected; a new one when it falls after the last cycle; otherwise (a day in no cycle, before a later one was opened) the last one. A collection is approved only under the package it was recorded under (`package_changed` otherwise: cancel and record again); a recording is checked against the next cycle's package when a change waits and the current cycle has ended |
 
 ## 8. Revision log
 
 | Rev | Date | Change |
 |---|---|---|
+| 3 | 2026-10-26 | The gate review's findings resolved (§10): migration `20261027000300_savings_review`; P8-10 and P8-12 revised |
 | 2 | 2026-10-26 | The owner's answers recorded (Q1–Q11, all the suggested option); built as §9 maps; decisions P8-7 to P8-12, P8-4 revised |
 | 1 | 2026-10-26 | First plan; the owner's questions asked |
 
@@ -165,3 +167,21 @@ savings interest and charges; maker-checker for withdrawals if a business asks (
 The gate (2026-10-26): `format:check`, `lint`, `typecheck`, `build`, the contracts' `openapi:check`, `test` (contracts
 102, db 855, api 1887) and `test:concurrency` (31: P5's, P6's and P7's races and the five savings races, 50 runs each)
 — green. The frozen route map is 99 operations.
+
+## 10. The gate review (2026-10-26) and its resolution
+
+The independent reviewer found P8 not ready to close, on two findings; both are resolved in revision 3, in the forward
+migration `20261027000300_savings_review`. The project lead asked for every blocker to be found and fixed without waiting
+for the reviewer; the self-review that followed is recorded with them.
+
+| # | Finding | Resolution |
+|---|---|---|
+| R1 (high) | A waiting package change: a collection recorded under the old package, after the cycle had ended, opened the next cycle on the new package at approval without its amount checked against it | A recording is checked against the package that will govern it — the next cycle's when a change waits and the current cycle has ended — and records that package. An approval puts a collection in the cycle whose days hold its collection day (a new one after the last) and refuses one recorded under another package than that cycle's (`package_changed`, 422 `PACKAGE_CHANGED`; nothing is written, the business cancels it and the agent records it again). Tests: the next package governs once the cycle ends (₦1,000 refused, ₦2,000 recorded and opening cycle 2 on the new package); an immediate change leaves a recorded collection refused with nothing written, then cancelled and recorded again; a collection approved late joins the cycle holding its day without a second fee; the API answer |
+| R2 (medium) | The lock-order guard skipped the posting core's projection lock whenever any projection was held FOR NO KEY UPDATE — a table-level exception that did not prove the same rows were held | The exception is removed. `ledger.post_entry` is split: it takes the lines' projections (one sorted call) and calls `ledger.post_entry_locked`, which re-asserts each NOWAIT and waits for nothing (L6, not executable by the app); `ledger.post_template_locked` and `ledger.post_reversal_locked` post through it, and the savings commands use them after taking every projection in their own footprint. A projection a caller does not hold is taken at once or the command fails (`lock_not_available`) — never waited for, so no row set needs proving. Self-tests: the waiting core after the customer fails the order even with the projections held; the `…_locked` core passes held or not. A test shows a projection held elsewhere fails the locked core at once; a new race (50 runs) shows a remittance waits at its own up-front acquisition behind a posting to the same customer, then approves |
+| S1 (self-review) | P8-12's cycle rule assigned a collection approved late to the latest cycle even when an earlier cycle held its day | resolved with R1: the cycle that holds the day |
+
+| S2 (self-review) | The gate's first run after the fixes hit a deadlock — two test files dropping their injected audit triggers at once (Postgres's report names both statements; no product code was involved), likelier with P8's sixteen new injected-failure tests | the test helper changes its triggers in one transaction under an advisory lock, then the table's lock, so the files take turns (`test/support/audit.ts`; the purge CLI test uses it too) |
+
+The gate (2026-10-26, revision 3): `format:check`, `lint`, `typecheck`, `build`, `openapi:check` green; `test`: contracts
+102, db 859, api 1888 — every test passed; the run reported one Vitest worker RPC timeout ("onTaskUpdate", no test
+affected) on a machine with 0.4 GB of 7.7 GB free; `test:concurrency` 32 (six savings races, 50 runs each) green.

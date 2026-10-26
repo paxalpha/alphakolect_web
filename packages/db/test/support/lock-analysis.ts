@@ -769,13 +769,8 @@ export function analyse(
         out.push(s);
         continue;
       }
-      // A write to rows already held FOR NO KEY UPDATE waits for nothing new; an explicit lock always counts — except
-      // the posting core's own sorted acquisition when its caller already holds the projections FOR NO KEY UPDATE
-      // (P8-3: a savings command locks every projection it posts to before its own rows, and each posting re-takes
-      // them). The races (savings-races.test.ts) are the adversarial evidence that the rows re-taken are the rows held.
+      // A write to rows already held FOR NO KEY UPDATE waits for nothing new; an explicit lock always counts.
       if (s.mode === 'W' && held.get(s.table) === 'NKU') continue;
-      if (s.helper && s.mode === 'NKU' && s.via === 'ledger.post_entry' && held.get(s.table) === 'NKU')
-        continue;
       out.push(s);
       if (s.mode === 'NKU' || s.mode === 'W' || s.mode.includes('NKU')) held.set(s.table, 'NKU');
       else if (!held.has(s.table)) held.set(s.table, 'S');

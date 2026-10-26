@@ -258,10 +258,10 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   },
   // ── P8: savings (plan §3, P8-3) ──
   // Each command: the business (S), the actor (the authority lock), the actor's role and branch, then every projection
-  // it posts to (14, one sorted acquisition — each posting re-takes them), the customer (16), then its own rows (17:
-  // packages, enrolments, target goals, collections); its contested inserts last (L3). A remittance locks the
-  // enrolments and the collections (TA-13) in one sorted call each; its loop (counted twice) opens a cycle (+17) and
-  // posts (+15).
+  // it posts to (14, one sorted acquisition — each posting re-asserts them NOWAIT through the …_locked core), the
+  // customer (16), then its own rows (17: packages, enrolments, target goals, collections); its contested inserts last
+  // (L3). A remittance locks the enrolments and the collections (TA-13) in one sorted call each; its loop (counted
+  // twice) opens a cycle (+17) and posts (+15).
   'savings.create_package': {
     class: 'operation',
     planned: ['2:S', 'A3:NKU', '7:S', '+17'],
@@ -575,6 +575,36 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   },
   'ledger.post_reversal': {
     class: 'identity',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  // P8 review (R2): the posting core without its acquisition — the lines' projections re-asserted NOWAIT (L6), so a
+  // domain command that took them in its own footprint posts without waiting; the template and reversal forms post
+  // through it
+  'ledger.post_entry_locked': {
+    class: 'locked',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'ledger.post_template_locked': {
+    class: 'locked',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  },
+  'ledger.post_reversal_locked': {
+    class: 'locked',
     writes: [
       'ledger.journal_entries',
       'ledger.journal_lines',

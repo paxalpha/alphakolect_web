@@ -269,6 +269,42 @@ describe('the savings races, staged (P8 §5; TA-13)', () => {
     }
   });
 
+  it(`R2: a posting holds a customer's balance while their remittance starts — it waits up front, then approves (${RUNS} runs)`, async () => {
+    const b = await business();
+    const agent = await b.agent();
+    for (let i = 0; i < RUNS; i++) {
+      const customer = await b.customer(agent.membershipId);
+      const c = await record(a1, agent.session, customer, 10_000);
+      const { rows } = await owner.query(
+        `SELECT a.ledger_id, a.id AS savings,
+                (SELECT o.id FROM ledger.accounts o WHERE o.ledger_id = a.ledger_id AND o.code = '1200' AND o.subject_id IS NULL) AS office
+           FROM ledger.accounts a WHERE a.subject_id = $1 AND a.code = '2100'`,
+        [customer],
+      );
+      const { ledger_id: ledgerId, savings, office } = rows[0];
+      const second = await race(
+        owner,
+        a2,
+        pid.a2,
+        (x) =>
+          x.query(
+            `SELECT * FROM ledger.post_entry($1, $2, 'test', current_date, 'Race', NULL, NULL, $3, NULL, NULL)`,
+            [
+              ledgerId,
+              key(),
+              JSON.stringify([
+                { accountId: office, side: 'debit', amountMinor: '500' },
+                { accountId: savings, side: 'credit', amountMinor: '500' },
+              ]),
+            ],
+          ),
+        approve(b.managerSession, agent.membershipId, c.id, 10_000),
+      );
+      expect(second.outcome).toBe('ok');
+      expect(await savingsOf(customer)).toBe(500 + 9_900);
+    }
+  });
+
   it(`two withdrawals of the whole balance at once — one paid, the other refused (BR-7.4; ${RUNS} runs)`, async () => {
     const b = await business();
     const agent = await b.agent();

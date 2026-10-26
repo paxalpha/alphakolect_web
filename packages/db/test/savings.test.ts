@@ -290,10 +290,12 @@ describe('enrolment (BR-5.1, Q10)', () => {
     const waiting = await enrol(b.session, customerId, next);
     expect(waiting).toMatchObject({ outcome: 'ok', next_package_id: next, effective: 'next_cycle' });
     // A contribution after the cycle's 31 days opens the next cycle, on the new package (one day's ₦2,000 as its fee).
+    // (The cycle moved into the past: its 31 days have ended.)
+    await owner.query(
+      `UPDATE savings.cycles SET starts_on = current_date - 40, ends_on = current_date - 10 WHERE customer_id = $1`,
+      [customerId],
+    );
     const later = await record(agent.session, customerId, 200_000);
-    await owner.query(`UPDATE savings.collections SET collected_on = current_date + 31 WHERE id = $1`, [
-      later.id,
-    ]);
     expect((await approve(b.session, agent.membershipId, [later.id], 200_000)).outcome).toBe('ok');
     expect(
       await one(`SELECT package_id, next_package_id FROM savings.enrolments WHERE customer_id = $1`, [
@@ -518,6 +520,137 @@ describe('remittances and fees (Q2, Q4, Q5; BR-5.5, 5.6, 6.1, 6.2; TA-13)', () =
     expect((await approve(b.session, agent.membershipId, [c.id], 100_000)).outcome).toBe('inactive_customer');
     expect((await cancel(b.session, c.id)).outcome).toBe('ok');
     expect(await balance(agent.membershipId, '1210')).toBe(0);
+  });
+});
+
+describe('R1 (the gate review): the package that governs a collection', () => {
+  /** The customer's only cycle, moved into the past so that it has ended. */
+  const endCycle = (customerId: string) =>
+    owner.query(
+      `UPDATE savings.cycles SET starts_on = current_date - 40, ends_on = current_date - 10 WHERE customer_id = $1`,
+      [customerId],
+    );
+
+  it('a change waiting for the next cycle governs a recording once the current cycle has ended', async () => {
+    const { b, agent, customerId, packageId } = await saver();
+    const first = await record(agent.session, customerId, 100_000);
+    await approve(b.session, agent.membershipId, [first.id], 100_000);
+    const next = (await createPackage(b.session, { amount: 200_000 })).id as string;
+    expect((await enrol(b.session, customerId, next)).effective).toBe('next_cycle');
+    // While the cycle runs, the current package governs.
+    expect(await record(agent.session, customerId, 100_000)).toMatchObject({
+      outcome: 'ok',
+      package_id: packageId,
+    });
+    await endCycle(customerId);
+    // After it: the next cycle's (₦2,000 a day): ₦1,000 is refused, ₦2,000 recorded under the new package.
+    expect((await record(agent.session, customerId, 100_000)).outcome).toBe('invalid_amount');
+    const opening = await record(agent.session, customerId, 200_000);
+    expect(opening).toMatchObject({ outcome: 'ok', package_id: next, days: 1 });
+    expect((await approve(b.session, agent.membershipId, [opening.id], 200_000)).fee_total_minor).toBe(
+      '200000',
+    );
+    expect(
+      await one(
+        `SELECT number, package_id FROM savings.cycles WHERE customer_id = $1 ORDER BY number DESC LIMIT 1`,
+        [customerId],
+      ),
+    ).toEqual({ number: 2, package_id: next });
+  });
+
+  it('a collection recorded under another package than its cycle’s is refused, nothing written; cancelled, then recorded again', async () => {
+    const { b, agent, customerId } = await saver();
+    const old = await record(agent.session, customerId, 100_000);
+    // No cycle runs: the change takes effect at once, and the recorded collection's package is no longer the customer's.
+    const next = (await createPackage(b.session, { amount: 200_000 })).id as string;
+    expect((await enrol(b.session, customerId, next)).effective).toBe('now');
+    const entries = async () =>
+      (
+        await one(`SELECT count(*)::int AS n FROM ledger.journal_entries WHERE merchant_id = $1`, [
+          b.merchantId,
+        ])
+      ).n;
+    const before = await entries();
+    expect((await approve(b.session, agent.membershipId, [old.id], 100_000)).outcome).toBe('package_changed');
+    expect(await entries()).toBe(before);
+    expect(
+      (await one(`SELECT count(*)::int AS n FROM savings.cycles WHERE customer_id = $1`, [customerId])).n,
+    ).toBe(0);
+    expect((await one(`SELECT status FROM savings.collections WHERE id = $1`, [old.id])).status).toBe(
+      'recorded',
+    );
+    expect((await cancel(b.session, old.id)).outcome).toBe('ok');
+    const again = await record(agent.session, customerId, 200_000);
+    expect((await approve(b.session, agent.membershipId, [again.id], 200_000)).outcome).toBe('ok');
+  });
+
+  it('a collection approved late joins the cycle that holds its day, without a second fee', async () => {
+    const { b, agent, customerId } = await saver();
+    const early = await record(agent.session, customerId, 100_000);
+    const later = await record(agent.session, customerId, 100_000);
+    await owner.query(`UPDATE savings.collections SET collected_on = current_date - 40 WHERE id = $1`, [
+      early.id,
+    ]);
+    await owner.query(`UPDATE savings.collections SET collected_on = current_date - 30 WHERE id = $1`, [
+      later.id,
+    ]);
+    expect((await approve(b.session, agent.membershipId, [early.id], 100_000)).fee_total_minor).toBe(
+      '100000',
+    );
+    const third = await record(agent.session, customerId, 100_000); // today: after cycle 1's 31 days — cycle 2
+    expect((await approve(b.session, agent.membershipId, [third.id], 100_000)).fee_total_minor).toBe(
+      '100000',
+    );
+    // The one left out, collected on day 10 of cycle 1, joins cycle 1 when its cash comes in.
+    expect((await approve(b.session, agent.membershipId, [later.id], 100_000)).fee_total_minor).toBe('0');
+    expect(
+      await one(
+        `SELECT y.number FROM savings.collections c JOIN savings.cycles y ON y.id = c.cycle_id WHERE c.id = $1`,
+        [later.id],
+      ),
+    ).toEqual({ number: 1 });
+  });
+});
+
+describe('R2 (the gate review): the …_locked posting core never waits', () => {
+  it('a projection held elsewhere fails the posting at once (lock_not_available), it is not waited for', async () => {
+    const { b, customerId } = await saver();
+    const ledgerId = (await one(`SELECT id FROM ledger.ledgers WHERE merchant_id = $1`, [b.merchantId])).id;
+    const [office, savings] = [
+      (
+        await one(
+          `SELECT id FROM ledger.accounts WHERE ledger_id = $1 AND code = '1200' AND subject_id IS NULL`,
+          [ledgerId],
+        )
+      ).id,
+      (await one(`SELECT id FROM ledger.accounts WHERE subject_id = $1 AND code = '2100'`, [customerId])).id,
+    ];
+    const holder = await connectAs('migrator');
+    try {
+      await holder.query('BEGIN');
+      await holder.query(`SELECT 1 FROM ledger.balance_projection WHERE account_id = $1 FOR NO KEY UPDATE`, [
+        savings,
+      ]);
+      const started = Date.now();
+      await expectSqlState(
+        owner.query(
+          `SELECT * FROM ledger.post_entry_locked($1, $2, 'test', current_date, 'R2', NULL, NULL, $3, NULL, NULL)`,
+          [
+            ledgerId,
+            key(),
+            JSON.stringify([
+              { accountId: office, side: 'debit', amountMinor: '1' },
+              { accountId: savings, side: 'credit', amountMinor: '1' },
+            ]),
+          ],
+        ),
+        '55P03',
+      );
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      await holder.query('ROLLBACK');
+      await holder.end();
+    }
   });
 });
 

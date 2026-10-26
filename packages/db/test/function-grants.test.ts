@@ -207,6 +207,12 @@ const EXPECTED: Record<string, Grantee[]> = {
   'ledger.post_reversal(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
   'ledger.open_subaccount(uuid, text, text, uuid)': OWNER_ONLY,
   'ledger.post_template(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)': OWNER_ONLY,
+  // P8 review (R2): the posting core without its acquisition, for domain commands that hold the projections
+  'ledger.post_entry_locked(uuid, text, text, date, text, text, text, jsonb, uuid, uuid, uuid, integer)':
+    OWNER_ONLY,
+  'ledger.post_reversal_locked(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
+  'ledger.post_template_locked(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)':
+    OWNER_ONLY,
   'ledger.verify_projections()': OWNER_ONLY,
   // P6: the session commands and the B1 reads
   'ledger.create_account(uuid, text, text, text, text, text, text)': APP,

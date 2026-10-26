@@ -619,9 +619,11 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
             END $$`,
       cls: IDENTITY,
     },
-    // P8-3: a posting re-takes the projections its caller already holds FOR NO KEY UPDATE — and only those: held
-    // FOR SHARE, or not held at all, the posting core's acquisition is a wait after the customer (category 16)
-    posts_held: {
+    // P8 review (R2): no exception for the posting core. ledger.post_entry waits for its projections, so after the
+    // customer (category 16) it fails the order even when the caller already holds them; the …_locked core re-asserts
+    // them NOWAIT and waits for nothing, whichever rows the caller holds (a row it does not hold is taken at once or
+    // the command fails — savings.test.ts shows the failure is immediate)
+    posts_waiting: {
       sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v_accounts uuid[]; BEGIN
               v_accounts := ARRAY[p_customer];
               PERFORM ledger.lock_projections(NULL, v_accounts);
@@ -630,19 +632,19 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
             END $$`,
       cls: POSTS,
     },
-    posts_shared: {
+    posts_locked: {
       sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v_accounts uuid[]; BEGIN
               v_accounts := ARRAY[p_customer];
-              PERFORM ledger.lock_projections(v_accounts, NULL);
+              PERFORM ledger.lock_projections(NULL, v_accounts);
               PERFORM 1 FROM customers.customers c WHERE c.id = p_customer FOR SHARE;
-              PERFORM ledger.post_entry(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
+              PERFORM ledger.post_entry_locked(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
             END $$`,
       cls: POSTS,
     },
-    posts_unheld: {
+    posts_locked_unheld: {
       sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
               PERFORM 1 FROM customers.customers c WHERE c.id = p_customer FOR SHARE;
-              PERFORM ledger.post_entry(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
+              PERFORM ledger.post_entry_locked(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
             END $$`,
       cls: POSTS,
     },
@@ -713,14 +715,12 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     expect(of('admit_ok_locked'), report(of('admit_ok_locked'))).toEqual([]);
   });
 
-  it('P8-3: a posting re-takes projections its caller holds FOR NO KEY UPDATE; held FOR SHARE or not at all, it waits', () => {
-    expect(of('posts_held'), report(of('posts_held'))).toEqual([]);
-    expect(run.footprints.get(`${s}.posts_held`)).toEqual(['14:NKU', '16:S', '+15']);
-    for (const name of ['posts_shared', 'posts_unheld'])
-      expect(
-        of(name).map((f) => f.kind),
-        name,
-      ).toEqual(['order']);
+  it('R2: the waiting posting core after the customer fails, held or not; the …_locked core waits for nothing', () => {
+    expect(of('posts_waiting').map((f) => f.kind)).toEqual(['order']);
+    expect(of('posts_locked'), report(of('posts_locked'))).toEqual([]);
+    expect(run.footprints.get(`${s}.posts_locked`)).toEqual(['14:NKU', '16:S', '+15']);
+    expect(of('posts_locked_unheld'), report(of('posts_locked_unheld'))).toEqual([]);
+    expect(run.footprints.get(`${s}.posts_locked_unheld`)).toEqual(['16:S', '+15']);
   });
 
   it('(a) one inverted pair of categories fails (order and footprint)', () => {

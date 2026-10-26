@@ -7934,7 +7934,7 @@
             }
           },
           "422": {
-            "description": "CASH_MISMATCH — the cash is not the collections’ total; INVALID_AGENT — not an agent of the business; INACTIVE_CUSTOMER — a customer is not active (cancel the collection)",
+            "description": "CASH_MISMATCH — the cash is not the collections’ total; INVALID_AGENT — not an agent of the business; INACTIVE_CUSTOMER — a customer is not active (cancel the collection); PACKAGE_CHANGED — a collection was recorded under another package than its cycle’s (cancel it, record it again)",
             "content": {
               "application/json": {
                 "schema": {

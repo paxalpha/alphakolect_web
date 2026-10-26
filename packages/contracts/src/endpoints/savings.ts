@@ -480,7 +480,7 @@ export const createRemittance = defineEndpoint({
     404: error('NOT_FOUND — a collection is not this agent’s in this business (or in your branch)'),
     409: error('INVALID_LIFECYCLE_TRANSITION — a collection is already approved or cancelled'),
     422: error(
-      'CASH_MISMATCH — the cash is not the collections’ total; INVALID_AGENT — not an agent of the business; INACTIVE_CUSTOMER — a customer is not active (cancel the collection)',
+      'CASH_MISMATCH — the cash is not the collections’ total; INVALID_AGENT — not an agent of the business; INACTIVE_CUSTOMER — a customer is not active (cancel the collection); PACKAGE_CHANGED — a collection was recorded under another package than its cycle’s (cancel it, record it again)',
     ),
   },
 });

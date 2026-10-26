@@ -108,14 +108,32 @@ const FROZEN: Record<string, unknown> = {
   customerRefresh: cap('refresh_token'),
   acceptCustomerInvitation: cap('invitation_token'),
   getCustomerSelf: SELF,
+  // P8: savings — packages business-wide; a customer's savings, collections and remittances branch-scoped (P8-11)
+  listSavingsPackages: perm('merchant.savings.read'),
+  createSavingsPackage: perm('merchant.packages.manage'),
+  updateSavingsPackage: perm('merchant.packages.manage'),
+  enrolCustomer: bperm('merchant.packages.manage'),
+  getCustomerSavings: bperm('merchant.savings.read'),
+  listSavingsMovements: bperm('merchant.savings.read'),
+  listCollections: bperm('merchant.savings.read'),
+  cancelCollection: bperm('merchant.remittances.approve'),
+  listRemittances: bperm('merchant.savings.read'),
+  createRemittance: perm('merchant.remittances.approve'),
+  createWithdrawal: bperm('merchant.withdrawals.create'),
+  createTargetTransfer: bperm('merchant.withdrawals.create'),
+  setTargetGoal: bperm('merchant.withdrawals.create'),
+  recordCollection: SELF,
+  listAgentCollections: SELF,
+  getCustomerSelfSavings: SELF,
+  listCustomerSelfCollections: SELF,
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 82 operations, one class each', () => {
+  it('declare exactly the frozen route map: 99 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(82);
+    expect(Object.keys(declared)).toHaveLength(99);
     expect(declared).toEqual(FROZEN);
   });
 

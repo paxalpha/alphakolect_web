@@ -35,10 +35,14 @@ const MERCHANT = [
   'merchant.ledger.read',
   'merchant.members.manage',
   'merchant.members.read',
+  'merchant.packages.manage',
   'merchant.profile.read',
   'merchant.profile.update',
+  'merchant.remittances.approve',
   'merchant.roles.manage',
   'merchant.roles.read',
+  'merchant.savings.read',
+  'merchant.withdrawals.create',
 ];
 const PLATFORM = [
   'platform.audit.read',

@@ -84,6 +84,11 @@ const REFUSAL_MESSAGE: Record<Permission, string> = {
   'merchant.customers.manage': ASK_THE_OWNER,
   'merchant.customers.assign': ASK_THE_OWNER,
   'merchant.customers.anonymise': OWNER_ONLY,
+  // P8: savings, all four grantable (the owner's answers of 2026-10-25, Q11)
+  'merchant.savings.read': ASK_THE_OWNER,
+  'merchant.packages.manage': ASK_THE_OWNER,
+  'merchant.remittances.approve': ASK_THE_OWNER,
+  'merchant.withdrawals.create': ASK_THE_OWNER,
   'platform.merchants.read': ASK_A_SUPER_ADMIN,
   'platform.audit.read': ASK_A_SUPER_ADMIN,
   'platform.merchants.lifecycle': 'Only a platform super admin may change a merchant’s status',

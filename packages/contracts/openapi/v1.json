@@ -7020,6 +7020,1591 @@
           }
         }
       }
+    },
+    "/v1/merchant/packages": {
+      "get": {
+        "operationId": "listSavingsPackages",
+        "summary": "The business’s savings packages",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.savings.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every package, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsPackageList"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.savings.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createSavingsPackage",
+        "summary": "Create a savings package with exactly one fee rule (BR-6.1)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.packages.manage",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePackageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsPackage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.packages.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "NAME_TAKEN — an active package of the business has this name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/packages/{packageId}": {
+      "patch": {
+        "operationId": "updateSavingsPackage",
+        "summary": "Rename or archive a package (its terms never change)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.packages.manage",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "packageId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePackageRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsPackage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.packages.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such package in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "NAME_TAKEN — an active package of the business has this name",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/enrolment": {
+      "put": {
+        "operationId": "enrolCustomer",
+        "summary": "Put a customer on a package (one at a time, BR-5.1); during a cycle the change takes effect with the next (Q10)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.packages.manage",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnrolRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The enrolment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Enrolment"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.packages.manage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_PACKAGE — not an active package of the business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/savings": {
+      "get": {
+        "operationId": "getCustomerSavings",
+        "summary": "A customer’s package, cycle, balances, collections awaiting confirmation and goal",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.savings.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer’s savings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerSavings"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.savings.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/savings/movements": {
+      "get": {
+        "operationId": "listSavingsMovements",
+        "summary": "A customer’s withdrawals and moves into target savings",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.savings.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsMovementList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.savings.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/collections": {
+      "get": {
+        "operationId": "listCollections",
+        "summary": "The business’s cash collections (a branch-restricted staff member’s branch only), by customer, agent, status or remittance",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.savings.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentMembershipId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "$ref": "#/components/schemas/CollectionStatus"
+            }
+          },
+          {
+            "in": "query",
+            "name": "remittanceId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of collections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CollectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.savings.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/collections/{collectionId}/cancellation": {
+      "post": {
+        "operationId": "cancelCollection",
+        "summary": "Cancel a collection recorded by mistake, before approval, with a reason (reversed in the books)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.remittances.approve",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collectionId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelCollectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The collection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.remittances.approve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such collection in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already approved or cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/remittances": {
+      "get": {
+        "operationId": "listRemittances",
+        "summary": "The business’s remittances",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.savings.read",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "agentMembershipId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of remittances",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemittanceList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.savings.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRemittance",
+        "summary": "Approve the collections an agent’s cash covers: the customers are credited and the fees taken, each its own entry",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.remittances.approve",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRemittanceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The remittance",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Remittance"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.remittances.approve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — a collection is not this agent’s in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — a collection is already approved or cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "CASH_MISMATCH — the cash is not the collections’ total; INVALID_AGENT — not an agent of the business; INACTIVE_CUSTOMER — a customer is not active (cancel the collection); PACKAGE_CHANGED — a collection was recorded under another package than its cycle’s (cancel it, record it again)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/withdrawals": {
+      "post": {
+        "operationId": "createWithdrawal",
+        "summary": "Pay a customer cash from their savings or target savings (never above the balance, BR-7.4)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.withdrawals.create",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[!-~]+$",
+              "description": "Client-generated unique key for this operation; reuse it when retrying"
+            },
+            "required": true,
+            "description": "Client-generated unique key for this operation; reuse it when retrying"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Paid (or, for a retry, the first answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsMovement"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.withdrawals.create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the key was used with another request; INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INSUFFICIENT_BALANCE — more than the wallet holds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/target-transfers": {
+      "post": {
+        "operationId": "createTargetTransfer",
+        "summary": "Move a customer’s savings into their target savings",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.withdrawals.create",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[!-~]+$",
+              "description": "Client-generated unique key for this operation; reuse it when retrying"
+            },
+            "required": true,
+            "description": "Client-generated unique key for this operation; reuse it when retrying"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetTransferRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Moved (or, for a retry, the first answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavingsMovement"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.withdrawals.create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the key was used with another request; INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INSUFFICIENT_BALANCE — more than the savings hold",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/customers/{customerId}/target-goal": {
+      "put": {
+        "operationId": "setTargetGoal",
+        "summary": "Set or clear a customer’s target-savings goal (an amount and/or a date)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.withdrawals.create",
+          "branchScope": "branch"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "customerId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TargetGoalRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The goal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetGoal"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR — a date in the past",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.withdrawals.create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such customer in this business (or in your branch)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agent/collections": {
+      "post": {
+        "operationId": "recordCollection",
+        "summary": "Record a cash collection from one of the agent’s own customers (counted in their savings once the business approves it)",
+        "tags": [
+          "agent"
+        ],
+        "x-audience": "agent",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 200,
+              "pattern": "^[!-~]+$",
+              "description": "Client-generated unique key for this operation; reuse it when retrying"
+            },
+            "required": true,
+            "description": "Client-generated unique key for this operation; reuse it when retrying"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordCollectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Recorded (or, for a retry, the first answer)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCollection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — not one of the agent’s customers",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "IDEMPOTENCY_KEY_REUSED — the key was used with another request; INVALID_LIFECYCLE_TRANSITION — the customer is not active",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "NOT_ENROLLED — the customer has no package; INVALID_AMOUNT — not the package’s amount or a multiple of it (fixed), or below its minimum (flexible)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listAgentCollections",
+        "summary": "The collections the signed-in agent recorded",
+        "tags": [
+          "agent"
+        ],
+        "x-audience": "agent",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "$ref": "#/components/schemas/CollectionStatus"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCollectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customer/savings": {
+      "get": {
+        "operationId": "getCustomerSelfSavings",
+        "summary": "The signed-in customer’s savings, with what awaits the business’s confirmation",
+        "tags": [
+          "customer"
+        ],
+        "x-audience": "customer",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer’s savings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerSavings"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/customer/savings/collections": {
+      "get": {
+        "operationId": "listCustomerSelfCollections",
+        "summary": "The signed-in customer’s collections, pending ones included",
+        "tags": [
+          "customer"
+        ],
+        "x-audience": "customer",
+        "x-authorization": {
+          "class": "self"
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerCollectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7797,6 +9382,202 @@
           "token",
           "email",
           "password"
+        ]
+      },
+      "CreatePackageRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PackageKind"
+          },
+          "amountMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          },
+          "feeRule": {
+            "$ref": "#/components/schemas/FeeRule"
+          },
+          "feeRateBp": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "amountMinor",
+          "feeRule"
+        ]
+      },
+      "PackageKind": {
+        "type": "string",
+        "enum": [
+          "fixed",
+          "flexible"
+        ],
+        "description": "fixed: the amount or a multiple of it; flexible: any amount from it"
+      },
+      "FeeRule": {
+        "type": "string",
+        "enum": [
+          "first_contribution",
+          "percentage"
+        ],
+        "description": "Exactly one per package (BR-6.1)"
+      },
+      "UpdatePackageRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          }
+        }
+      },
+      "EnrolRequest": {
+        "type": "object",
+        "properties": {
+          "packageId": {
+            "$ref": "#/components/schemas/Id"
+          }
+        },
+        "required": [
+          "packageId"
+        ]
+      },
+      "CollectionStatus": {
+        "type": "string",
+        "enum": [
+          "recorded",
+          "approved",
+          "cancelled"
+        ]
+      },
+      "CancelCollectionRequest": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "reason"
+        ]
+      },
+      "CreateRemittanceRequest": {
+        "type": "object",
+        "properties": {
+          "agentMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "collectionIds": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Id"
+            }
+          },
+          "cashMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          }
+        },
+        "required": [
+          "agentMembershipId",
+          "collectionIds",
+          "cashMinor"
+        ]
+      },
+      "WithdrawalRequest": {
+        "type": "object",
+        "properties": {
+          "wallet": {
+            "type": "string",
+            "enum": [
+              "savings",
+              "target"
+            ]
+          },
+          "amountMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          }
+        },
+        "required": [
+          "wallet",
+          "amountMinor"
+        ],
+        "description": "Cash paid out from the customer’s savings or target savings"
+      },
+      "TargetTransferRequest": {
+        "type": "object",
+        "properties": {
+          "amountMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          }
+        },
+        "required": [
+          "amountMinor"
+        ],
+        "description": "Savings moved into target savings"
+      },
+      "TargetGoalRequest": {
+        "type": "object",
+        "properties": {
+          "goalAmountMinor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AmountMinor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "goalDate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LedgerDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "goalAmountMinor",
+          "goalDate"
+        ],
+        "description": "An amount and/or a date; both null clears the goal"
+      },
+      "RecordCollectionRequest": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amountMinor": {
+            "$ref": "#/components/schemas/AmountMinor"
+          }
+        },
+        "required": [
+          "customerId",
+          "amountMinor"
         ]
       },
       "Currency": {
@@ -10176,6 +11957,752 @@
         ],
         "additionalProperties": false,
         "description": "The signed-in customer’s own record and business"
+      },
+      "SavingsPackageList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavingsPackage"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "SavingsPackage": {
+        "type": "object",
+        "properties": {
+          "packageId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PackageKind"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "feeRule": {
+            "$ref": "#/components/schemas/FeeRule"
+          },
+          "feeRateBp": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived"
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "archivedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "packageId",
+          "name",
+          "kind",
+          "amount",
+          "feeRule",
+          "feeRateBp",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "archivedAt"
+        ],
+        "additionalProperties": false,
+        "description": "A savings package; its terms never change once created"
+      },
+      "Enrolment": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "packageId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "nextPackageId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "effective": {
+            "type": "string",
+            "enum": [
+              "now",
+              "next_cycle"
+            ]
+          },
+          "enrolledAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "customerId",
+          "packageId",
+          "nextPackageId",
+          "effective",
+          "enrolledAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "CustomerSavings": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "packageId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextPackageId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "enrolledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cycle": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "startsOn": {
+                    "$ref": "#/components/schemas/LedgerDate"
+                  },
+                  "endsOn": {
+                    "$ref": "#/components/schemas/LedgerDate"
+                  }
+                },
+                "required": [
+                  "number",
+                  "startsOn",
+                  "endsOn"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "savings": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "targetSavings": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "awaitingConfirmation": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/Money"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "date": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/LedgerDate"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "amount",
+                  "date"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "customerId",
+          "packageId",
+          "nextPackageId",
+          "enrolledAt",
+          "cycle",
+          "savings",
+          "targetSavings",
+          "awaitingConfirmation",
+          "goal"
+        ],
+        "additionalProperties": false,
+        "description": "A customer’s savings at a glance"
+      },
+      "SavingsMovementList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SavingsMovement"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "SavingsMovement": {
+        "type": "object",
+        "properties": {
+          "movementId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "savings_withdrawal",
+              "target_withdrawal",
+              "to_target"
+            ]
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "entryId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "movementId",
+          "customerId",
+          "kind",
+          "amount",
+          "entryId",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "CollectionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Collection"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "Collection": {
+        "type": "object",
+        "properties": {
+          "collectionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "agentMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "packageId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "collectedOn": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectionStatus"
+          },
+          "remittanceId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cycleId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "collectionId",
+          "customerId",
+          "agentMembershipId",
+          "packageId",
+          "amount",
+          "days",
+          "collectedOn",
+          "status",
+          "remittanceId",
+          "cycleId",
+          "fee",
+          "createdAt",
+          "approvedAt",
+          "cancelledAt",
+          "cancelReason"
+        ],
+        "additionalProperties": false,
+        "description": "A cash collection recorded by an agent"
+      },
+      "RemittanceList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Remittance"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "Remittance": {
+        "type": "object",
+        "properties": {
+          "remittanceId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "agentMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "cash": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "collectionCount": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "feeTotal": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "approvedByMembershipId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "remittanceId",
+          "agentMembershipId",
+          "cash",
+          "collectionCount",
+          "feeTotal",
+          "approvedByMembershipId",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "An agent’s cash, approved for the collections it covers"
+      },
+      "TargetGoal": {
+        "type": "object",
+        "properties": {
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "goalAmount": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "goalDate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LedgerDate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "customerId",
+          "goalAmount",
+          "goalDate",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "AgentCollection": {
+        "type": "object",
+        "properties": {
+          "collectionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "customerId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "packageId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "collectedOn": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectionStatus"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "collectionId",
+          "customerId",
+          "packageId",
+          "amount",
+          "days",
+          "collectedOn",
+          "status",
+          "createdAt",
+          "approvedAt",
+          "cancelledAt"
+        ],
+        "additionalProperties": false,
+        "description": "A collection the agent recorded"
+      },
+      "AgentCollectionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentCollection"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "CustomerCollectionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CustomerCollection"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "CustomerCollection": {
+        "type": "object",
+        "properties": {
+          "collectionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "days": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "collectedOn": {
+            "$ref": "#/components/schemas/LedgerDate"
+          },
+          "status": {
+            "$ref": "#/components/schemas/CollectionStatus"
+          },
+          "fee": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "approvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cancelledAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "collectionId",
+          "amount",
+          "days",
+          "collectedOn",
+          "status",
+          "fee",
+          "createdAt",
+          "approvedAt",
+          "cancelledAt"
+        ],
+        "additionalProperties": false,
+        "description": "One of the customer’s collections; \"recorded\" is awaiting the business’s confirmation"
       },
       "Money": {
         "type": "object",

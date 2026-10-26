@@ -85,6 +85,30 @@ const EXPECTED: Record<string, Grantee[]> = {
   'customers.read_self(uuid)': APP,
   'customers.set_customer_status(uuid, uuid, text, text, text, text)': APP,
   'customers.update_customer(uuid, uuid, jsonb, text, text, text)': APP,
+  // savings — P8: the commands and reads the API calls; the commands' answers, the summary and the lock helpers are
+  // called by definer functions only
+  'savings.agent_collections(uuid, text, integer, timestamp with time zone, uuid)': APP,
+  'savings.approve_remittance(uuid, uuid, uuid[], bigint, text, text, text)': APP,
+  'savings.cancel_collection(uuid, uuid, text, text, text, text)': APP,
+  'savings.collection_branch(uuid, uuid)': APP,
+  'savings.collection_result(text, uuid)': OWNER_ONLY,
+  'savings.create_package(uuid, text, text, bigint, text, integer, text, text, text)': APP,
+  'savings.customer_savings(uuid, uuid)': APP,
+  'savings.enrol_customer(uuid, uuid, uuid, text, text, text)': APP,
+  'savings.list_collections(uuid, uuid, uuid, text, uuid, integer, timestamp with time zone, uuid)': APP,
+  'savings.list_movements(uuid, uuid, integer, timestamp with time zone, uuid)': APP,
+  'savings.list_packages(uuid, uuid, text)': APP,
+  'savings.list_remittances(uuid, uuid, integer, timestamp with time zone, uuid)': APP,
+  'savings.lock_collections(uuid[], uuid[])': OWNER_ONLY,
+  'savings.lock_enrolments(uuid[], uuid[])': OWNER_ONLY,
+  'savings.move_savings(uuid, uuid, text, bigint, text, text, text, text)': APP,
+  'savings.package_result(text, uuid)': OWNER_ONLY,
+  'savings.record_collection(uuid, uuid, bigint, text, text, text, text)': APP,
+  'savings.self_collections(uuid, integer, timestamp with time zone, uuid)': APP,
+  'savings.self_savings(uuid)': APP,
+  'savings.set_target_goal(uuid, uuid, bigint, date, text, text, text)': APP,
+  'savings.summary_of(uuid, uuid)': OWNER_ONLY,
+  'savings.update_package(uuid, uuid, jsonb, text, text, text)': APP,
   // identity — request paths (P3/P4)
   'identity.accept_totp_step(uuid, bigint)': APP,
   'identity.account_for_email(text)': APP,
@@ -183,6 +207,12 @@ const EXPECTED: Record<string, Grantee[]> = {
   'ledger.post_reversal(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
   'ledger.open_subaccount(uuid, text, text, uuid)': OWNER_ONLY,
   'ledger.post_template(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)': OWNER_ONLY,
+  // P8 review (R2): the posting core without its acquisition, for domain commands that hold the projections
+  'ledger.post_entry_locked(uuid, text, text, date, text, text, text, jsonb, uuid, uuid, uuid, integer)':
+    OWNER_ONLY,
+  'ledger.post_reversal_locked(uuid, uuid, text, date, text, uuid, uuid)': OWNER_ONLY,
+  'ledger.post_template_locked(uuid, text, bigint, jsonb, text, date, text, text, text, uuid, uuid)':
+    OWNER_ONLY,
   'ledger.verify_projections()': OWNER_ONLY,
   // P6: the session commands and the B1 reads
   'ledger.create_account(uuid, text, text, text, text, text, text)': APP,

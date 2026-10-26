@@ -45,6 +45,11 @@ const CATALOG: ReadonlyArray<readonly [string, 'merchant' | 'platform', boolean]
   ['merchant.customers.manage', 'merchant', true],
   ['merchant.customers.assign', 'merchant', true],
   ['merchant.customers.anonymise', 'merchant', false],
+  // P8: savings (the owner's answers of 2026-10-25, Q11: all four can be given to staff)
+  ['merchant.savings.read', 'merchant', true],
+  ['merchant.packages.manage', 'merchant', true],
+  ['merchant.remittances.approve', 'merchant', true],
+  ['merchant.withdrawals.create', 'merchant', true],
   ['platform.merchants.read', 'platform', true],
   ['platform.audit.read', 'platform', true],
   ['platform.merchants.lifecycle', 'platform', false],

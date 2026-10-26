@@ -51,6 +51,13 @@ model Merchant {
   customers          Customer[]
   customerAssignments CustomerAssignment[]
   customerAppInvitations CustomerAppInvitation[]
+  savingsPackages    SavingsPackage[]
+  savingsEnrolments  SavingsEnrolment[]
+  savingsCycles      SavingsCycle[]
+  remittances        Remittance[]
+  collections        Collection[]
+  savingsMovements   SavingsMovement[]
+  targetGoals        TargetGoal[]
   branches          Branch[]
   roles             Role[]
   invitations       Invitation[]
@@ -140,6 +147,11 @@ model JournalEntry {
   reversedBy JournalEntry[] @relation("EntryReversal")
   creator    Identity?      @relation("JournalEntryCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Restrict)
   lines      JournalLine[]
+  collectionsRecorded  Collection[]      @relation("CollectionRecordedEntry")
+  collectionsConfirmed Collection[]      @relation("CollectionConfirmedEntry")
+  collectionFees       Collection[]      @relation("CollectionFeeEntry")
+  collectionsCancelled Collection[]      @relation("CollectionCancelEntry")
+  savingsMovements     SavingsMovement[]
 
   @@unique([merchantId, id])
   @@unique([merchantId, idempotencyKey])
@@ -734,6 +746,14 @@ model MerchantMembership {
   agentAssignments    CustomerAssignment[] @relation("AssignmentAgent")
   assignmentsMade     CustomerAssignment[] @relation("AssignmentAssignedBy")
   assignmentsEnded    CustomerAssignment[] @relation("AssignmentEndedBy")
+  packagesCreated     SavingsPackage[]     @relation("PackageCreatedBy")
+  enrolmentsMade      SavingsEnrolment[]   @relation("EnrolmentEnrolledBy")
+  agentRemittances    Remittance[]         @relation("RemittanceAgent")
+  remittancesApproved Remittance[]         @relation("RemittanceApprovedBy")
+  agentCollections    Collection[]         @relation("CollectionAgent")
+  collectionsCancelled Collection[]        @relation("CollectionCancelledBy")
+  savingsMovementsMade SavingsMovement[]
+  targetGoalsSet      TargetGoal[]
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
@@ -774,6 +794,11 @@ model Customer {
   assignments    CustomerAssignment[]
   appInvitations CustomerAppInvitation[]
   sessions       Session[]
+  enrolments     SavingsEnrolment[]
+  savingsCycles  SavingsCycle[]
+  collections    Collection[]
+  movements      SavingsMovement[]
+  targetGoals    TargetGoal[]
 
   @@unique([merchantId, id], map: "customers_merchant_id_id_key")
   @@index([merchantId, branchId, createdAt, id], map: "customers_merchant_branch_idx")
@@ -823,6 +848,194 @@ model CustomerAppInvitation {
   @@unique([merchantId, id], map: "app_invitations_merchant_id_id_key")
   @@map("app_invitations")
   @@schema("customers")
+}
+
+// ── savings ─────────────────────────────────────────────────────────────────────────────────────
+
+/// A savings package (P8; owner Q1, Q2; BR-6.1): fixed or flexible, with exactly one fee rule. Its terms never change
+/// (P8-7). One active package per name per business (packages_one_active_name, a partial unique index in the migration).
+model SavingsPackage {
+  id                    String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId            String    @map("merchant_id") @db.Uuid
+  name                  String
+  kind                  String
+  amountMinor           BigInt    @map("amount_minor")
+  feeRule               String    @map("fee_rule")
+  feeRateBp             Int?      @map("fee_rate_bp")
+  status                String    @default("active")
+  createdByMembershipId String?   @map("created_by_membership_id") @db.Uuid
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  archivedAt            DateTime? @map("archived_at") @db.Timestamptz(6)
+
+  merchant       Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "packages_merchant_fkey")
+  createdBy      MerchantMembership? @relation("PackageCreatedBy", fields: [merchantId, createdByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "packages_created_by_fkey")
+  enrolments     SavingsEnrolment[]  @relation("EnrolmentPackage")
+  nextEnrolments SavingsEnrolment[]  @relation("EnrolmentNextPackage")
+  cycles         SavingsCycle[]
+  collections    Collection[]
+
+  @@unique([merchantId, id], map: "packages_merchant_id_id_key")
+  @@index([merchantId, createdAt, id], map: "packages_merchant_created_idx")
+  @@map("packages")
+  @@schema("savings")
+}
+
+/// A customer's package (BR-5.1: one per customer), and the next cycle's when a change waits for the cycle to end (Q10).
+model SavingsEnrolment {
+  id                     String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId             String   @map("merchant_id") @db.Uuid
+  customerId             String   @unique(map: "enrolments_customer_id_key") @map("customer_id") @db.Uuid
+  packageId              String   @map("package_id") @db.Uuid
+  nextPackageId          String?  @map("next_package_id") @db.Uuid
+  enrolledByMembershipId String?  @map("enrolled_by_membership_id") @db.Uuid
+  enrolledAt             DateTime @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  updatedAt              DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  merchant    Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "enrolments_merchant_fkey")
+  customer    Customer            @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "enrolments_customer_fkey")
+  package     SavingsPackage      @relation("EnrolmentPackage", fields: [merchantId, packageId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "enrolments_package_fkey")
+  nextPackage SavingsPackage?     @relation("EnrolmentNextPackage", fields: [merchantId, nextPackageId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "enrolments_next_package_fkey")
+  enrolledBy  MerchantMembership? @relation("EnrolmentEnrolledBy", fields: [merchantId, enrolledByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "enrolments_enrolled_by_fkey")
+
+  @@unique([merchantId, id], map: "enrolments_merchant_id_id_key")
+  @@map("enrolments")
+  @@schema("savings")
+}
+
+/// A 31-day savings cycle (BR-5.2; Q3), opened when its first contribution is approved (BR-5.6).
+model SavingsCycle {
+  id         String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId String   @map("merchant_id") @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  packageId  String   @map("package_id") @db.Uuid
+  number     Int
+  startsOn   DateTime @map("starts_on") @db.Date
+  endsOn     DateTime @map("ends_on") @db.Date
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant    Merchant       @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "cycles_merchant_fkey")
+  customer    Customer       @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "cycles_customer_fkey")
+  package     SavingsPackage @relation(fields: [merchantId, packageId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "cycles_package_fkey")
+  collections Collection[]
+
+  @@unique([merchantId, id], map: "cycles_merchant_id_id_key")
+  @@unique([customerId, number], map: "cycles_customer_number_key")
+  @@map("cycles")
+  @@schema("savings")
+}
+
+/// An agent's cash, approved for the collections it covers (Q5; TA-13).
+model Remittance {
+  id                     String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId             String   @map("merchant_id") @db.Uuid
+  agentMembershipId      String   @map("agent_membership_id") @db.Uuid
+  cashMinor              BigInt   @map("cash_minor")
+  collectionCount        Int      @map("collection_count")
+  feeTotalMinor          BigInt   @map("fee_total_minor")
+  approvedByMembershipId String   @map("approved_by_membership_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant    Merchant           @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "remittances_merchant_fkey")
+  agent       MerchantMembership @relation("RemittanceAgent", fields: [merchantId, agentMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "remittances_agent_fkey")
+  approvedBy  MerchantMembership @relation("RemittanceApprovedBy", fields: [merchantId, approvedByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "remittances_approved_by_fkey")
+  collections Collection[]
+
+  @@unique([merchantId, id], map: "remittances_merchant_id_id_key")
+  @@index([merchantId, createdAt, id], map: "remittances_merchant_created_idx")
+  @@map("remittances")
+  @@schema("savings")
+}
+
+/// A cash collection an agent records (BR-3, 5.3, 5.6): recorded, then approved in one remittance (TA-13) or cancelled
+/// (Q6). The agent's key is unique per agent.
+model Collection {
+  id                      String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId              String    @map("merchant_id") @db.Uuid
+  customerId              String    @map("customer_id") @db.Uuid
+  agentMembershipId       String    @map("agent_membership_id") @db.Uuid
+  packageId               String    @map("package_id") @db.Uuid
+  amountMinor             BigInt    @map("amount_minor")
+  days                    Int?
+  collectedOn             DateTime  @map("collected_on") @db.Date
+  status                  String    @default("recorded")
+  idemKey                 String    @map("idem_key")
+  recordedEntryId         String    @map("recorded_entry_id") @db.Uuid
+  remittanceId            String?   @map("remittance_id") @db.Uuid
+  cycleId                 String?   @map("cycle_id") @db.Uuid
+  confirmedEntryId        String?   @map("confirmed_entry_id") @db.Uuid
+  feeEntryId              String?   @map("fee_entry_id") @db.Uuid
+  feeMinor                BigInt?   @map("fee_minor")
+  approvedAt              DateTime? @map("approved_at") @db.Timestamptz(6)
+  cancelledAt             DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledByMembershipId String?   @map("cancelled_by_membership_id") @db.Uuid
+  cancelReason            String?   @map("cancel_reason")
+  cancelEntryId           String?   @map("cancel_entry_id") @db.Uuid
+  createdAt               DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant       Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "collections_merchant_fkey")
+  customer       Customer            @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_customer_fkey")
+  agent          MerchantMembership  @relation("CollectionAgent", fields: [merchantId, agentMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_agent_fkey")
+  package        SavingsPackage      @relation(fields: [merchantId, packageId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_package_fkey")
+  remittance     Remittance?         @relation(fields: [merchantId, remittanceId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_remittance_fkey")
+  cycle          SavingsCycle?       @relation(fields: [merchantId, cycleId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_cycle_fkey")
+  cancelledBy    MerchantMembership? @relation("CollectionCancelledBy", fields: [merchantId, cancelledByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_cancelled_by_fkey")
+  recordedEntry  JournalEntry        @relation("CollectionRecordedEntry", fields: [merchantId, recordedEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_recorded_entry_fkey")
+  confirmedEntry JournalEntry?       @relation("CollectionConfirmedEntry", fields: [merchantId, confirmedEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_confirmed_entry_fkey")
+  feeEntry       JournalEntry?       @relation("CollectionFeeEntry", fields: [merchantId, feeEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_fee_entry_fkey")
+  cancelEntry    JournalEntry?       @relation("CollectionCancelEntry", fields: [merchantId, cancelEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "collections_cancel_entry_fkey")
+
+  @@unique([merchantId, id], map: "collections_merchant_id_id_key")
+  @@unique([merchantId, agentMembershipId, idemKey], map: "collections_agent_key")
+  @@index([merchantId, createdAt, id], map: "collections_merchant_created_idx")
+  @@index([customerId, createdAt, id], map: "collections_customer_idx")
+  @@index([merchantId, agentMembershipId, status, createdAt, id], map: "collections_agent_status_idx")
+  @@map("collections")
+  @@schema("savings")
+}
+
+/// A withdrawal to cash from savings or target savings, or a move into target savings (BR-7; Q8, Q9). The staff
+/// member's key is unique per staff member.
+model SavingsMovement {
+  id                 String   @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId         String   @map("merchant_id") @db.Uuid
+  customerId         String   @map("customer_id") @db.Uuid
+  kind               String
+  amountMinor        BigInt   @map("amount_minor")
+  entryId            String   @map("entry_id") @db.Uuid
+  madeByMembershipId String   @map("made_by_membership_id") @db.Uuid
+  idemKey            String   @map("idem_key")
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant Merchant           @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "movements_merchant_fkey")
+  customer Customer           @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "movements_customer_fkey")
+  madeBy   MerchantMembership @relation(fields: [merchantId, madeByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "movements_made_by_fkey")
+  entry    JournalEntry       @relation(fields: [merchantId, entryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "movements_entry_fkey")
+
+  @@unique([merchantId, id], map: "movements_merchant_id_id_key")
+  @@unique([merchantId, madeByMembershipId, idemKey], map: "movements_actor_key")
+  @@index([customerId, createdAt, id], map: "movements_customer_idx")
+  @@map("movements")
+  @@schema("savings")
+}
+
+/// A customer's optional target-savings goal (Q9): an amount and/or a date.
+model TargetGoal {
+  id                String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId        String    @map("merchant_id") @db.Uuid
+  customerId        String    @unique(map: "target_goals_customer_id_key") @map("customer_id") @db.Uuid
+  goalAmountMinor   BigInt?   @map("goal_amount_minor")
+  goalDate          DateTime? @map("goal_date") @db.Date
+  setByMembershipId String    @map("set_by_membership_id") @db.Uuid
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  merchant Merchant           @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "target_goals_merchant_fkey")
+  customer Customer           @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "target_goals_customer_fkey")
+  setBy    MerchantMembership @relation(fields: [merchantId, setByMembershipId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "target_goals_set_by_fkey")
+
+  @@unique([merchantId, id], map: "target_goals_merchant_id_id_key")
+  @@map("target_goals")
+  @@schema("savings")
 }
 
 // ── util ────────────────────────────────────────────────────────────────────────────────────────

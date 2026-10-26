@@ -45,6 +45,14 @@ const APPROVED: Record<string, string> = {
     'Give a customer to an agent, move them to another agent, or take them off their agent.',
   'merchant.customers.anonymise':
     "Remove a customer's personal details at their request, once they have nothing left with the business. Owner only.",
+  // P8: the savings permissions — approved by the owner as written on 2026-10-25 (docs/business/P8_OWNER_SAVINGS.md
+  // Q11)
+  'merchant.savings.read': 'See packages, enrolments, collections, remittances and withdrawals.',
+  'merchant.packages.manage': 'Create and change packages, and enrol customers in them.',
+  'merchant.remittances.approve':
+    "Check an agent's cash and approve or leave out the collections it covers, or cancel a collection recorded by mistake.",
+  'merchant.withdrawals.create':
+    "Record a customer's withdrawal and pay it out, and move savings into target savings.",
 };
 
 describe('the merchant permission descriptions (O13)', () => {

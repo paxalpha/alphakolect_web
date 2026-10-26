@@ -62,6 +62,16 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'customers.customers': 16,
   'customers.assignments': 16,
   'customers.app_invitations': 16,
+  // P8 (plan §3): savings after the customers, so a command holds the projections it posts to (14) and the customer
+  // (16) before its own rows. Within the category: packages, enrolments, target goals, collections, then remittances
+  // and movements (inserted only, under fresh ids or the actor's key).
+  'savings.packages': 17,
+  'savings.enrolments': 17,
+  'savings.cycles': 17,
+  'savings.target_goals': 17,
+  'savings.collections': 17,
+  'savings.remittances': 17,
+  'savings.movements': 17,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */
@@ -74,6 +84,8 @@ export const HELPERS: Readonly<Record<string, string>> = {
   'tenancy.lock_roles': 'tenancy.roles',
   'tenancy.lock_branches': 'tenancy.branches',
   'ledger.lock_projections': 'ledger.balance_projection',
+  'savings.lock_enrolments': 'savings.enrolments',
+  'savings.lock_collections': 'savings.collections',
 };
 
 /**

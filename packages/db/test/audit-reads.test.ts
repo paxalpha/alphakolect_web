@@ -653,9 +653,16 @@ describe('read consistency, with a second connection (exit criterion 7)', () => 
   });
 
   describe('(c) the purge, concurrently (R35)', () => {
-    /** A window three years back: its events are past their two years, so the purge may delete them. */
+    /** A window years back — its events past their two years, so the purge may delete them — and of its own: one of
+     * 100 disjoint 11-day slots from 2015 (before other files' old events), each drawn at most once per run, so two
+     * windows never share events (overlapping draws in 2022 made the platform read flaky — P8 gate, 2026-10-26). */
+    const usedSlots = new Set<number>();
     const pastWindow = () => {
-      const from = new Date(Date.UTC(2022, 0, 1) + Math.floor(Math.random() * 300) * 86_400_000);
+      let slot: number;
+      do slot = Math.floor(Math.random() * 100);
+      while (usedSlots.has(slot));
+      usedSlots.add(slot);
+      const from = new Date(Date.UTC(2015, 0, 1) + slot * 11 * 86_400_000);
       return {
         from: from.toISOString(),
         to: new Date(from.getTime() + 10 * 86_400_000).toISOString(),

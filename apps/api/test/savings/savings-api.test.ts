@@ -189,6 +189,35 @@ describe('collections and remittances (BR-3, 5.3, 5.6, 6.1, 6.2; D1; TA-13)', ()
     ).toBe(401);
   });
 
+  it('R1: a collection recorded under another package than its cycle’s is refused (PACKAGE_CHANGED)', async () => {
+    const { b, agent, customerId } = await saver();
+    const c = AgentCollection.parse((await record(agent.token, customerId, '100000')).body);
+    const other = SavingsPackage.parse(
+      (
+        await call(b.owner.token, 'post', '/v1/merchant/packages', {
+          name: `Beta ${randomBytes(3).toString('hex')}`,
+          kind: 'fixed',
+          amountMinor: '200000',
+          feeRule: 'first_contribution',
+        })
+      ).body,
+    );
+    // No cycle runs yet: the change takes effect at once.
+    const changed = await call(b.owner.token, 'put', `/v1/merchant/customers/${customerId}/enrolment`, {
+      packageId: other.packageId,
+    });
+    expect(Enrolment.parse(changed.body).effective).toBe('now');
+    expectError(
+      await call(b.owner.token, 'post', '/v1/merchant/remittances', {
+        agentMembershipId: agent.membershipId,
+        collectionIds: [c.collectionId],
+        cashMinor: '100000',
+      }),
+      422,
+      'PACKAGE_CHANGED',
+    );
+  });
+
   it('Q6: a collection recorded by mistake is cancelled with a reason, before approval only', async () => {
     const { b, agent, customerId } = await saver();
     const c = AgentCollection.parse((await record(agent.token, customerId, '100000')).body);

@@ -192,8 +192,9 @@ const INVENTORY: Record<
   'ledger.account_updated/success': { class: 'atomic', pattern: 'A', writer: 'ledger.update_account' },
   'ledger.manual_entry_posted/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_manual_entry' },
   'ledger.entry_reversed/success': { class: 'atomic', pattern: 'A', writer: 'ledger.reverse_entry' },
-  'ledger.capital_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
-  'ledger.income_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry' },
+  // (P8 review, R2: the posting core's writes moved to ledger.post_entry_locked, which ledger.post_entry calls)
+  'ledger.capital_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry_locked' },
+  'ledger.income_debited/success': { class: 'atomic', pattern: 'A', writer: 'ledger.post_entry_locked' },
   // P7: the customers' commands (pattern A, each its own definer function)
   'customer.created/success': { class: 'atomic', pattern: 'A', writer: 'customers.insert_customer_locked' },
   'customer.updated/success': { class: 'atomic', pattern: 'A', writer: 'customers.update_customer' },

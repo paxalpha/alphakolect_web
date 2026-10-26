@@ -85,7 +85,8 @@ export type RemittanceWrite = {
     | 'not_found'
     | 'invalid_status'
     | 'cash_mismatch'
-    | 'inactive_customer';
+    | 'inactive_customer'
+    | 'package_changed';
 } & { [K in keyof RemittanceFields]: RemittanceFields[K] | null };
 
 export type MovementKind = 'savings_withdrawal' | 'target_withdrawal' | 'to_target';

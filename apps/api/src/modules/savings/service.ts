@@ -368,6 +368,12 @@ export class SavingsService {
           'INACTIVE_CUSTOMER',
           'A customer is not active: cancel their collection instead',
         );
+      case 'package_changed':
+        throw new AppError(
+          422,
+          'PACKAGE_CHANGED',
+          'A collection was recorded under another package than its cycle’s: cancel it, and record it again',
+        );
       case 'invalid':
         throw new AppError(400, 'VALIDATION_ERROR', 'Name each collection once');
     }

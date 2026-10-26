@@ -34,6 +34,10 @@ export const markerRequestId = (tag: string) => `t-${tag}-${randomBytes(6).toStr
 /**
  * Make every insert of (action, outcome) with this request id — and, if given, this target id — fail like a storage
  * error (SQLSTATE XX000 — not the catalog's refusal). Returns the cleanup, which drops the trigger and its function.
+ *
+ * Test files run in parallel, and two of them adding or dropping their triggers at once deadlocked on the table
+ * (P8 gate, 2026-10-26: two DROP TRIGGERs, each holding what the other's lock upgrade needed). Each change is one
+ * transaction that first takes this helper's advisory lock, then the table's lock, so they take turns.
  */
 export async function failAuditInsert(
   owner: pg.Client,
@@ -45,7 +49,7 @@ export async function failAuditInsert(
   const name = `test_fail_${randomBytes(6).toString('hex')}`;
   const quote = (s: string) => `'${s.replace(/'/g, "''")}'`;
   const target = targetId === undefined ? '' : ` AND NEW.target_id = ${quote(targetId)}`;
-  await owner.query(
+  await serialized(owner, [
     `CREATE FUNCTION audit.${name}() RETURNS trigger LANGUAGE plpgsql AS $fn$
      BEGIN
        IF NEW.action = ${quote(action)} AND NEW.outcome = ${quote(outcome)} AND NEW.request_id = ${quote(requestId)}${target} THEN
@@ -53,14 +57,27 @@ export async function failAuditInsert(
        END IF;
        RETURN NEW;
      END $fn$`,
-  );
-  await owner.query(
     `CREATE TRIGGER ${name} BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION audit.${name}()`,
-  );
-  return async () => {
-    await owner.query(`DROP TRIGGER ${name} ON audit.audit_events`);
-    await owner.query(`DROP FUNCTION audit.${name}()`);
-  };
+  ]);
+  return () =>
+    serialized(owner, [`DROP TRIGGER ${name} ON audit.audit_events`, `DROP FUNCTION audit.${name}()`]);
+}
+
+/** The injector's advisory lock: one trigger change at a time across the run's test files. */
+const INJECTOR_LOCK = 0x7e57_a0d1;
+
+/** Run DDL on audit.audit_events's triggers in turn with every other test file's (see failAuditInsert). */
+export async function serialized(owner: pg.Client, statements: string[]): Promise<void> {
+  await owner.query('BEGIN');
+  try {
+    await owner.query(`SELECT pg_advisory_xact_lock(${INJECTOR_LOCK})`);
+    await owner.query('LOCK TABLE audit.audit_events IN ACCESS EXCLUSIVE MODE');
+    for (const sql of statements) await owner.query(sql);
+    await owner.query('COMMIT');
+  } catch (err) {
+    await owner.query('ROLLBACK');
+    throw err;
+  }
 }
 
 /** The stored audit rows of one request id (read as the table owner). */

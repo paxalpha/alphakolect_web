@@ -23,6 +23,7 @@ import { hostIdentity } from '../../src/modules/audit/purge-host.js';
 import { sha256File, verifyHandover, writeHandover } from '../../src/modules/audit/purge-handover.js';
 import { acquirePurgeLock } from '../../src/modules/audit/purge-lock.js';
 import { runPurge } from '../../src/modules/audit/purge.js';
+import { serialized } from '../support/audit.js';
 import type { Queryable } from '../../src/platform/db.js';
 
 // The operator's purge command as the operator runs it — a process of its own, against this run's database (P5 plan
@@ -377,23 +378,21 @@ describe('an export killed at each point, and its recovery', () => {
     try {
       const { dir, runId } = await killedAt('mid_write');
       const fn = `test_fail_discard_${process.pid}`;
-      await owner.query(
+      // In turn with the other test files' audit triggers (support/audit.ts).
+      await serialized(owner, [
         `CREATE FUNCTION audit.${fn}() RETURNS trigger LANGUAGE plpgsql AS $fn$
          BEGIN
            IF NEW.action = 'platform.purge_export_discarded' THEN RAISE EXCEPTION 'injected' USING ERRCODE = 'XX000'; END IF;
            RETURN NEW;
          END $fn$`,
-      );
-      await owner.query(
         `CREATE TRIGGER ${fn} BEFORE INSERT ON audit.audit_events FOR EACH ROW EXECUTE FUNCTION audit.${fn}()`,
-      );
+      ]);
       try {
         expect((await cli('export-discarded', '--run', runId)).code).toBe(1);
         expect(await runFiles(dir)).toEqual([`alphakolect-purge-run-${runId}.marker`]); // the files gone, the marker kept
         expect((await exportOf(runId)).outcome).toBeNull();
       } finally {
-        await owner.query(`DROP TRIGGER ${fn} ON audit.audit_events`);
-        await owner.query(`DROP FUNCTION audit.${fn}()`);
+        await serialized(owner, [`DROP TRIGGER ${fn} ON audit.audit_events`, `DROP FUNCTION audit.${fn}()`]);
       }
       expect((await cli('export-discarded', '--run', runId)).code).toBe(0);
       expect(await runFiles(dir)).toEqual([]);

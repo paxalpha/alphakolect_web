@@ -62,6 +62,16 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'customers.customers': 16,
   'customers.assignments': 16,
   'customers.app_invitations': 16,
+  // P8 (plan §3): savings after the customers, so a command holds the projections it posts to (14) and the customer
+  // (16) before its own rows. Within the category: packages, enrolments, target goals, collections, then remittances
+  // and movements (inserted only, under fresh ids or the actor's key).
+  'savings.packages': 17,
+  'savings.enrolments': 17,
+  'savings.cycles': 17,
+  'savings.target_goals': 17,
+  'savings.collections': 17,
+  'savings.remittances': 17,
+  'savings.movements': 17,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */
@@ -74,6 +84,8 @@ export const HELPERS: Readonly<Record<string, string>> = {
   'tenancy.lock_roles': 'tenancy.roles',
   'tenancy.lock_branches': 'tenancy.branches',
   'ledger.lock_projections': 'ledger.balance_projection',
+  'savings.lock_enrolments': 'savings.enrolments',
+  'savings.lock_collections': 'savings.collections',
 };
 
 /**
@@ -757,8 +769,13 @@ export function analyse(
         out.push(s);
         continue;
       }
-      // A write to rows already held FOR NO KEY UPDATE waits for nothing new; an explicit lock always counts.
+      // A write to rows already held FOR NO KEY UPDATE waits for nothing new; an explicit lock always counts — except
+      // the posting core's own sorted acquisition when its caller already holds the projections FOR NO KEY UPDATE
+      // (P8-3: a savings command locks every projection it posts to before its own rows, and each posting re-takes
+      // them). The races (savings-races.test.ts) are the adversarial evidence that the rows re-taken are the rows held.
       if (s.mode === 'W' && held.get(s.table) === 'NKU') continue;
+      if (s.helper && s.mode === 'NKU' && s.via === 'ledger.post_entry' && held.get(s.table) === 'NKU')
+        continue;
       out.push(s);
       if (s.mode === 'NKU' || s.mode === 'W' || s.mode.includes('NKU')) held.set(s.table, 'NKU');
       else if (!held.has(s.table)) held.set(s.table, 'S');

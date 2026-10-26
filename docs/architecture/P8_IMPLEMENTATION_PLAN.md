@@ -1,6 +1,6 @@
 # P8 implementation plan — savings
 
-**Status: revision 3 (2026-10-26) — the gate review's two findings resolved (§10); awaiting its re-check.** Planned in one pass, to be built in one pass, as
+**Status: revision 4 (2026-10-26) — CLOSED: the independent reviewer approved closure, and the project lead approved (§11).** Planned in one pass, to be built in one pass, as
 P6 and P7 were ("map everything out and execute in one go"). Decisions that would go to the project lead take the
 recommended option (his standing instruction) and are recorded in §7. The owner answered
 `docs/business/P8_OWNER_SAVINGS.md` (Q1–Q11) on 25 October 2026, signed; every answer is the suggested option, so the
@@ -147,6 +147,7 @@ savings interest and charges; maker-checker for withdrawals if a business asks (
 
 | Rev | Date | Change |
 |---|---|---|
+| 4 | 2026-10-26 | P8 closed (§11): the reviewer's approval of the re-check at `c30be0f`, and the project lead's |
 | 3 | 2026-10-26 | The gate review's findings resolved (§10): migration `20261027000300_savings_review`; P8-10 and P8-12 revised |
 | 2 | 2026-10-26 | The owner's answers recorded (Q1–Q11, all the suggested option); built as §9 maps; decisions P8-7 to P8-12, P8-4 revised |
 | 1 | 2026-10-26 | First plan; the owner's questions asked |
@@ -188,3 +189,18 @@ each) — every step exited 0, with no unhandled error. The packages' tests ran 
 (`npm_config_workspace_concurrency=1`, the same commands) on a machine with 0.4 GB of 7.7 GB free: run together, the
 API suite's workers had timed out once with every test passing. An earlier run also met a flaky test that predates P8
 (S3).
+
+## 11. Closure (2026-10-26)
+
+**The independent reviewer's verdict on its re-check: "P8 closure approved"** — "P8 is ready to close." Both findings
+of the first review (§10, R1 and R2) are resolved in the code: collections are checked against the package that governs
+their cycle, and an approval refuses a package mismatch without posting (`PACKAGE_CHANGED`); the lock-order guard's
+exception is removed, and the locked posting core re-asserts its projections without waiting. The reviewer traced the
+database test that failed the first clean-run attempt to the audit-read tests' overlapping windows, not to P8 (S3), and
+accepted the clean gate at `b158844` (every step exited 0: contracts 102, database 859, API 1,888, concurrency 32; the
+packages' tests run one after another for the machine's low memory). The tested code is `b158844`; the only later
+change is this plan's gate record, and `origin/feat/p8-savings` matched `HEAD` at `c30be0f`.
+
+The project lead approved the closure on 2026-10-26. P8 is closed. Carried forward (§6): live-wallet collections (P8b),
+withdrawals to repay a loan (P11), target-savings interest and charges, and a second person's approval of withdrawals if
+a business asks (Q7).

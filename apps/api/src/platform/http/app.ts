@@ -8,6 +8,8 @@ import { agentHandlers } from '../../modules/identity/agent-routes.js';
 import { customerAuthHandlers } from '../../modules/identity/customer-routes.js';
 import { CustomerService } from '../../modules/customers/service.js';
 import { customerHandlers } from '../../modules/customers/routes.js';
+import { SavingsService } from '../../modules/savings/service.js';
+import { savingsHandlers } from '../../modules/savings/routes.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
@@ -138,6 +140,7 @@ export function createApp({
   });
   const settings = new MerchantSettingsService({ db, audit });
   const customers = new CustomerService({ db, identity: auth.identity, audit, limiter, mailer, webAppUrl });
+  const savings = new SavingsService({ db, audit });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
@@ -158,6 +161,7 @@ export function createApp({
     ...agentHandlers({ identity: auth.identity, sessions, limiter, settings }),
     ...customerAuthHandlers({ identity: auth.identity, sessions, limiter }),
     ...customerHandlers({ customers }),
+    ...savingsHandlers({ savings }),
     ...ledgerHandlers({ books: new LedgerService({ db, audit, idempotency: new IdempotencyStore(db) }) }),
   };
 
@@ -167,7 +171,12 @@ export function createApp({
     buildV1Router(
       handlers,
       (endpoint) => authenticate(endpoint, { ...auth, logger }),
-      (endpoint) => authorize(endpoint, { audit, logger, branchResolvers: customers.branchResolvers() }),
+      (endpoint) =>
+        authorize(endpoint, {
+          audit,
+          logger,
+          branchResolvers: { ...customers.branchResolvers(), ...savings.branchResolvers() },
+        }),
     ),
   );
 

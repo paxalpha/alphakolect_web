@@ -19,6 +19,7 @@ export const MODULE_DEPENDENCIES = {
   platform: ['audit', 'identity', 'tenancy'],
   ledger: ['audit', 'identity', 'tenancy'],
   customers: ['audit', 'identity', 'tenancy'],
+  savings: ['audit', 'identity', 'tenancy', 'customers'],
 };
 const MODULES = Object.keys(MODULE_DEPENDENCIES);
 

@@ -8,6 +8,7 @@ import { tenancyFixtures, uniqueEmail } from './support/tenancy.js';
 import { requiredQuery } from './support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
 import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from './support/customers.js';
+import { savingsBodies, savingsResources, SAVINGS_SNAPSHOT_SQL } from './support/savings.js';
 import { BRANCH_RESOLVED_ENDPOINTS } from '../src/platform/http/routes.js';
 
 // The authorization matrix (P5.9; P5 plan §10 P5.9, §13 exit criterion 2): every permission endpoint of the registry,
@@ -171,6 +172,7 @@ async function setUp() {
     invitationId: invited.body.invitationId as string,
     ledger: await ledgerResources(owner, b.merchantId),
     customerId: await customerOf(owner, b.merchantId, b.branchId),
+    savings: await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId),
   };
 }
 
@@ -187,11 +189,14 @@ const PARAMS: Record<string, (w: World, allowed: boolean) => string> = {
   accountId: (w) => w.ledger.accountId,
   entryId: (w) => w.ledger.entryId,
   customerId: (w) => w.customerId,
+  packageId: (w) => w.savings.packageId,
+  collectionId: (w) => w.savings.collectionId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   ...ledgerBodies,
   postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
   ...customerBodies,
+  ...savingsBodies,
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -245,7 +250,8 @@ const snapshot = async (merchantId: string, platformMembershipId: string) =>
          'platformGrants', (SELECT json_agg(g.permission ORDER BY g.permission)
                               FROM identity.platform_membership_grants g WHERE g.platform_membership_id = $2),
          ${LEDGER_SNAPSHOT_SQL},
-         ${CUSTOMERS_SNAPSHOT_SQL}
+         ${CUSTOMERS_SNAPSHOT_SQL},
+         ${SAVINGS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId, platformMembershipId],
     )

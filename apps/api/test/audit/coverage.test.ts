@@ -12,6 +12,7 @@ import { AUDIT_CATALOG } from '../../src/modules/audit/catalog.js';
 import { auditRows, FORMER_TRANSITIONAL_PAIRS, failAuditInsert, markerRequestId } from '../support/audit.js';
 import { ledgerBodies, ledgerResources } from '../support/ledger.js';
 import { customerOf, uniquePhone } from '../support/customers.js';
+import { savingsResources } from '../support/savings.js';
 import { TEST_PASSWORD, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The coverage guard's per-pair tests (P5.3a; P5 plan §8.1): for every atomic pair the API writes, one real request
@@ -1208,6 +1209,182 @@ const CASES: Case[] = [
         changed: async () =>
           (await one(`SELECT status FROM customers.customers WHERE id = $1`, [customerId])).status ===
           'anonymised',
+      };
+    },
+  },
+  // ── savings (P8): pattern A, each command's definer function ─────────────────────────────────
+  {
+    pair: 'savings.package_created/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const name = `Cover ${randomBytes(3).toString('hex')}`;
+      const res = await asOwner(b, 'post', '/v1/merchant/packages', rid, {
+        name,
+        kind: 'fixed',
+        amountMinor: '100000',
+        feeRule: 'first_contribution',
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'savings_package', target_id: res.body.packageId ?? null },
+        changed: async () =>
+          (await count(`SELECT count(*) AS n FROM savings.packages WHERE merchant_id = $1 AND name = $2`, [
+            b.merchantId,
+            name,
+          ])) === 1,
+      };
+    },
+  },
+  {
+    pair: 'savings.package_updated/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId);
+      const res = await asOwner(b, 'patch', `/v1/merchant/packages/${s.packageId}`, rid, { name: 'Renamed' });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'savings_package', target_id: s.packageId },
+        changed: async () =>
+          (await one(`SELECT name FROM savings.packages WHERE id = $1`, [s.packageId])).name === 'Renamed',
+      };
+    },
+  },
+  {
+    pair: 'savings.customer_enrolled/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId);
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const res = await asOwner(b, 'put', `/v1/merchant/customers/${customerId}/enrolment`, rid, {
+        packageId: s.packageId,
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await count(`SELECT count(*) AS n FROM savings.enrolments WHERE customer_id = $1`, [
+            customerId,
+          ])) === 1,
+      };
+    },
+  },
+  {
+    pair: 'savings.collection_recorded/success',
+    audience: 'agent',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const agent = await fx.member(b, 'agent');
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId, agent);
+      const res = await marked(request(app).post('/v1/agent/collections'), rid)
+        .set('Authorization', `Bearer ${agent.token}`)
+        .set('Idempotency-Key', `cover-${randomBytes(8).toString('hex')}`)
+        .send({ customerId: s.customerId, amountMinor: '100000' });
+      return {
+        res,
+        expected: {
+          merchant_id: b.merchantId,
+          actor_identity_id: agent.identityId,
+          actor_audience: 'agent',
+          actor_membership_id: agent.membershipId,
+          target_type: 'savings_collection',
+          target_id: res.body.collectionId ?? null,
+        },
+        changed: async () =>
+          (await count(`SELECT count(*) AS n FROM savings.collections WHERE customer_id = $1`, [
+            s.customerId,
+          ])) === 3,
+      };
+    },
+  },
+  {
+    pair: 'savings.collection_cancelled/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId);
+      const res = await asOwner(b, 'post', `/v1/merchant/collections/${s.collectionId}/cancellation`, rid, {
+        reason: 'Recorded twice',
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'savings_collection', target_id: s.collectionId },
+        changed: async () =>
+          (await one(`SELECT status FROM savings.collections WHERE id = $1`, [s.collectionId])).status ===
+          'cancelled',
+      };
+    },
+  },
+  {
+    pair: 'savings.remittance_approved/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId);
+      const res = await asOwner(b, 'post', '/v1/merchant/remittances', rid, {
+        agentMembershipId: s.agentMembershipId,
+        collectionIds: [s.remittedId],
+        cashMinor: '100000',
+      });
+      return {
+        res,
+        expected: {
+          ...ownerActor(b),
+          target_type: 'savings_remittance',
+          target_id: res.body.remittanceId ?? null,
+        },
+        changed: async () =>
+          (await one(`SELECT status FROM savings.collections WHERE id = $1`, [s.remittedId])).status ===
+          'approved',
+      };
+    },
+  },
+  {
+    pair: 'savings.money_moved/success',
+    status: 201,
+    run: async (rid) => {
+      const b = await fx.business();
+      const s = await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId);
+      // Both approved: the first is the cycle's fee, the second the customer's savings.
+      await owner.query(`SELECT * FROM savings.approve_remittance($1, $2, $3, 200000)`, [
+        b.owner.sessionId,
+        s.agentMembershipId,
+        [s.collectionId, s.remittedId],
+      ]);
+      const res = await asOwner(b, 'post', `/v1/merchant/customers/${s.customerId}/withdrawals`, rid, {
+        wallet: 'savings',
+        amountMinor: '1000',
+      }).set('Idempotency-Key', `cover-${randomBytes(8).toString('hex')}`);
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: s.customerId },
+        changed: async () =>
+          (await count(`SELECT count(*) AS n FROM savings.movements WHERE customer_id = $1`, [
+            s.customerId,
+          ])) === 1,
+      };
+    },
+  },
+  {
+    pair: 'savings.target_goal_set/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const customerId = await customerOf(owner, b.merchantId, b.branchId);
+      const res = await asOwner(b, 'put', `/v1/merchant/customers/${customerId}/target-goal`, rid, {
+        goalAmountMinor: '500000',
+        goalDate: null,
+      });
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'customer', target_id: customerId },
+        changed: async () =>
+          (await count(`SELECT count(*) AS n FROM savings.target_goals WHERE customer_id = $1`, [
+            customerId,
+          ])) === 1,
       };
     },
   },

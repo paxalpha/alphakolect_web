@@ -194,6 +194,29 @@ export const AUDIT_CATALOG = [
   atomicA('customer.app_invited', { delivery: status16 }),
   atomicA('customer.app_access_accepted', { path: status16 }),
   atomicA('customer.anonymised', {}),
+  // savings (P8): identifiers, kinds and amounts only — never a customer's personal details (TA-14)
+  atomicA('savings.package_created', { kind: status16, feeRule: { type: 'string', max: 32 } }),
+  atomicA('savings.package_updated', {
+    fields: { type: 'string_list', maxItems: 2, max: 16 },
+    status: status16,
+  }),
+  atomicA('savings.customer_enrolled', { packageId: uuid, effective: status16 }),
+  atomicA('savings.collection_recorded', { customerId: uuid, amountMinor: { type: 'string', max: 20 } }),
+  atomicA('savings.collection_cancelled', { customerId: uuid, amountMinor: { type: 'string', max: 20 } }),
+  atomicA('savings.remittance_approved', {
+    agentMembershipId: uuid,
+    collectionCount: { type: 'string', max: 4 },
+    cashMinor: { type: 'string', max: 20 },
+    feeTotalMinor: { type: 'string', max: 20 },
+  }),
+  atomicA('savings.money_moved', {
+    kind: { type: 'string', max: 32 },
+    amountMinor: { type: 'string', max: 20 },
+  }),
+  atomicA('savings.target_goal_set', {
+    goalAmountMinor: { type: 'string', max: 20, nullable: true },
+    goalDate: { type: 'string', max: 10, nullable: true },
+  }),
   // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
   sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
   sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
@@ -282,6 +305,17 @@ export const AUDIT_CATALOG = [
     ] as const
   ).map((identifier) => bestEffort(identifier, 'denied', denial)),
   bestEffort('customer.app_access_accepted', 'failure', { reason }),
+  ...(
+    [
+      'savings.package_created',
+      'savings.package_updated',
+      'savings.customer_enrolled',
+      'savings.collection_cancelled',
+      'savings.remittance_approved',
+      'savings.money_moved',
+      'savings.target_goal_set',
+    ] as const
+  ).map((identifier) => bestEffort(identifier, 'denied', denial)),
   // best effort — the policy middleware's refusal (P5.4): the refused operation and the permission it requires
   bestEffort('authz.denied', 'denied', {
     operation: { type: 'string', max: 64 },

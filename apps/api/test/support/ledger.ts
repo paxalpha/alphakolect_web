@@ -56,11 +56,18 @@ export const ledgerBodies = {
   updateLedgerAccount: () => ({ name: `Account ${randomBytes(3).toString('hex')}` }),
 };
 
+/** The commands that take an Idempotency-Key: the ledger's postings (P6) and the savings' money moves (P8). */
+const KEYED = new Set([
+  'postJournalEntry',
+  'reverseJournalEntry',
+  'createWithdrawal',
+  'createTargetTransfer',
+  'recordCollection',
+]);
+
 /** The headers an endpoint requires before any check can answer it: a fresh Idempotency-Key on a posting command. */
 export function requiredHeaders(id: string): Record<string, string> {
-  return id === 'postJournalEntry' || id === 'reverseJournalEntry'
-    ? { 'Idempotency-Key': `matrix-${randomBytes(8).toString('hex')}` }
-    : {};
+  return KEYED.has(id) ? { 'Idempotency-Key': `matrix-${randomBytes(8).toString('hex')}` } : {};
 }
 
 /** The business's ledger rows, for the snapshots that prove a refused call changed nothing. */

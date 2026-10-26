@@ -207,6 +207,27 @@ const INVENTORY: Record<
     writer: 'customers.accept_app_invitation',
   },
   'customer.anonymised/success': { class: 'atomic', pattern: 'A', writer: 'customers.anonymise_customer' },
+  // P8: the savings commands (pattern A, each its own definer function)
+  'savings.package_created/success': { class: 'atomic', pattern: 'A', writer: 'savings.create_package' },
+  'savings.package_updated/success': { class: 'atomic', pattern: 'A', writer: 'savings.update_package' },
+  'savings.customer_enrolled/success': { class: 'atomic', pattern: 'A', writer: 'savings.enrol_customer' },
+  'savings.collection_recorded/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'savings.record_collection',
+  },
+  'savings.collection_cancelled/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'savings.cancel_collection',
+  },
+  'savings.remittance_approved/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'savings.approve_remittance',
+  },
+  'savings.money_moved/success': { class: 'atomic', pattern: 'A', writer: 'savings.move_savings' },
+  'savings.target_goal_set/success': { class: 'atomic', pattern: 'A', writer: 'savings.set_target_goal' },
   ...Object.fromEntries(
     [
       ...[
@@ -277,6 +298,16 @@ const INVENTORY: Record<
         'anonymised',
       ].map((i) => `customer.${i}/denied`),
       'customer.app_access_accepted/failure',
+      // P8: a savings command refused by the database
+      ...[
+        'package_created',
+        'package_updated',
+        'customer_enrolled',
+        'collection_cancelled',
+        'remittance_approved',
+        'money_moved',
+        'target_goal_set',
+      ].map((i) => `savings.${i}/denied`),
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

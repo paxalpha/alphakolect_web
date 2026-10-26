@@ -152,6 +152,15 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'PlatformStaffService.create',
       'PlatformStaffService.setPermissions',
       'PlatformStaffService.setStatus',
+      // P8: the savings commands — each one call of its planned operation
+      'SavingsService.approveRemittance',
+      'SavingsService.cancelCollection',
+      'SavingsService.createPackage',
+      'SavingsService.enrol',
+      'SavingsService.move',
+      'SavingsService.record',
+      'SavingsService.setGoal',
+      'SavingsService.updatePackage',
     ]);
   });
 

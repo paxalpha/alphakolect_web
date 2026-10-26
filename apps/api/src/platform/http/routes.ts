@@ -33,7 +33,7 @@ export function toExpressPath(contractPath: string): string {
 const KNOWN_PERMISSIONS: ReadonlySet<string> = new Set(PERMISSIONS);
 /**
  * The branch-scoped endpoints whose resource branch the API can resolve (P5 §7.6; P7: customers, the first
- * branch-owned resource). A `branch` endpoint outside this list is refused at startup; the authorization middleware
+ * branch-owned resource; P8: a customer's savings, and a collection by its customer's branch). A `branch` endpoint outside this list is refused at startup; the authorization middleware
  * refuses to mount one without its resolver.
  */
 export const BRANCH_RESOLVED_ENDPOINTS: ReadonlySet<string> = new Set([
@@ -46,6 +46,15 @@ export const BRANCH_RESOLVED_ENDPOINTS: ReadonlySet<string> = new Set([
   'assignCustomerAgent',
   'listCustomerAssignments',
   'inviteCustomerToApp',
+  'listCollections',
+  'listRemittances',
+  'enrolCustomer',
+  'getCustomerSavings',
+  'listSavingsMovements',
+  'cancelCollection',
+  'createWithdrawal',
+  'createTargetTransfer',
+  'setTargetGoal',
 ]);
 const KNOWN_CAPABILITIES: ReadonlySet<string> = new Set(CAPABILITIES);
 const KNOWN_BRANCH_SCOPES: ReadonlySet<string> = new Set(BRANCH_SCOPES);

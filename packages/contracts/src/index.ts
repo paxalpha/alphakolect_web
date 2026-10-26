@@ -79,6 +79,25 @@ import {
 } from './endpoints/ledger.js';
 import { deactivateMerchant, reactivateMerchant, transferOwnership } from './endpoints/platform.js';
 import {
+  cancelCollection,
+  createRemittance,
+  createSavingsPackage,
+  createTargetTransfer,
+  createWithdrawal,
+  enrolCustomer,
+  getCustomerSavings,
+  getCustomerSelfSavings,
+  listAgentCollections,
+  listCollections,
+  listCustomerSelfCollections,
+  listRemittances,
+  listSavingsMovements,
+  listSavingsPackages,
+  recordCollection,
+  setTargetGoal,
+  updateSavingsPackage,
+} from './endpoints/savings.js';
+import {
   createPlatformStaff,
   deactivatePlatformStaff,
   listPlatformMerchantMembers,
@@ -100,6 +119,7 @@ export * from './endpoints/platform-team.js';
 export * from './endpoints/audit.js';
 export * from './endpoints/ledger.js';
 export * from './endpoints/customers.js';
+export * from './endpoints/savings.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
 /** Every endpoint of the v1 API, keyed by operation id. Add new endpoints here. */
@@ -186,6 +206,23 @@ export const endpoints = {
   customerRefresh,
   acceptCustomerInvitation,
   getCustomerSelf,
+  listSavingsPackages,
+  createSavingsPackage,
+  updateSavingsPackage,
+  enrolCustomer,
+  getCustomerSavings,
+  listSavingsMovements,
+  listCollections,
+  cancelCollection,
+  listRemittances,
+  createRemittance,
+  createWithdrawal,
+  createTargetTransfer,
+  setTargetGoal,
+  recordCollection,
+  listAgentCollections,
+  getCustomerSelfSavings,
+  listCustomerSelfCollections,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

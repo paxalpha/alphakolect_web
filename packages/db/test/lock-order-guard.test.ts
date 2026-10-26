@@ -43,7 +43,7 @@ import {
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
 
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers', 'savings'];
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
 ) as { commit: string; functions: FnRow[] };
@@ -122,6 +122,14 @@ describe('enforcing mode (R34): no finding at all', () => {
       'ledger.journal_entries(reverses_entry_id) partial',
       'ledger.ledgers(merchant_id)',
       'ledger.ledgers(owner_kind) partial',
+      // P8: savings — a collection and a movement under the actor's key, a cycle's number, one enrolment and one
+      // goal per customer, one active package per name
+      'savings.collections(merchant_id, agent_membership_id, idem_key)',
+      'savings.cycles(customer_id, number)',
+      'savings.enrolments(customer_id)',
+      'savings.movements(merchant_id, made_by_membership_id, idem_key)',
+      'savings.packages(merchant_id, <expr>) partial',
+      'savings.target_goals(customer_id)',
       // P5.5 step 4: the branch and role writers insert under the one-active-name rule (merchant_id, lower(name))
       'tenancy.branches(merchant_id, <expr>) partial',
       'tenancy.invitations(merchant_id, email) partial',
@@ -532,6 +540,15 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
   });
   const IDENTITY: FnClass = { class: 'identity', writes: [] };
   const REVOKE: string[] = ['2:S', 'A3:NKU', '4:NKU'];
+  const POSTS: FnClass = {
+    class: 'identity',
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'audit.audit_events',
+    ],
+  };
 
   const scratch: Record<string, { sql: string; cls: FnClass }> = {
     conforming: {
@@ -602,6 +619,33 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
             END $$`,
       cls: IDENTITY,
     },
+    // P8-3: a posting re-takes the projections its caller already holds FOR NO KEY UPDATE — and only those: held
+    // FOR SHARE, or not held at all, the posting core's acquisition is a wait after the customer (category 16)
+    posts_held: {
+      sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v_accounts uuid[]; BEGIN
+              v_accounts := ARRAY[p_customer];
+              PERFORM ledger.lock_projections(NULL, v_accounts);
+              PERFORM 1 FROM customers.customers c WHERE c.id = p_customer FOR SHARE;
+              PERFORM ledger.post_entry(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
+            END $$`,
+      cls: POSTS,
+    },
+    posts_shared: {
+      sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ DECLARE v_accounts uuid[]; BEGIN
+              v_accounts := ARRAY[p_customer];
+              PERFORM ledger.lock_projections(v_accounts, NULL);
+              PERFORM 1 FROM customers.customers c WHERE c.id = p_customer FOR SHARE;
+              PERFORM ledger.post_entry(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
+            END $$`,
+      cls: POSTS,
+    },
+    posts_unheld: {
+      sql: `(p_ledger uuid, p_customer uuid, p_lines jsonb) RETURNS void LANGUAGE plpgsql AS $$ BEGIN
+              PERFORM 1 FROM customers.customers c WHERE c.id = p_customer FOR SHARE;
+              PERFORM ledger.post_entry(p_ledger, 'k', 'test', current_date, 'n', NULL, NULL, p_lines, NULL, NULL);
+            END $$`,
+      cls: POSTS,
+    },
     // fail closed: dynamic SQL, an unqualified call, an unclassified callee, a call outside the analysed schemas
     dynamic: {
       sql: `() RETURNS void LANGUAGE plpgsql AS $$ BEGIN EXECUTE 'SELECT 1'; END $$`,
@@ -667,6 +711,16 @@ describe('self-tests: each violation fails the guard, a conforming copy passes (
     expect(of('conforming'), report(of('conforming'))).toEqual([]);
     expect(run.footprints.get(`${s}.conforming`)).toEqual(REVOKE);
     expect(of('admit_ok_locked'), report(of('admit_ok_locked'))).toEqual([]);
+  });
+
+  it('P8-3: a posting re-takes projections its caller holds FOR NO KEY UPDATE; held FOR SHARE or not at all, it waits', () => {
+    expect(of('posts_held'), report(of('posts_held'))).toEqual([]);
+    expect(run.footprints.get(`${s}.posts_held`)).toEqual(['14:NKU', '16:S', '+15']);
+    for (const name of ['posts_shared', 'posts_unheld'])
+      expect(
+        of(name).map((f) => f.kind),
+        name,
+      ).toEqual(['order']);
   });
 
   it('(a) one inverted pair of categories fails (order and footprint)', () => {

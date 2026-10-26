@@ -182,11 +182,12 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   // ── P7: customers (plan §9.1, P7-11) ──
   // Each command: the business (S), the actor (the authority lock; with the agent it assigns, S, in one sorted call),
   // the actor's role, the branches it checks, then the customer (16, NKU) and what it writes; onboarding's contested
-  // inserts last (L3: the customer, its assignment, its four ledger sub-accounts — the loop counted twice).
+  // inserts last (L3: the customer, its assignment, its four ledger sub-accounts — the loop counted twice — and, P8-4,
+  // the agent's cash account).
   // Removing a customer's details holds their sub-accounts' balances (14) before the customer (16).
   'customers.create_customer': {
     class: 'operation',
-    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '+16', '+13', '+14', '+13', '+14'],
+    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '+16', '+13', '+14', '+13', '+14', '+13', '+14'],
     writes: [
       'customers.customers',
       'customers.assignments',
@@ -197,7 +198,7 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   },
   'customers.agent_create_customer': {
     class: 'operation',
-    planned: ['2:S', 'A3:NKU', '8:S', '+16', '+13', '+14', '+13', '+14'],
+    planned: ['2:S', 'A3:NKU', '8:S', '+16', '+13', '+14', '+13', '+14', '+13', '+14'],
     writes: [
       'customers.customers',
       'customers.assignments',
@@ -219,10 +220,11 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:S', '8:S', '14:S', '16:NKU'],
     writes: ['customers.customers', 'audit.audit_events'],
   },
+  // P8-4: giving a customer an agent opens the agent's cash account (1210) — contested inserts, last
   'customers.assign_agent': {
     class: 'operation',
-    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '16:NKU', '16:W', '+16'],
-    writes: ['customers.assignments', 'audit.audit_events'],
+    planned: ['2:S', 'A3:S+NKU', '7:S', '8:S', '16:NKU', '16:W', '+16', '+13', '+14'],
+    writes: ['customers.assignments', 'ledger.accounts', 'ledger.balance_projection', 'audit.audit_events'],
   },
   'customers.issue_app_invitation': {
     class: 'operation',
@@ -253,6 +255,79 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
       'ledger.balance_projection',
       'audit.audit_events',
     ],
+  },
+  // ── P8: savings (plan §3, P8-3) ──
+  // Each command: the business (S), the actor (the authority lock), the actor's role and branch, then every projection
+  // it posts to (14, one sorted acquisition — each posting re-takes them), the customer (16), then its own rows (17:
+  // packages, enrolments, target goals, collections); its contested inserts last (L3). A remittance locks the
+  // enrolments and the collections (TA-13) in one sorted call each; its loop (counted twice) opens a cycle (+17) and
+  // posts (+15).
+  'savings.create_package': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '+17'],
+    writes: ['savings.packages', 'audit.audit_events'],
+  },
+  'savings.update_package': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '17:NKU'],
+    writes: ['savings.packages', 'audit.audit_events'],
+  },
+  'savings.enrol_customer': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU', '17:S', '17:NKU', '+17'],
+    writes: ['savings.enrolments', 'audit.audit_events'],
+  },
+  'savings.record_collection': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '14:NKU', '16:S', '17:S', '+15', '+17'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'savings.collections',
+      'audit.audit_events',
+    ],
+  },
+  'savings.cancel_collection': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '14:NKU', '17:NKU', '+15'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'savings.collections',
+      'audit.audit_events',
+    ],
+  },
+  'savings.approve_remittance': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '14:NKU', '17:NKU', '17:NKU', '+17', '+15', '+17', '+15'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'savings.enrolments',
+      'savings.cycles',
+      'savings.remittances',
+      'savings.collections',
+      'audit.audit_events',
+    ],
+  },
+  'savings.move_savings': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '14:NKU', '+15', '+17'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'savings.movements',
+      'audit.audit_events',
+    ],
+  },
+  'savings.set_target_goal': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU', '17:NKU', '+17'],
+    writes: ['savings.target_goals', 'audit.audit_events'],
   },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
@@ -538,6 +613,8 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'tenancy.lock_roles': { class: 'helper' },
   'tenancy.lock_branches': { class: 'helper' },
   'ledger.lock_projections': { class: 'helper' },
+  'savings.lock_enrolments': { class: 'helper' },
+  'savings.lock_collections': { class: 'helper' },
 
   // ── lock-free readers ──
   'identity.account_for_email': { class: 'reader' },
@@ -578,6 +655,19 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
   'customers.read_self': { class: 'reader' },
   'customers.current_agent': { class: 'reader' },
   'customers.customer_result': { class: 'reader' },
+  // P8: the savings reads and the commands' answers
+  'savings.package_result': { class: 'reader' },
+  'savings.collection_result': { class: 'reader' },
+  'savings.summary_of': { class: 'reader' },
+  'savings.customer_savings': { class: 'reader' },
+  'savings.self_savings': { class: 'reader' },
+  'savings.list_packages': { class: 'reader' },
+  'savings.list_collections': { class: 'reader' },
+  'savings.list_remittances': { class: 'reader' },
+  'savings.list_movements': { class: 'reader' },
+  'savings.agent_collections': { class: 'reader' },
+  'savings.self_collections': { class: 'reader' },
+  'savings.collection_branch': { class: 'reader' },
   'util.current_merchant_id': { class: 'reader' },
   'util.uuid_v7': { class: 'reader' },
 
@@ -658,6 +748,15 @@ export const MERCHANT_SCOPED_READS: readonly string[] = [
   'ledger.read_entry',
   'ledger.read_statement',
   'ledger.statement_balances',
+  'savings.agent_collections',
+  'savings.collection_branch',
+  'savings.customer_savings',
+  'savings.list_collections',
+  'savings.list_movements',
+  'savings.list_packages',
+  'savings.list_remittances',
+  'savings.self_collections',
+  'savings.self_savings',
   'tenancy.list_branches',
   'tenancy.list_invitations',
   'tenancy.list_members',
@@ -697,6 +796,12 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
     'a customer command’s answer: the customer the command holds and wrote, returned by that definer command',
   'customers.current_agent':
     'P8’s check that an agent records collections only for their own customers (D1): called by its definer functions',
+  'savings.package_result':
+    'a package command’s answer: the package the command holds and wrote, returned by that definer command',
+  'savings.collection_result':
+    'a collection command’s answer: the collection the command holds and wrote, returned by that definer command',
+  'savings.summary_of':
+    'a customer’s savings summary, called by the savings reads once they have resolved the customer from the session',
   'ledger.assert_entry_balanced':
     'the commit-time balance check of one entry (P1), called by its constraint trigger with the entry being written',
 };
@@ -802,4 +907,6 @@ export const AUTHORITY_DATA_RULES: readonly string[] = [
   "customers.agent_customers: s.kind = 'agent'",
   "customers.assign_agent: mm.kind = 'agent'",
   "customers.create_customer: mm.kind = 'agent'",
+  // P8: a remittance is an agent's (a subject check, not authority)
+  "savings.approve_remittance: mm.kind = 'agent'",
 ];

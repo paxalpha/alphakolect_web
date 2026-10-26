@@ -1,10 +1,10 @@
 # P8 implementation plan — savings
 
-**Status: revision 1 (2026-10-26) — mapped; the owner's answers asked.** Planned in one pass, to be built in one pass, as
+**Status: revision 2 (2026-10-26) — the owner's answers recorded; built as §9 maps; awaiting the gate review.** Planned in one pass, to be built in one pass, as
 P6 and P7 were ("map everything out and execute in one go"). Decisions that would go to the project lead take the
-recommended option (his standing instruction) and are recorded in §8. The owner's decisions are asked in
-`docs/business/P8_OWNER_SAVINGS.md` (Q1–Q11); the plan follows that form's suggested answers until he answers. The gate
-review is the independent reviewer's.
+recommended option (his standing instruction) and are recorded in §7. The owner answered
+`docs/business/P8_OWNER_SAVINGS.md` (Q1–Q11) on 25 October 2026, signed; every answer is the suggested option, so the
+design below stands as mapped. The gate review is the independent reviewer's.
 
 | | |
 |---|---|
@@ -38,8 +38,9 @@ withdrawals paid to a bank account (OPEN-7).
 - `savings.packages`: name (one active per name), kind (`fixed`: each collection is the amount or a multiple of it;
   `flexible`: any amount from a minimum), amount (the fixed amount, or the flexible minimum), fee rule — exactly one of
   `first_contribution` or `percentage` with its rate in basis points (a CHECK, BR-6.1), status (active / archived).
-- `savings.enrolments`: a customer in a package; one active per customer (a partial unique index, BR-5.1). A change of
-  package takes effect when the current cycle ends (Q10): it is recorded as the enrolment's next package.
+- `savings.enrolments`: a customer in a package; one per customer (a unique key on the customer, BR-5.1). A change of
+  package takes effect when the current cycle ends (Q10): it is recorded as the enrolment's next package, and becomes the
+  package when the next cycle opens. With no cycle running, a change takes effect at once.
 
 ### 3.2 Cycles (owner Q3, Q4; BR-5.2)
 
@@ -55,16 +56,17 @@ withdrawals paid to a bank account (OPEN-7).
   (`recorded` → `approved` or `cancelled`), its remittance, its ledger entries; an agent's idempotency key (unique per
   agent: a retried request records once).
 - Recording (the agent's app): the customer active and enrolled, **the agent the customer's current agent**
-  (`customers.current_agent`, D1), the amount valid for the package. Ledger: `collection.cash_recorded` (Dr 1210 the
-  agent / Cr 2190) — the customer's savings do not move (BR-5.6). The agent's 1210 sub-account is opened by its own
-  idempotent call before the first recording (P6-2).
+  (`customers.current_agent`, D1, read under the customer's lock, which reassignment takes), the amount valid for the
+  package. Ledger: `collection.cash_recorded` (Dr 1210 the agent / Cr 2190) — the customer's savings do not move
+  (BR-5.6). The agent's 1210 sub-account is opened when the agent is first given a customer (P8-4).
 - Cancelling (owner Q6): staff with the remittance permission, before approval, with a reason; the recording's entry is
   reversed (BR-11.1).
 
 ### 3.4 Remittances (owner Q5; BR-5.3, 5.5, 5.6; TA-13)
 
 - `savings.remittances`: an agent's hand-over, made and approved in one step by staff with the permission, naming the
-  collections the cash covers; the rest stay `recorded` (Q5); the total and who approved it are recorded.
+  collections the cash covers; the cash counted equals their total (P8-8); the rest stay `recorded` (Q5), listed against
+  the agent; the total, the fees and who approved it are recorded.
 - Approval, per collection, in ascending id: `collection.cash_confirmed` (Dr 1200 / Cr 1210 agent; Dr 2190 / Cr 2100
   customer), then the fee as its own entry — `fee.first_contribution` or `fee.percentage`, with the narrative BR-6.2
   asks for, e.g. "2% deducted for merchant on 2026-10-26 09:14".
@@ -76,7 +78,7 @@ withdrawals paid to a bank account (OPEN-7).
 
 - `savings.withdrawals`: from collection savings (2100) or target savings (2110), to cash (Q8: loans later); one person
   with the permission (Q7); refused above the balance — the ledger's non-negative rule on the locked projection (BR-7.4);
-  the balance goes down at once (BR-7.3). Idempotent by the request's key (P6's records, TA-6).
+  the balance goes down at once (BR-7.3). Idempotent by the request's key, held on the movement itself (P8-9).
 - `savings.target_goals`: an optional goal (amount and/or date); money moves in from collection savings
   (`savings.to_target`) by staff with the permission; withdrawable at any time (Q9).
 
@@ -90,21 +92,21 @@ and a remittance.
 
 | Endpoint | Who | |
 |---|---|---|
-| `GET/POST /v1/merchant/packages`, `PATCH …/{packageId}` | `merchant.savings.read` / `merchant.packages.manage` | packages |
+| `GET/POST /v1/merchant/packages`, `PATCH …/{packageId}` | `merchant.savings.read` / `merchant.packages.manage` (business-wide) | packages |
 | `PUT /v1/merchant/customers/{customerId}/enrolment` | `merchant.packages.manage` (branch) | enrol, or the next cycle's package |
-| `GET /v1/merchant/customers/{customerId}/savings` | `merchant.savings.read` (branch) | balances, cycles, collections |
-| `GET /v1/merchant/collections` | `merchant.savings.read` (branch) | by agent, status, day |
+| `GET /v1/merchant/customers/{customerId}/savings` · `…/savings/movements` | `merchant.savings.read` (branch) | balances, cycle, awaiting confirmation, goal; withdrawals and moves |
+| `GET /v1/merchant/collections` | `merchant.savings.read` (branch) | by customer, agent, status, remittance |
 | `POST /v1/merchant/collections/{collectionId}/cancellation` | `merchant.remittances.approve` (branch) | Q6 |
-| `GET/POST /v1/merchant/remittances` | `merchant.savings.read` / `merchant.remittances.approve` | approve the collections an agent's cash covers |
+| `GET /v1/merchant/remittances` · `POST` | `merchant.savings.read` (branch) / `merchant.remittances.approve` | approve the collections an agent's cash covers |
 | `POST /v1/merchant/customers/{customerId}/withdrawals` | `merchant.withdrawals.create` (branch) | Idempotency-Key |
 | `POST /v1/merchant/customers/{customerId}/target-transfers` · `PUT …/target-goal` | `merchant.withdrawals.create` (branch) | Idempotency-Key |
 | `POST /v1/agent/collections` · `GET /v1/agent/collections` | agent (their own customers) | record (idempotent); today's |
-| `GET /v1/customer/savings` | customer | their balances and collections, pending included |
+| `GET /v1/customer/savings` · `GET /v1/customer/savings/collections` | customer | their balances and collections, pending included |
 
 Activity events (atomic, pattern A, identifiers and amounts only — TA-14): `savings.package_created`,
 `savings.package_updated`, `savings.customer_enrolled`, `savings.collection_recorded`, `savings.collection_cancelled`,
-`savings.remittance_approved`, `savings.withdrawal_made`, `savings.target_transfer_made`, `savings.target_goal_set`;
-refusals best effort.
+`savings.remittance_approved`, `savings.money_moved` (a withdrawal or a move into target savings, by its kind),
+`savings.target_goal_set`; a refusal by the database alone is recorded best effort (`…/denied`), as in P6 and P7.
 
 ## 5. Tests
 
@@ -130,12 +132,36 @@ savings interest and charges; maker-checker for withdrawals if a business asks (
 | P8-1 | Enrolment | built here, with packages (P7-1) |
 | P8-2 | The cycle and the first-contribution fee | decided at approval (BR-5.6): the cycle is opened by its first approved collection |
 | P8-3 | Approval's locks | the collections, then every projection the approval posts to, in one sorted acquisition before the first entry (L3) |
-| P8-4 | The agent's 1210 sub-account | opened by its own idempotent call before the first recording (P6-2) |
+| P8-4 | The agent's 1210 sub-account | revised at the build: opened when the agent is first given a customer — `customers.assign_agent` and onboarding (`customers.insert_customer_locked`) open it as their last contested inserts — and for every agent who had customers when the migration ran. A recording never inserts an account (L3), and an agent records only for their own customers, so the account exists |
 | P8-5 | A customer deactivated after a recording | the recording stays; its approval is refused by the ledger (P7-13), and the business cancels it |
 | P8-6 | Gate | one review of P8 by the independent reviewer at the end |
+| P8-7 | A package's terms | never change once written: a package is renamed or archived only; other terms are a new package (the cycles and fees already taken stay explainable) |
+| P8-8 | The remittance's cash | the cash counted equals the total of the collections approved (`cash_mismatch` otherwise); a shortfall is the agent's collections left recorded |
+| P8-9 | Idempotency | a recording and a money movement carry the actor's key on their own row (unique per agent or staff member), checked under the posting's locks; the same request returns the first answer, another with the key is refused. An approval and a cancellation are idempotent by the collection's status: a retry is answered 409 and credits nothing. P6's claim records stay for the ledger's own commands |
+| P8-10 | The lock-order guard and the posting core | a posting re-takes the projections its command already holds FOR NO KEY UPDATE; the guard counts that acquisition as no new wait only then (held FOR SHARE, or not at all, it is a wait after the customer and fails). Self-tests show all three |
+| P8-11 | The lists' branch scope | the collection and remittance lists are branch-scoped as the customer list is (P7): a restricted staff member sees their branch's customers' collections, and the remittances made of them only; packages are business-wide |
+| P8-12 | Which cycle a collection belongs to | decided at approval by the day it was collected: after the latest cycle's 31 days it opens the next; otherwise it belongs to the latest (a collection approved late joins the cycle running) |
 
 ## 8. Revision log
 
 | Rev | Date | Change |
 |---|---|---|
+| 2 | 2026-10-26 | The owner's answers recorded (Q1–Q11, all the suggested option); built as §9 maps; decisions P8-7 to P8-12, P8-4 revised |
 | 1 | 2026-10-26 | First plan; the owner's questions asked |
+
+## 9. The build
+
+| Part | What |
+|---|---|
+| Migration `20261027000100_savings_core` | the seven tables (§3), RLS with an app policy and no app privilege (B1); `savings.lock_enrolments` and `savings.lock_collections` (L5, TA-13); `customers.insert_customer_locked` and `customers.assign_agent` open the agent's cash account (P8-4), and every agent with customers has one |
+| Migration `20261027000200_savings_functions` | the four permissions (Q11 wording), the eight events and their refusals; the commands `create_package`, `update_package`, `enrol_customer`, `record_collection`, `cancel_collection`, `approve_remittance`, `move_savings`, `set_target_goal`; the reads `list_packages`, `customer_savings`, `self_savings`, `list_collections`, `list_remittances`, `list_movements`, `agent_collections`, `self_collections`, `collection_branch`; internal `package_result`, `collection_result`, `summary_of` |
+| Lock order | savings tables are category 17, after the customers (16): each command takes the business, the actor, role and branch, then every projection it posts to (14), the customer (16), then its own rows (17), its contested inserts last. Footprints: `record_collection` 2:S A3:NKU 14:NKU 16:S 17:S +15 +17; `approve_remittance` 2:S A3:NKU 7:S 8:S 14:NKU 17:NKU 17:NKU +17 +15 +17 +15; `cancel_collection` …14:NKU 17:NKU +15; `move_savings` …14:NKU +15 +17; `enrol_customer` …16:NKU 17:S 17:NKU +17; `set_target_goal` …16:NKU 17:NKU +17; `create_package` …7:S +17; `update_package` …7:S 17:NKU |
+| Guards (db) | the lock-order guard's categories, helpers, footprints and P8-10's rule with its self-tests; grants, RLS, the migrations' table list, the permission lists and wording, the merchant-scope lists (R19), the data rules, the contested keys; Prisma models for the seven tables |
+| Tests (db) | `savings.test.ts` (26): packages and BR-6.1 in the schema; BR-5.1 and Q10; recording, D1, Q1's amounts, the key; remittances, BR-5.6, Q2/Q4 fees and BR-6.2 narratives, BR-5.2/Q3 cycles at their edges, refusals and no double approval; Q6; BR-7.1–7.4 and Q9; the reads and the branch scope; the books balanced and TA-14. `savings-races.test.ts` (5 races × 50): two remittances on one collection (TA-13, no double credit), approval against cancellation, a retried recording, D1 against reassignment, two withdrawals of one balance |
+| Contracts | `endpoints/savings.ts`: 17 endpoints (§4); the route map is 99 operations |
+| API | `modules/savings` (repository, service, routes): commands answer with what they wrote; a refusal by the database alone is recorded best effort; branch resolvers for a customer's and a collection's branch; the audit catalog mirror; the module may import `customers` (its branch lookup) |
+| Tests (API) | `savings/savings-api.test.ts` (7); the authorization matrix, policy and isolation matrices with savings resources and bodies; the writer guard's inventory and the coverage guard's two tests for each of the eight pairs; the transaction classes |
+
+The gate (2026-10-26): `format:check`, `lint`, `typecheck`, `build`, the contracts' `openapi:check`, `test` (contracts
+102, db 855, api 1887) and `test:concurrency` (31: P5's, P6's and P7's races and the five savings races, 50 runs each)
+— green. The frozen route map is 99 operations.

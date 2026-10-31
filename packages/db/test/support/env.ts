@@ -1,11 +1,12 @@
 // Connection settings for the database tests. Values come from the environment; locally
 // vitest.config.ts loads infrastructure/.env (gitignored). Nothing here has a secret default.
 
-export type Role = 'superuser' | 'migrator' | 'app' | 'readonly';
+export type Role = 'superuser' | 'migrator' | 'app' | 'worker' | 'readonly';
 
 export const ROLE_NAMES: Record<Exclude<Role, 'superuser'>, string> = {
   migrator: 'alphakolect_migrator',
   app: 'alphakolect_app',
+  worker: 'alphakolect_worker',
   readonly: 'alphakolect_readonly',
 };
 
@@ -29,6 +30,7 @@ export function dbTestEnv() {
       superuser: required('POSTGRES_PASSWORD'),
       migrator: required('DB_MIGRATOR_PASSWORD'),
       app: required('DB_APP_PASSWORD'),
+      worker: required('DB_WORKER_PASSWORD'),
       readonly: required('DB_READONLY_PASSWORD'),
     },
   };

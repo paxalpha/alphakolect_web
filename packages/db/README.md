@@ -7,14 +7,15 @@ Database infrastructure only (RESTRUCTURING_MAP §1): the Prisma schema, migrati
 | Role                   | Used by                                | Can                                                                                                                                                                      |
 | ---------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `alphakolect_migrator` | `prisma migrate deploy` (release step) | Owns every schema, table and function. Not a superuser.                                                                                                                  |
-| `alphakolect_app`      | API and worker                         | Data access only, per-table grants. Always subject to row-level security (`NOBYPASSRLS`, owns nothing). Journal entries, journal lines and audit events are INSERT-only. |
+| `alphakolect_app`      | API                                    | Data access only, per-table grants. Always subject to row-level security (`NOBYPASSRLS`, owns nothing). Journal entries, journal lines and audit events are INSERT-only. |
+| `alphakolect_worker`   | Background worker                      | Only the worker's functions (P9-R1): what a provider confirmed is recorded through them, and the API cannot call them. No table privileges.                              |
 | `alphakolect_readonly` | Reporting/support                      | SELECT only, across tenants.                                                                                                                                             |
 
 Roles are cluster-level, so they are created by `sql/bootstrap/roles.sql` (then `database.sql` per database), run by a superuser **before** migrations. Local compose does this automatically on first start. Anywhere else:
 
 ```bash
 psql -v ON_ERROR_STOP=1 -d <database> \
-  -v migrator_password=... -v app_password=... -v readonly_password=... \
+  -v migrator_password=... -v app_password=... -v worker_password=... -v readonly_password=... \
   -f packages/db/sql/bootstrap/bootstrap.psql
 ```
 

@@ -159,7 +159,7 @@ export const FUNCTION_QUERY = `
          l.lanname AS lang, p.prosecdef AS definer,
          coalesce((SELECT array_agg(r.rolname::text ORDER BY r.rolname) FROM pg_roles r
                     WHERE has_function_privilege(r.oid, p.oid, 'EXECUTE')
-                      AND r.rolname IN ('alphakolect_app', 'alphakolect_readonly')), '{}'::text[]) AS executors,
+                      AND r.rolname IN ('alphakolect_app', 'alphakolect_worker', 'alphakolect_readonly')), '{}'::text[]) AS executors,
          pg_get_functiondef(p.oid) AS def
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace JOIN pg_language l ON l.oid = p.prolang
    WHERE n.nspname = ANY ($1) AND p.prokind = 'f'
@@ -818,7 +818,9 @@ export function analyse(
       }
     }
     const fn = byKey.get(key)!;
-    const appExecutable = fn.some((f) => f.executors.includes('alphakolect_app'));
+    const appExecutable = fn.some(
+      (f) => f.executors.includes('alphakolect_app') || f.executors.includes('alphakolect_worker'),
+    );
 
     // L1 on the function's own clauses (each FOR UPDATE once; key updates; deletes of referenced tables).
     for (const e of p.events) {

@@ -340,6 +340,11 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['+18'],
     writes: ['payments.live_wallets'],
   },
+  'payments.request_customer_wallets': {
+    class: 'operation',
+    planned: ['+18'],
+    writes: ['payments.live_wallets'],
+  },
   'payments.claim_wallets': {
     class: 'operation',
     planned: [],

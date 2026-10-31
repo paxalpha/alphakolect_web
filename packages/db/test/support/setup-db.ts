@@ -23,8 +23,9 @@ export async function bootstrapRoles(): Promise<void> {
     await admin.query(
       `SELECT set_config('alphakolect.migrator_password', $1, false),
               set_config('alphakolect.app_password', $2, false),
-              set_config('alphakolect.readonly_password', $3, false)`,
-      [env.passwords.migrator, env.passwords.app, env.passwords.readonly],
+              set_config('alphakolect.worker_password', $3, false),
+              set_config('alphakolect.readonly_password', $4, false)`,
+      [env.passwords.migrator, env.passwords.app, env.passwords.worker, env.passwords.readonly],
     );
     await admin.query(readFileSync(path.join(bootstrapDir, 'roles.sql'), 'utf8'));
   } finally {

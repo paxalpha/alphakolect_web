@@ -7,16 +7,17 @@ import { connectAs, expectSqlState, SQLSTATE } from './support/db.js';
 // docs/business/P9_OWNER_PAYMENTS.md): Live wallets only after a business confirms its email (BR-2.3), provider events
 // confirmed with the provider (a forged or replayed one credits nothing, TA-8), money received to be classified (Q1),
 // unmatched money and contradictions for the platform team (Q4), payment orders that survive a timeout (TA-8), the
-// reconciler's findings (Q5) and the Platform Live wallet (Q6). Called as the API and the worker call them
-// (alphakolect_app); effects are read as the table owner. The races are in payments-races.test.ts.
+// reconciler's findings (Q5) and the Platform Live wallet (Q6). Called as the API (alphakolect_app) and the worker
+// (alphakolect_worker) call them; effects are read as the table owner. The races are in payments-races.test.ts.
 
 let app: pg.Client;
+let worker: pg.Client;
 let owner: pg.Client;
 beforeAll(async () => {
-  [app, owner] = await Promise.all([connectAs('app'), connectAs('migrator')]);
+  [app, worker, owner] = await Promise.all([connectAs('app'), connectAs('worker'), connectAs('migrator')]);
 });
 afterAll(async () => {
-  await Promise.all([app.end(), owner.end()]);
+  await Promise.all([app.end(), worker.end(), owner.end()]);
 });
 
 const PROVIDER = 'fake';
@@ -31,6 +32,15 @@ const digits = (n: number) =>
 const txId = () => `tx-${randomBytes(8).toString('hex')}`;
 const one = async (sql: string, params: unknown[] = []) => (await owner.query(sql, params)).rows[0];
 const call = async (sql: string, params: unknown[]) => (await app.query(sql, params)).rows[0];
+const work = async (sql: string, params: unknown[] = []) => (await worker.query(sql, params)).rows[0];
+/** A claim's token, for a test that records without staging the claim (claims are tested on their own, below). */
+const lease = async (table: 'live_wallets' | 'provider_events' | 'payment_orders', id: string) =>
+  (
+    await one(
+      `UPDATE payments.${table} SET lease_token = gen_random_uuid() WHERE id = $1 RETURNING lease_token`,
+      [id],
+    )
+  ).lease_token as string;
 
 async function session(identityId: string, audience: string, membershipId: string) {
   const { rows } = await app.query(
@@ -131,12 +141,12 @@ const walletOf = (merchantId: string) =>
 /** A verified business with an active wallet. */
 async function withWallet() {
   const b = await business();
-  await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+  await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
   const w = await walletOf(b.merchantId);
   const accountNumber = digits(10);
-  const r = await call(
-    `SELECT payments.record_wallet_created($1, $2, $3, 'Wallets', 'Test Bank') AS outcome`,
-    [w.id, `ref-${randomBytes(6).toString('hex')}`, accountNumber],
+  const r = await work(
+    `SELECT payments.record_wallet_created($1, $2, $3, $4, 'Wallets', 'Test Bank') AS outcome`,
+    [w.id, await lease('live_wallets', w.id), `ref-${randomBytes(6).toString('hex')}`, accountNumber],
   );
   expect(r.outcome).toBe('ok');
   return { b, walletId: w.id as string, accountNumber };
@@ -158,8 +168,9 @@ const confirm = async (
   maxAttempts = 5,
 ) =>
   (
-    await call(`SELECT payments.record_event($1, true, $2, $3, $4, 'NGN', $5, now(), $6) AS outcome`, [
+    await work(`SELECT payments.record_event($1, $2, true, $3, $4, $5, 'NGN', $6, now(), $7) AS outcome`, [
       eventId,
+      await lease('provider_events', eventId),
       tx.id,
       tx.account,
       tx.amount,
@@ -169,10 +180,10 @@ const confirm = async (
   ).outcome as string;
 const notFound = async (eventId: string, maxAttempts = 5) =>
   (
-    await call(`SELECT payments.record_event($1, false, NULL, NULL, NULL, NULL, NULL, NULL, $2) AS outcome`, [
-      eventId,
-      maxAttempts,
-    ])
+    await work(
+      `SELECT payments.record_event($1, $2, false, NULL, NULL, NULL, NULL, NULL, NULL, $3) AS outcome`,
+      [eventId, await lease('provider_events', eventId), maxAttempts],
+    )
   ).outcome as string;
 const balance = async (merchantId: string, code: string) =>
   Number(
@@ -246,10 +257,15 @@ describe('coverage: these events commit with their change, and fail it when they
   });
   it('[coverage payments.wallet_provisioned/success] its insert failing, the wallet stays as it was', async () => {
     const b = await business();
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     const w = await walletOf(b.merchantId);
+    const token = await lease('live_wallets', w.id);
     await failing('payments.wallet_provisioned', () =>
-      app.query(`SELECT payments.record_wallet_created($1, 'r', $2, 'n', 'b')`, [w.id, digits(10)]),
+      worker.query(`SELECT payments.record_wallet_created($1, $2, 'r', $3, 'n', 'b')`, [
+        w.id,
+        token,
+        digits(10),
+      ]),
     );
     expect((await walletOf(b.merchantId)).status).toBe('provisioning');
   });
@@ -271,14 +287,14 @@ describe('coverage: these events commit with their change, and fail it when they
   });
   it('[coverage payments.finding_recorded/success] one row commits with the finding', async () => {
     const { walletId } = await withWallet();
-    await call(`SELECT payments.record_finding('wallet', $1, 9, 0)`, [walletId]);
+    await work(`SELECT payments.record_finding('wallet', $1, 9, 0)`, [walletId]);
     const f = await one(`SELECT id FROM payments.reconciliation_findings WHERE wallet_id = $1`, [walletId]);
     expect(await events('payments.finding_recorded', f.id)).toBe(1);
   });
   it('[coverage payments.finding_recorded/success] its insert failing, there is no finding', async () => {
     const { walletId } = await withWallet();
     await failing('payments.finding_recorded', () =>
-      app.query(`SELECT payments.record_finding('wallet', $1, 9, 0)`, [walletId]),
+      worker.query(`SELECT payments.record_finding('wallet', $1, 9, 0)`, [walletId]),
     );
     expect(
       (
@@ -308,11 +324,11 @@ describe('coverage: these events commit with their change, and fail it when they
 describe('Live wallets (BR-2.3, 4.1–4.3)', () => {
   it('BR-2.3: a business gets a wallet only once its email is confirmed, and only one', async () => {
     const pending = await business({ verified: false });
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     expect(await walletOf(pending.merchantId)).toBeUndefined();
     const verified = await business();
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     const { rows } = await owner.query(
       `SELECT status, alias FROM payments.live_wallets WHERE merchant_id = $1`,
       [verified.merchantId],
@@ -331,40 +347,60 @@ describe('Live wallets (BR-2.3, 4.1–4.3)', () => {
       `UPDATE tenancy.merchants SET status = 'deactivated', deactivated_at = now(), deactivation_reason = 'test' WHERE id = $1`,
       [b.merchantId],
     );
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     expect(await walletOf(b.merchantId)).toBeUndefined();
   });
 
   it('a claim leases the wallet: claimed again only once the lease has passed; a failure retries, then gives up', async () => {
     const b = await business();
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     const w = await walletOf(b.merchantId);
     const claim = async () =>
-      (await app.query(`SELECT * FROM payments.claim_wallets(1000, 300)`)).rows.filter((r) => r.id === w.id);
-    expect(await claim()).toMatchObject([{ alias: w.alias, owner_kind: 'merchant', attempts: 1 }]);
+      (await worker.query(`SELECT * FROM payments.claim_wallets(1000, 300)`)).rows.filter(
+        (r) => r.id === w.id,
+      );
+    const [first] = await claim();
+    expect(first).toMatchObject({ alias: w.alias, owner_kind: 'merchant', attempts: 1 });
     expect(await claim()).toEqual([]);
-    expect((await call(`SELECT payments.record_wallet_failed($1, 'timeout', 2) AS o`, [w.id])).o).toBe(
-      'retry',
-    );
+    expect(
+      (
+        await work(`SELECT payments.record_wallet_failed($1, $2, 'timeout', 2) AS o`, [
+          w.id,
+          first.lease_token,
+        ])
+      ).o,
+    ).toBe('retry');
     const after = await walletOf(b.merchantId);
     expect(after).toMatchObject({ status: 'provisioning', last_error: 'timeout', lease_until: null });
     expect(after.next_attempt_at.getTime()).toBeGreaterThan(Date.now());
     await owner.query(`UPDATE payments.live_wallets SET next_attempt_at = now() WHERE id = $1`, [w.id]);
-    expect(await claim()).toMatchObject([{ attempts: 2 }]);
-    expect((await call(`SELECT payments.record_wallet_failed($1, 'refused', 2) AS o`, [w.id])).o).toBe(
-      'failed',
-    );
+    const [second] = await claim();
+    expect(second).toMatchObject({ attempts: 2 });
+    expect(
+      (
+        await work(`SELECT payments.record_wallet_failed($1, $2, 'refused', 2) AS o`, [
+          w.id,
+          second.lease_token,
+        ])
+      ).o,
+    ).toBe('failed');
     expect((await walletOf(b.merchantId)).status).toBe('failed');
   });
 
-  it('Q7: customer wallets are requested only when the switch is on', async () => {
+  it('Q7, P9-R1: customer wallets are requested by no running process; only a migration could grant it', async () => {
     const b = await business();
     const c = await newCustomer(b);
     const count = async () =>
       (await one(`SELECT count(*)::int AS n FROM payments.live_wallets WHERE customer_id = $1`, [c])).n;
-    await call(`SELECT payments.request_wallets($1, false)`, [PROVIDER]);
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     expect(await count()).toBe(0);
-    await call(`SELECT payments.request_wallets($1, true)`, [PROVIDER]);
+    for (const role of [app, worker])
+      await expectSqlState(
+        role.query(`SELECT payments.request_customer_wallets($1)`, [PROVIDER]),
+        SQLSTATE.insufficientPrivilege,
+      );
+    expect(await count()).toBe(0);
+    await one(`SELECT payments.request_customer_wallets($1)`, [PROVIDER]);
     expect(await count()).toBe(1);
   });
 });
@@ -454,16 +490,39 @@ describe('provider events (TA-8; the forged and the replayed)', () => {
     expect(await balance(b.merchantId, '1100')).toBe(41_000);
   });
 
+  it('P9-R5: the same transaction and amount for another account is a contradiction, not a duplicate', async () => {
+    const { b, walletId, accountNumber } = await withWallet();
+    const other = await withWallet();
+    const tx = { id: txId(), account: accountNumber, amount: 25_000 };
+    expect(await confirm(await storeEvent(), tx)).toBe('credited');
+    expect(await confirm(await storeEvent(), { ...tx, account: other.accountNumber })).toBe('review');
+    // Nothing moved: the first wallet keeps the credit, and the row shows it beside the account now named.
+    expect(await balance(b.merchantId, '1100')).toBe(25_000);
+    expect(await balance(other.b.merchantId, '1100')).toBe(0);
+    expect(
+      await one(
+        `SELECT matched, wallet_id, account_number FROM payments.provider_transactions WHERE provider_tx_id = $1`,
+        [tx.id],
+      ),
+    ).toEqual({ matched: 'review', wallet_id: walletId, account_number: other.accountNumber });
+    // An account named later, where none was at first, is one too.
+    const nameless = { id: txId(), account: null, amount: 1_000 };
+    expect(await confirm(await storeEvent(), nameless)).toBe('unmatched');
+    expect(await confirm(await storeEvent(), { ...nameless, account: accountNumber })).toBe('review');
+    expect(await balance(b.merchantId, '1100')).toBe(25_000);
+  });
+
   it('a claim hands out what is due once; an unusable confirmation is refused', async () => {
     const id = await storeEvent();
     const claimed = async () =>
-      (await app.query(`SELECT * FROM payments.claim_events(1000, 300)`)).rows.filter((r) => r.id === id);
-    expect(await claimed()).toHaveLength(1);
+      (await worker.query(`SELECT * FROM payments.claim_events(1000, 300)`)).rows.filter((r) => r.id === id);
+    const [first] = await claimed();
+    expect(first).toBeDefined();
     expect(await claimed()).toEqual([]);
     await expectSqlState(
-      app.query(
-        `SELECT payments.record_event($1, true, 'not a valid id', NULL, 10, 'NGN', 'successful', now(), 5)`,
-        [id],
+      worker.query(
+        `SELECT payments.record_event($1, $2, true, 'not a valid id', NULL, 10, 'NGN', 'successful', now(), 5)`,
+        [id, first.lease_token],
       ),
       '22023',
     );
@@ -647,10 +706,14 @@ describe('customer wallets (Q7, OPEN-12): money is held, off the books', () => {
   it('nothing is posted for money arriving in a customer’s wallet', async () => {
     const b = await business();
     const c = await newCustomer(b);
-    await call(`SELECT payments.request_wallets($1, true)`, [PROVIDER]);
+    await one(`SELECT payments.request_customer_wallets($1)`, [PROVIDER]);
     const w = await one(`SELECT id FROM payments.live_wallets WHERE customer_id = $1`, [c]);
     const account = digits(10);
-    await call(`SELECT payments.record_wallet_created($1, 'ref', $2, 'Ada', 'Test Bank')`, [w.id, account]);
+    await work(`SELECT payments.record_wallet_created($1, $2, 'ref', $3, 'Ada', 'Test Bank')`, [
+      w.id,
+      await lease('live_wallets', w.id),
+      account,
+    ]);
     const before = await entriesOf(b.merchantId);
     expect(await confirm(await storeEvent(), { id: txId(), account, amount: 9_000 })).toBe('held');
     expect(await entriesOf(b.merchantId)).toBe(before);
@@ -672,7 +735,7 @@ describe('payment orders (TA-8): a timeout is not a failure', () => {
     return { ...w, id, reference };
   }
   const claim = async (id: string) =>
-    (await app.query(`SELECT * FROM payments.claim_orders(1000, 300)`)).rows.filter((r) => r.id === id);
+    (await worker.query(`SELECT * FROM payments.claim_orders(1000, 300)`)).rows.filter((r) => r.id === id);
   const due = (id: string) =>
     owner.query(
       `UPDATE payments.payment_orders SET lease_until = NULL, next_check_at = now() WHERE id = $1`,
@@ -681,8 +744,14 @@ describe('payment orders (TA-8): a timeout is not a failure', () => {
   const stateOf = async (id: string) =>
     (await one(`SELECT state FROM payments.payment_orders WHERE id = $1`, [id])).state as string;
   const record = async (id: string, state: string, tx: string | null = null) =>
-    (await call(`SELECT payments.record_order($1, $2, 'prov-ref', $3, NULL) AS o`, [id, state, tx]))
-      .o as string;
+    (
+      await work(`SELECT payments.record_order($1, $2, $3, 'prov-ref', $4, NULL) AS o`, [
+        id,
+        await lease('payment_orders', id),
+        state,
+        tx,
+      ])
+    ).o as string;
 
   it('is claimed to send exactly once: a worker that dies after sending leaves it to be looked up, never sent again', async () => {
     const { id } = await order();
@@ -728,13 +797,13 @@ describe('payment orders (TA-8): a timeout is not a failure', () => {
 
 describe('the reconciler’s findings (Q5; the exit’s drift)', () => {
   const find = async (wallet: string, provider: number, books: number) =>
-    (await call(`SELECT payments.record_finding('wallet', $1, $2, $3) AS o`, [wallet, provider, books]))
+    (await work(`SELECT payments.record_finding('wallet', $1, $2, $3) AS o`, [wallet, provider, books]))
       .o as string;
 
   it('the books’ balance is what the reconciler compares; a difference is found, kept and changes no money', async () => {
     const { b, walletId, accountNumber } = await withWallet();
     await confirm(await storeEvent(), { id: txId(), account: accountNumber, amount: 60_000 });
-    const row = (await app.query(`SELECT * FROM payments.reconcile_wallets()`)).rows.find(
+    const row = (await worker.query(`SELECT * FROM payments.reconcile_wallets()`)).rows.find(
       (r) => r.wallet_id === walletId,
     );
     expect(row).toMatchObject({
@@ -818,12 +887,12 @@ describe('the Platform Live wallet (Q6, BR-4.3)', () => {
         ).b,
       );
     const before = await books();
-    await call(`SELECT payments.record_wallet_created($1, 'platform-ref', $2, 'AlphaKolect', 'Test Bank')`, [
-      first.id,
-      account,
-    ]);
+    await work(
+      `SELECT payments.record_wallet_created($1, $2, 'platform-ref', $3, 'AlphaKolect', 'Test Bank')`,
+      [first.id, await lease('live_wallets', first.id), account],
+    );
     expect(await confirm(await storeEvent(), { id: txId(), account, amount: 12_000 })).toBe('credited');
-    const row = (await app.query(`SELECT * FROM payments.reconcile_wallets()`)).rows.find(
+    const row = (await worker.query(`SELECT * FROM payments.reconcile_wallets()`)).rows.find(
       (r) => r.wallet_id === first.id,
     );
     expect(row).toMatchObject({ owner_kind: 'platform' });
@@ -843,5 +912,167 @@ describe('the books and the activity record', () => {
     );
     expect(rows.map((r) => r.action)).toEqual(['payments.wallet_provisioned', 'payments.money_received']);
     for (const r of rows) expect(r.summary).not.toContain(accountNumber);
+  });
+});
+
+describe('P9-R1: the API cannot act as the worker, nor the worker as the API', () => {
+  const U = '00000000-0000-7000-8000-000000000000';
+  const WORKER_CALLS: [string, unknown[]][] = [
+    [`SELECT payments.request_wallets($1)`, [PROVIDER]],
+    [`SELECT payments.request_customer_wallets($1)`, [PROVIDER]],
+    [`SELECT * FROM payments.claim_wallets(1, 1)`, []],
+    [`SELECT payments.record_wallet_created($1, $1, 'r', '1', 'n', 'b')`, [U]],
+    [`SELECT payments.record_wallet_failed($1, $1, 'e', 1)`, [U]],
+    [`SELECT * FROM payments.claim_events(1, 1)`, []],
+    [`SELECT payments.record_event($1, $1, true, 'tx', '1', 100, 'NGN', 'successful', now(), 5)`, [U]],
+    [`SELECT * FROM payments.claim_orders(1, 1)`, []],
+    [`SELECT payments.record_order($1, $1, 'succeeded', 'r', 't', NULL)`, [U]],
+    [`SELECT * FROM payments.reconcile_wallets()`, []],
+    [`SELECT payments.record_finding('wallet', $1, 1, 0)`, [U]],
+  ];
+
+  it('the web role is refused every function that says what a provider confirmed: it cannot fabricate a credit', async () => {
+    const { b, accountNumber } = await withWallet();
+    for (const [sql, params] of WORKER_CALLS)
+      await expectSqlState(app.query(sql, params), SQLSTATE.insufficientPrivilege);
+    const event = await storeEvent(); // what it may do: store what it received
+    await expectSqlState(
+      app.query(`SELECT payments.record_event($1, $1, true, 'tx', $2, 100, 'NGN', 'successful', now(), 5)`, [
+        event,
+        accountNumber,
+      ]),
+      SQLSTATE.insufficientPrivilege,
+    );
+    expect(await balance(b.merchantId, '1100')).toBe(0);
+  });
+
+  it('the worker has its functions and nothing else: no session functions, no tables, no other role', async () => {
+    await expectSqlState(
+      worker.query(`SELECT * FROM payments.merchant_wallet($1)`, [U]),
+      SQLSTATE.insufficientPrivilege,
+    );
+    await expectSqlState(
+      worker.query(`SELECT payments.store_event('fake', '{}', '{}', NULL)`),
+      SQLSTATE.insufficientPrivilege,
+    );
+    await expectSqlState(
+      worker.query(
+        `SELECT * FROM identity.create_session($1, 'merchant', $1, 'full', 'x', 1, 1, NULL, NULL)`,
+        [U],
+      ),
+      SQLSTATE.insufficientPrivilege,
+    );
+    for (const table of ['payments.live_wallets', 'payments.provider_transactions', 'ledger.journal_entries'])
+      await expectSqlState(worker.query(`SELECT 1 FROM ${table}`), SQLSTATE.insufficientPrivilege);
+    await expectSqlState(worker.query(`SET ROLE alphakolect_app`), SQLSTATE.insufficientPrivilege);
+    expect(
+      await one(
+        `SELECT r.rolsuper, r.rolcreaterole, r.rolcreatedb, r.rolbypassrls,
+                (SELECT count(*)::int FROM pg_auth_members m WHERE m.member = r.oid OR m.roleid = r.oid) AS memberships
+           FROM pg_roles r WHERE r.rolname = 'alphakolect_worker'`,
+      ),
+    ).toEqual({
+      rolsuper: false,
+      rolcreaterole: false,
+      rolcreatedb: false,
+      rolbypassrls: false,
+      memberships: 0,
+    });
+    const { rows } = await owner.query(
+      `SELECT c.oid::regclass::text AS t FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast') AND c.relkind IN ('r', 'p', 'v')
+          AND has_table_privilege('alphakolect_worker', c.oid, 'SELECT, INSERT, UPDATE, DELETE')`,
+    );
+    expect(rows).toEqual([]);
+  });
+});
+
+describe('P9-R3: an answer from an expired lease changes nothing', () => {
+  const claimedOf = async (table: string, fn: string, id: string) => {
+    await owner.query(`UPDATE payments.${table} SET lease_until = NULL WHERE id = $1`, [id]);
+    return (await worker.query(`SELECT * FROM payments.${fn}(1000, 300)`)).rows.find((r) => r.id === id)!;
+  };
+
+  it('a wallet: the later claim’s worker decides; the earlier one’s answer, or no token, is stale', async () => {
+    const b = await business();
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
+    const w = await walletOf(b.merchantId);
+    const old = await claimedOf('live_wallets', 'claim_wallets', w.id);
+    const fresh = await claimedOf('live_wallets', 'claim_wallets', w.id);
+    expect(fresh.lease_token).not.toBe(old.lease_token);
+    const created = (token: string | null) =>
+      work(`SELECT payments.record_wallet_created($1, $2, 'r', $3, 'n', 'b') AS o`, [
+        w.id,
+        token,
+        digits(10),
+      ]);
+    expect((await created(old.lease_token)).o).toBe('stale');
+    expect((await created(null)).o).toBe('stale');
+    expect(
+      (await work(`SELECT payments.record_wallet_failed($1, $2, 'e', 5) AS o`, [w.id, old.lease_token])).o,
+    ).toBe('stale');
+    expect((await walletOf(b.merchantId)).status).toBe('provisioning');
+    expect((await created(fresh.lease_token)).o).toBe('ok');
+  });
+
+  it('an event: a stale confirmation credits nothing', async () => {
+    const { b, accountNumber } = await withWallet();
+    const id = await storeEvent();
+    const old = await claimedOf('provider_events', 'claim_events', id);
+    const fresh = await claimedOf('provider_events', 'claim_events', id);
+    const record = (token: string, tx: string) =>
+      work(`SELECT payments.record_event($1, $2, true, $3, $4, 100, 'NGN', 'successful', now(), 5) AS o`, [
+        id,
+        token,
+        tx,
+        accountNumber,
+      ]);
+    expect((await record(old.lease_token, txId())).o).toBe('stale');
+    expect(await balance(b.merchantId, '1100')).toBe(0);
+    expect((await record(fresh.lease_token, txId())).o).toBe('credited');
+    expect(await balance(b.merchantId, '1100')).toBe(100);
+  });
+
+  it('an order: a stale success posts nothing', async () => {
+    const w = await withWallet();
+    await confirm(await storeEvent(), { id: txId(), account: w.accountNumber, amount: 100_000 });
+    const ledgerId = (await one(`SELECT id FROM ledger.ledgers WHERE merchant_id = $1`, [w.b.merchantId])).id;
+    const id = (
+      await one(
+        `SELECT payments.create_order($1, NULL, '{"accountNumber":"0123456789","bankCode":"058"}', 30000, $2, 'test', $3, 'subscription.paid', '{}') AS id`,
+        [w.walletId, `AKO-${randomBytes(8).toString('hex')}`, ledgerId],
+      )
+    ).id as string;
+    await owner.query(`UPDATE payments.payment_orders SET next_check_at = now() WHERE id = $1`, [id]);
+    const old = await claimedOf('payment_orders', 'claim_orders', id);
+    await owner.query(`UPDATE payments.payment_orders SET next_check_at = now() WHERE id = $1`, [id]);
+    const fresh = await claimedOf('payment_orders', 'claim_orders', id);
+    const record = (token: string) =>
+      work(`SELECT payments.record_order($1, $2, 'succeeded', 'r', 't', NULL) AS o`, [id, token]);
+    expect((await record(old.lease_token)).o).toBe('stale');
+    expect(await balance(w.b.merchantId, '1100')).toBe(100_000);
+    expect((await record(fresh.lease_token)).o).toBe('ok');
+    expect(await balance(w.b.merchantId, '1100')).toBe(70_000);
+  });
+});
+
+describe('an event with no usable answer (P9-R4): one open finding for the platform team', () => {
+  it('is recorded once however often it is seen, and names no wallet', async () => {
+    const find = async () =>
+      (await work(`SELECT payments.record_finding('event', NULL, 1, 0) AS o`)).o as string;
+    const first = await find();
+    expect(['recorded', 'seen_again']).toContain(first);
+    expect(await find()).toBe('seen_again');
+    expect(
+      (
+        await one(
+          `SELECT count(*)::int AS n FROM payments.reconciliation_findings WHERE scope = 'event' AND status = 'open'`,
+        )
+      ).n,
+    ).toBe(1);
+    await expectSqlState(
+      work(`SELECT payments.record_finding('event', gen_random_uuid(), 1, 0)`),
+      SQLSTATE.checkViolation,
+    );
   });
 });

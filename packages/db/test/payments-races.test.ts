@@ -11,20 +11,22 @@ const RUNS = 50;
 
 let a1: pg.Client;
 let a2: pg.Client;
+let w1: pg.Client;
+let w2: pg.Client;
 let watcher: pg.Client;
 let owner: pg.Client;
-const pid = { a2: 0 };
 beforeAll(async () => {
-  [a1, a2, watcher, owner] = await Promise.all([
+  [a1, a2, w1, w2, watcher, owner] = await Promise.all([
     connectAs('app'),
     connectAs('app'),
+    connectAs('worker'),
+    connectAs('worker'),
     connectAs('migrator'),
     connectAs('migrator'),
   ]);
-  pid.a2 = (await a2.query(`SELECT pg_backend_pid() AS pid`)).rows[0].pid as number;
 });
 afterAll(async () => {
-  await Promise.all([a1, a2, watcher, owner].map((c) => c.end()));
+  await Promise.all([a1, a2, w1, w2, watcher, owner].map((c) => c.end()));
 });
 
 const hash = () => createHash('sha256').update(randomBytes(32)).digest('hex');
@@ -46,26 +48,28 @@ async function waitsForALock(backend: number) {
   throw new Error(`backend ${backend} never waited for a lock`);
 }
 
-/** One staged race: `first` holds its footprint on a1; `second` starts on a2 and waits; a1 commits; a2's result. */
+/** One staged race: `first` holds its footprint on c1; `second` starts on c2 and waits; c1 commits; c2's result. */
 async function race<T>(
   first: (c: pg.Client) => Promise<unknown>,
   second: (c: pg.Client) => Promise<T>,
+  [c1, c2]: [pg.Client, pg.Client] = [a1, a2],
 ): Promise<T> {
-  await a1.query('BEGIN');
-  await first(a1);
-  await a2.query('BEGIN');
-  const pending = second(a2).then(
+  const backend = (await c2.query(`SELECT pg_backend_pid() AS pid`)).rows[0].pid as number;
+  await c1.query('BEGIN');
+  await first(c1);
+  await c2.query('BEGIN');
+  const pending = second(c2).then(
     async (r) => {
-      await a2.query('COMMIT');
+      await c2.query('COMMIT');
       return r;
     },
     async (e) => {
-      await a2.query('ROLLBACK');
+      await c2.query('ROLLBACK');
       throw e;
     },
   );
-  await waitsForALock(pid.a2);
-  await a1.query('COMMIT');
+  await waitsForALock(backend);
+  await c1.query('COMMIT');
   return pending;
 }
 
@@ -98,7 +102,7 @@ async function business() {
   const membership = (
     await owner.query(`SELECT id FROM tenancy.merchant_memberships WHERE identity_id = $1`, [s.identity_id])
   ).rows[0].id as string;
-  await a1.query(`SELECT payments.request_wallets('fake', false)`);
+  await w1.query(`SELECT payments.request_wallets('fake')`);
   const walletId = (
     await owner.query(
       `SELECT id FROM payments.live_wallets WHERE merchant_id = $1 AND owner_kind = 'merchant'`,
@@ -106,8 +110,9 @@ async function business() {
     )
   ).rows[0].id as string;
   const accountNumber = account();
-  await a1.query(`SELECT payments.record_wallet_created($1, $2, $3, 'Races', 'Test Bank')`, [
+  await w1.query(`SELECT payments.record_wallet_created($1, $2, $3, $4, 'Races', 'Test Bank')`, [
     walletId,
+    await tokenOf('live_wallets', walletId),
     `ref-${randomBytes(6).toString('hex')}`,
     accountNumber,
   ]);
@@ -140,18 +145,24 @@ async function superAdmin() {
   return session(identityId, 'platform', membershipId);
 }
 
+/** A claim's token, staged here: the claims themselves are tested in payments.test.ts. */
+const tokenOf = async (table: 'live_wallets' | 'provider_events', id: string) =>
+  (
+    await owner.query(
+      `UPDATE payments.${table} SET lease_token = gen_random_uuid() WHERE id = $1 RETURNING lease_token`,
+      [id],
+    )
+  ).rows[0].lease_token as string;
 const store = async (c: pg.Client = a1) =>
   (await c.query(`SELECT payments.store_event('fake', '{}', '{}', NULL) AS id`)).rows[0].id as string;
 const confirm =
   (eventId: string, tx: string, acct: string, amount = 10_000) =>
-  (c: pg.Client) =>
+  async (c: pg.Client) =>
     c
-      .query(`SELECT payments.record_event($1, true, $2, $3, $4, 'NGN', 'successful', now(), 5) AS outcome`, [
-        eventId,
-        tx,
-        acct,
-        amount,
-      ])
+      .query(
+        `SELECT payments.record_event($1, $2, true, $3, $4, $5, 'NGN', 'successful', now(), 5) AS outcome`,
+        [eventId, await tokenOf('provider_events', eventId), tx, acct, amount],
+      )
       .then((r) => r.rows[0].outcome as string);
 const balance = async (merchantId: string, code: string) =>
   Number(
@@ -170,7 +181,7 @@ describe('the payments races, staged (P9 §5; TA-8)', () => {
     for (let i = 0; i < RUNS; i++) {
       const tx = txId();
       const [e1, e2] = [await store(), await store()];
-      const second = await race(confirm(e1, tx, b.accountNumber), confirm(e2, tx, b.accountNumber));
+      const second = await race(confirm(e1, tx, b.accountNumber), confirm(e2, tx, b.accountNumber), [w1, w2]);
       expect(second).toBe('duplicate');
       expect(await balance(b.merchantId, '1100')).toBe((i + 1) * 10_000);
     }
@@ -186,13 +197,24 @@ describe('the payments races, staged (P9 §5; TA-8)', () => {
       const tx = txId();
       const acct = account();
       const [e1, e2] = [await store(), await store()];
-      const second = await race(confirm(e1, tx, acct), confirm(e2, tx, acct));
-      expect(second).toBe('duplicate');
+      // The loser has not been compared with the winner: it is looked at again, and is a duplicate then.
+      expect(await race(confirm(e1, tx, acct), confirm(e2, tx, acct), [w1, w2])).toBe('pending');
+      expect(await confirm(e2, tx, acct)(w1)).toBe('duplicate');
       const { rows } = await owner.query(
         `SELECT count(*)::int AS n FROM payments.provider_transactions WHERE provider_tx_id = $1`,
         [tx],
       );
       expect(rows[0].n).toBe(1);
+    }
+  });
+
+  it(`one unmatched transaction, two different answers at once — the contradiction is not lost (${RUNS} runs)`, async () => {
+    for (let i = 0; i < RUNS; i++) {
+      const tx = txId();
+      const acct = account();
+      const [e1, e2] = [await store(), await store()];
+      expect(await race(confirm(e1, tx, acct), confirm(e2, tx, acct, 20_000), [w1, w2])).toBe('pending');
+      expect(await confirm(e2, tx, acct, 20_000)(w1)).toBe('review');
     }
   });
 
@@ -204,7 +226,7 @@ describe('the payments races, staged (P9 §5; TA-8)', () => {
       ])
     ).rows[0].id as string;
     for (let i = 0; i < RUNS; i++) {
-      await confirm(await store(), txId(), b.accountNumber)(a1);
+      await confirm(await store(), txId(), b.accountNumber)(w1);
       const receipt = (
         await owner.query(
           `SELECT id FROM payments.receipts WHERE merchant_id = $1 AND classified_at IS NULL LIMIT 1`,
@@ -225,7 +247,7 @@ describe('the payments races, staged (P9 §5; TA-8)', () => {
     const admin = await superAdmin();
     for (let i = 0; i < RUNS; i++) {
       const tx = txId();
-      await confirm(await store(), tx, account())(a1);
+      await confirm(await store(), tx, account())(w1);
       const id = (
         await owner.query(`SELECT id FROM payments.provider_transactions WHERE provider_tx_id = $1`, [tx])
       ).rows[0].id as string;
@@ -250,7 +272,7 @@ describe('the payments races, staged (P9 §5; TA-8)', () => {
         c
           .query(`SELECT payments.record_finding('wallet', $1, 5, 0) AS o`, [b.walletId])
           .then((r) => r.rows[0].o as string);
-      expect(await race(find, find)).toBe('seen_again');
+      expect(await race(find, find, [w1, w2])).toBe('seen_again');
       const { rows } = await owner.query(
         `SELECT id FROM payments.reconciliation_findings WHERE wallet_id = $1 AND status = 'open'`,
         [b.walletId],

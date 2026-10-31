@@ -21,7 +21,7 @@
 -- Every tenant table has RLS and an app policy; the app holds no privilege (B1). Forward-only; earlier migrations
 -- untouched.
 
-GRANT USAGE ON SCHEMA payments TO alphakolect_app, alphakolect_readonly;
+GRANT USAGE ON SCHEMA payments TO alphakolect_app, alphakolect_worker, alphakolect_readonly;
 
 -- ── the chart: money received, to be classified (Q1) ──
 INSERT INTO ledger.chart_template (ledger_kind, code, name, type, non_negative, subject_type, purpose) VALUES
@@ -58,6 +58,7 @@ CREATE TABLE payments.live_wallets (
   attempts        integer NOT NULL DEFAULT 0,
   next_attempt_at timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   lease_until     timestamptz(6),
+  lease_token     uuid,
   last_error      text,
   requested_by    uuid,
   created_at      timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -106,6 +107,7 @@ CREATE TABLE payments.provider_events (
   attempts      integer NOT NULL DEFAULT 0,
   next_check_at timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   lease_until   timestamptz(6),
+  lease_token   uuid,
   outcome       text,
   processed_at  timestamptz(6),
   CONSTRAINT provider_events_pkey PRIMARY KEY (id),
@@ -218,6 +220,7 @@ CREATE TABLE payments.payment_orders (
   attempts           integer NOT NULL DEFAULT 0,
   next_check_at      timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   lease_until        timestamptz(6),
+  lease_token        uuid,
   last_error         text,
   entry_id           uuid,
   created_at         timestamptz(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -265,7 +268,7 @@ CREATE TABLE payments.reconciliation_findings (
   CONSTRAINT reconciliation_findings_resolved_by_fkey FOREIGN KEY (resolved_by) REFERENCES identity.identities (id)
     ON DELETE RESTRICT ON UPDATE RESTRICT,
   CONSTRAINT reconciliation_findings_scope_valid CHECK (
-    (scope = 'wallet' AND wallet_id IS NOT NULL) OR (scope = 'pooled' AND wallet_id IS NULL)),
+    (scope = 'wallet' AND wallet_id IS NOT NULL) OR (scope IN ('pooled', 'event') AND wallet_id IS NULL)),
   CONSTRAINT reconciliation_findings_differs CHECK (provider_balance_minor <> books_balance_minor),
   CONSTRAINT reconciliation_findings_status_valid CHECK (status IN ('open', 'resolved')),
   CONSTRAINT reconciliation_findings_resolved_consistent CHECK (

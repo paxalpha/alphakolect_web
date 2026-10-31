@@ -30,8 +30,9 @@ const MODULE_SCHEMAS = [
   'util',
 ];
 
-type Grantee = 'alphakolect_app' | 'alphakolect_readonly' | 'PUBLIC';
+type Grantee = 'alphakolect_app' | 'alphakolect_worker' | 'alphakolect_readonly' | 'PUBLIC';
 const APP: Grantee[] = ['alphakolect_app'];
+const WORKER: Grantee[] = ['alphakolect_worker'];
 const OWNER_ONLY: Grantee[] = [];
 
 /** Every function in a module schema → who may execute it besides its owner, alphakolect_migrator. */
@@ -85,11 +86,12 @@ const EXPECTED: Record<string, Grantee[]> = {
   'customers.read_self(uuid)': APP,
   'customers.set_customer_status(uuid, uuid, text, text, text, text)': APP,
   'customers.update_customer(uuid, uuid, jsonb, text, text, text)': APP,
-  // payments — P9: the worker's functions (TA-11: it connects as the app), the webhook's store, the session commands and
-  // reads; the order's creation and the template lookup are called by definer functions and tests only (Q2)
-  'payments.claim_events(integer, integer)': APP,
-  'payments.claim_orders(integer, integer)': APP,
-  'payments.claim_wallets(integer, integer)': APP,
+  // payments — P9: the worker's functions are the worker's alone (P9-R1: they trust their caller for what a provider
+  // confirmed); the API has the webhook's store and the session reads. The order's creation and the template lookup are
+  // called by definer functions and tests only (Q2), and customer wallets are requested by no running process (OPEN-12).
+  'payments.claim_events(integer, integer)': WORKER,
+  'payments.claim_orders(integer, integer)': WORKER,
+  'payments.claim_wallets(integer, integer)': WORKER,
   'payments.classify_receipt(uuid, uuid, uuid, text, text, text, text)': APP,
   'payments.create_order(uuid, uuid, jsonb, bigint, text, text, uuid, text, jsonb)': OWNER_ONLY,
   'payments.list_receipts(uuid, boolean, integer, timestamp with time zone, uuid)': APP,
@@ -98,15 +100,16 @@ const EXPECTED: Record<string, Grantee[]> = {
     APP,
   'payments.platform_list_unmatched(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
   'payments.platform_list_wallets(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
-  'payments.reconcile_wallets()': APP,
-  'payments.record_event(uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer)':
-    APP,
-  'payments.record_finding(text, uuid, bigint, bigint)': APP,
-  'payments.record_order(uuid, text, text, text, text)': APP,
-  'payments.record_wallet_created(uuid, text, text, text, text)': APP,
-  'payments.record_wallet_failed(uuid, text, integer)': APP,
+  'payments.reconcile_wallets()': WORKER,
+  'payments.record_event(uuid, uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer)':
+    WORKER,
+  'payments.record_finding(text, uuid, bigint, bigint)': WORKER,
+  'payments.record_order(uuid, uuid, text, text, text, text)': WORKER,
+  'payments.record_wallet_created(uuid, uuid, text, text, text, text)': WORKER,
+  'payments.record_wallet_failed(uuid, uuid, text, integer)': WORKER,
+  'payments.request_customer_wallets(text)': OWNER_ONLY,
   'payments.request_platform_wallet(uuid, text, text, text, text)': APP,
-  'payments.request_wallets(text, boolean)': APP,
+  'payments.request_wallets(text)': WORKER,
   'payments.resolve_finding(uuid, uuid, text, text, text, text)': APP,
   'payments.resolve_unmatched(uuid, uuid, text, uuid, text, text, text, text)': APP,
   'payments.store_event(text, jsonb, text, text)': APP,
@@ -317,20 +320,24 @@ describe('execute-grant inventory (plan §9.1, R31)', () => {
   });
 
   it('effective EXECUTE (has_function_privilege: role membership and PUBLIC included) matches the list', async () => {
-    const { rows } = await owner.query<{ fn: string; app: boolean; readonly: boolean }>(
+    const { rows } = await owner.query<{ fn: string; app: boolean; worker: boolean; readonly: boolean }>(
       `SELECT n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')' AS fn,
               has_function_privilege('alphakolect_app', p.oid, 'EXECUTE') AS app,
+              has_function_privilege('alphakolect_worker', p.oid, 'EXECUTE') AS worker,
               has_function_privilege('alphakolect_readonly', p.oid, 'EXECUTE') AS readonly
          FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = ANY ($1)`,
       [MODULE_SCHEMAS],
     );
-    const effective = Object.fromEntries(rows.map((r) => [r.fn, { app: r.app, readonly: r.readonly }]));
+    const effective = Object.fromEntries(
+      rows.map((r) => [r.fn, { app: r.app, worker: r.worker, readonly: r.readonly }]),
+    );
     const expected = Object.fromEntries(
       Object.entries(EXPECTED).map(([fn, g]) => [
         fn,
         {
           app: g.includes('alphakolect_app') || g.includes('PUBLIC'),
+          worker: g.includes('alphakolect_worker') || g.includes('PUBLIC'),
           readonly: g.includes('alphakolect_readonly') || g.includes('PUBLIC'),
         },
       ]),

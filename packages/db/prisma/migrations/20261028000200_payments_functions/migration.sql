@@ -52,10 +52,9 @@ INSERT INTO audit.event_catalog (identifier, outcome, class, writer_pattern, sum
 
 -- ── the worker: wallets (BR-2.3, Q7) ──
 
--- Request a wallet for every business whose email is confirmed (an active business) and that has none; and, when the
--- switch is on (never in production, OPEN-12), for every active customer of such a business. The alias is fixed per
--- owner. Returns how many were requested.
-CREATE FUNCTION payments.request_wallets(p_provider text, p_customer_wallets boolean)
+-- Request a wallet for every business whose email is confirmed (an active business) and that has none. The alias is fixed
+-- per owner. Returns how many were requested.
+CREATE FUNCTION payments.request_wallets(p_provider text)
  RETURNS integer
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -63,7 +62,6 @@ CREATE FUNCTION payments.request_wallets(p_provider text, p_customer_wallets boo
 AS $function$
 DECLARE
   v_merchants integer;
-  v_customers integer := 0;
 BEGIN
   INSERT INTO payments.live_wallets (owner_kind, merchant_id, provider, alias)
   SELECT 'merchant', m.id, p_provider, 'AKM-' || replace(m.id::text, '-', '')
@@ -72,22 +70,38 @@ BEGIN
      AND NOT EXISTS (SELECT 1 FROM payments.live_wallets w WHERE w.owner_kind = 'merchant' AND w.merchant_id = m.id)
   ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_merchants = ROW_COUNT;
-  IF p_customer_wallets THEN
-    INSERT INTO payments.live_wallets (owner_kind, merchant_id, customer_id, provider, alias)
-    SELECT 'customer', c.merchant_id, c.id, p_provider, 'AKC-' || replace(c.id::text, '-', '')
-      FROM customers.customers c JOIN tenancy.merchants m ON m.id = c.merchant_id AND m.status = 'active'
-     WHERE c.status = 'active'
-       AND NOT EXISTS (SELECT 1 FROM payments.live_wallets w WHERE w.owner_kind = 'customer' AND w.customer_id = c.id)
-    ON CONFLICT DO NOTHING;
-    GET DIAGNOSTICS v_customers = ROW_COUNT;
-  END IF;
-  RETURN v_merchants + v_customers;
+  RETURN v_merchants;
 END
 $function$;
 
--- The wallets due for creation, leased to this worker for p_lease_seconds (a row another worker holds is skipped).
+-- The same for every active customer of an active business (Q7). Built, and executable by no running process: the switch
+-- is the database's, not a caller's (P9-5, P9-R1). Turning customer wallets on takes a migration granting this to the
+-- worker, written once custody is settled in writing (OPEN-12).
+CREATE FUNCTION payments.request_customer_wallets(p_provider text)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+DECLARE
+  v_customers integer;
+BEGIN
+  INSERT INTO payments.live_wallets (owner_kind, merchant_id, customer_id, provider, alias)
+  SELECT 'customer', c.merchant_id, c.id, p_provider, 'AKC-' || replace(c.id::text, '-', '')
+    FROM customers.customers c JOIN tenancy.merchants m ON m.id = c.merchant_id AND m.status = 'active'
+   WHERE c.status = 'active'
+     AND NOT EXISTS (SELECT 1 FROM payments.live_wallets w WHERE w.owner_kind = 'customer' AND w.customer_id = c.id)
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_customers = ROW_COUNT;
+  RETURN v_customers;
+END
+$function$;
+
+-- The wallets due for creation, leased to this worker for p_lease_seconds (a row another worker holds is skipped). The
+-- token fences the lease (P9-R3): whatever a worker records, it records with the token of its claim, and a later claim
+-- makes an earlier worker's answer 'stale'.
 CREATE FUNCTION payments.claim_wallets(p_limit integer, p_lease_seconds integer)
- RETURNS TABLE(id uuid, owner_kind text, merchant_id uuid, customer_id uuid, provider text, alias text, display_name text, attempts integer)
+ RETURNS TABLE(id uuid, lease_token uuid, owner_kind text, merchant_id uuid, customer_id uuid, provider text, alias text, display_name text, attempts integer)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -102,18 +116,20 @@ BEGIN
      LIMIT p_limit
        FOR NO KEY UPDATE SKIP LOCKED)
   UPDATE payments.live_wallets w
-     SET lease_until = now() + make_interval(secs => p_lease_seconds), attempts = w.attempts + 1
+     SET lease_until = now() + make_interval(secs => p_lease_seconds), lease_token = util.uuid_v7(),
+         attempts = w.attempts + 1
     FROM due
    WHERE w.id = due.id
-  RETURNING w.id, w.owner_kind, w.merchant_id, w.customer_id, w.provider, w.alias,
+  RETURNING w.id, w.lease_token, w.owner_kind, w.merchant_id, w.customer_id, w.provider, w.alias,
             coalesce((SELECT c.full_name FROM customers.customers c WHERE c.id = w.customer_id),
                      (SELECT m.name FROM tenancy.merchants m WHERE m.id = w.merchant_id), 'AlphaKolect'),
             w.attempts;
 END
 $function$;
 
--- The provider created (or, after a timeout, already had) the account. Outcomes: 'ok', 'not_found', 'invalid_status'.
-CREATE FUNCTION payments.record_wallet_created(p_wallet_id uuid, p_provider_ref text, p_account_number text, p_account_name text, p_bank_name text)
+-- The provider created (or, after a timeout, already had) the account. Outcomes: 'ok', 'not_found', 'invalid_status',
+-- 'stale' (another worker holds the wallet now).
+CREATE FUNCTION payments.record_wallet_created(p_wallet_id uuid, p_lease_token uuid, p_provider_ref text, p_account_number text, p_account_name text, p_bank_name text)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -129,10 +145,13 @@ BEGIN
   IF v_wallet.status <> 'provisioning' THEN
     RETURN 'invalid_status';
   END IF;
+  IF p_lease_token IS NULL OR v_wallet.lease_token IS DISTINCT FROM p_lease_token THEN
+    RETURN 'stale';
+  END IF;
   UPDATE payments.live_wallets w
      SET status = 'active', provider_ref = p_provider_ref, account_number = p_account_number,
          account_name = p_account_name, bank_name = p_bank_name, activated_at = now(), lease_until = NULL,
-         last_error = NULL
+         lease_token = NULL, last_error = NULL
    WHERE w.id = v_wallet.id;
   INSERT INTO audit.audit_events
     (merchant_id, actor_identity_id, actor_audience, actor_membership_id, action, target_type, target_id, outcome,
@@ -144,8 +163,8 @@ END
 $function$;
 
 -- The provider refused, or the outcome is unknown and the alias lookup found nothing yet: try again later, with a
--- growing delay; after p_max_attempts, 'failed' for the platform team. Outcomes: 'retry', 'failed', 'not_found'.
-CREATE FUNCTION payments.record_wallet_failed(p_wallet_id uuid, p_error text, p_max_attempts integer)
+-- growing delay; after p_max_attempts, 'failed' for the platform team. Outcomes: 'retry', 'failed', 'not_found', 'stale'.
+CREATE FUNCTION payments.record_wallet_failed(p_wallet_id uuid, p_lease_token uuid, p_error text, p_max_attempts integer)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -158,10 +177,13 @@ BEGIN
   IF v_wallet.id IS NULL OR v_wallet.status <> 'provisioning' THEN
     RETURN 'not_found';
   END IF;
+  IF p_lease_token IS NULL OR v_wallet.lease_token IS DISTINCT FROM p_lease_token THEN
+    RETURN 'stale';
+  END IF;
   UPDATE payments.live_wallets w
      SET status = CASE WHEN w.attempts >= p_max_attempts THEN 'failed' ELSE 'provisioning' END,
          next_attempt_at = now() + make_interval(mins => least(60, power(2, least(w.attempts, 6))::integer)),
-         lease_until = NULL, last_error = left(p_error, 500)
+         lease_until = NULL, lease_token = NULL, last_error = left(p_error, 500)
    WHERE w.id = v_wallet.id;
   RETURN CASE WHEN v_wallet.attempts >= p_max_attempts THEN 'failed' ELSE 'retry' END;
 END
@@ -183,7 +205,7 @@ AS $function$
 $function$;
 
 CREATE FUNCTION payments.claim_events(p_limit integer, p_lease_seconds integer)
- RETURNS TABLE(id uuid, provider text, reference text, attempts integer)
+ RETURNS TABLE(id uuid, lease_token uuid, provider text, reference text, attempts integer)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -198,10 +220,11 @@ BEGIN
      LIMIT p_limit
        FOR NO KEY UPDATE SKIP LOCKED)
   UPDATE payments.provider_events e
-     SET lease_until = now() + make_interval(secs => p_lease_seconds), attempts = e.attempts + 1
+     SET lease_until = now() + make_interval(secs => p_lease_seconds), lease_token = util.uuid_v7(),
+         attempts = e.attempts + 1
     FROM due
    WHERE e.id = due.id
-  RETURNING e.id, e.provider, e.reference, e.attempts;
+  RETURNING e.id, e.lease_token, e.provider, e.reference, e.attempts;
 END
 $function$;
 
@@ -209,8 +232,8 @@ $function$;
 -- p_found false: the provider has no such transaction — a forged event, or one not visible yet; after p_max_attempts it
 -- is rejected and nothing is credited. p_status: the provider's 'pending' (checked again later), or a final
 -- 'successful', 'failed' or 'reversed'. Outcomes: 'credited', 'held', 'unmatched', 'ignored', 'review', 'duplicate',
--- 'pending', 'rejected', 'not_found'.
-CREATE FUNCTION payments.record_event(p_event_id uuid, p_found boolean, p_provider_tx_id text, p_account_number text, p_amount_minor bigint, p_currency text, p_status text, p_occurred_at timestamp with time zone, p_max_attempts integer)
+-- 'pending', 'rejected', 'not_found', 'stale' (another worker holds the event now).
+CREATE FUNCTION payments.record_event(p_event_id uuid, p_lease_token uuid, p_found boolean, p_provider_tx_id text, p_account_number text, p_amount_minor bigint, p_currency text, p_status text, p_occurred_at timestamp with time zone, p_max_attempts integer)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -252,11 +275,14 @@ BEGIN
   IF v_event.status IN ('done', 'rejected') THEN
     RETURN 'duplicate';
   END IF;
+  IF p_lease_token IS NULL OR v_event.lease_token IS DISTINCT FROM p_lease_token THEN
+    RETURN 'stale';
+  END IF;
   IF NOT p_found OR p_status = 'pending' THEN
     v_outcome := CASE WHEN NOT p_found AND v_event.attempts >= p_max_attempts THEN 'rejected' ELSE 'pending' END;
     UPDATE payments.provider_events e
        SET status = v_outcome, outcome = CASE WHEN v_outcome = 'rejected' THEN 'not_confirmed' END,
-           processed_at = CASE WHEN v_outcome = 'rejected' THEN now() END, lease_until = NULL,
+           processed_at = CASE WHEN v_outcome = 'rejected' THEN now() END, lease_until = NULL, lease_token = NULL,
            next_check_at = now() + make_interval(mins => least(60, power(2, least(e.attempts, 6))::integer))
      WHERE e.id = v_event.id;
     RETURN v_outcome;
@@ -265,22 +291,25 @@ BEGIN
      OR p_currency IS DISTINCT FROM 'NGN' OR coalesce(p_provider_tx_id, '') !~ '^[\x21-\x7e]{1,128}$' THEN
     RAISE EXCEPTION 'payments: an unusable confirmation for event %', v_event.id USING ERRCODE = 'invalid_parameter_value';
   END IF;
-  -- Acted on before: the same answer again is a duplicate. An answer that contradicts what was recorded (another status
-  -- or amount) goes to the platform team for review, whatever had been done with it — nothing is credited or debited
-  -- automatically (TA-8, E1).
+  -- Acted on before: the same answer again is a duplicate. An answer that contradicts what was recorded (another status,
+  -- amount or destination account) goes to the platform team for review, whatever had been done with it — nothing is
+  -- credited or debited automatically (TA-8, E1). The wallet and the entry stay as they were: the row then shows which
+  -- wallet was credited beside the account the provider now names.
   SELECT * INTO v_existing FROM payments.provider_transactions t
    WHERE t.provider = v_event.provider AND t.provider_tx_id = p_provider_tx_id;
   IF v_existing.id IS NOT NULL THEN
     v_outcome := 'duplicate';
-    IF p_status <> v_existing.provider_status OR p_amount_minor <> v_existing.amount_minor THEN
+    IF p_status <> v_existing.provider_status OR p_amount_minor <> v_existing.amount_minor
+       OR p_account_number IS DISTINCT FROM v_existing.account_number THEN
       UPDATE payments.provider_transactions t
-         SET provider_status = p_status, amount_minor = p_amount_minor, matched = 'review', resolution = NULL,
-             resolution_note = NULL, resolved_by = NULL, resolved_at = NULL
+         SET provider_status = p_status, amount_minor = p_amount_minor, account_number = p_account_number,
+             matched = 'review', resolution = NULL, resolution_note = NULL, resolved_by = NULL, resolved_at = NULL
        WHERE t.id = v_existing.id;
       v_outcome := 'review';
     END IF;
     UPDATE payments.provider_events e
-       SET status = 'done', outcome = v_outcome, processed_at = now(), lease_until = NULL WHERE e.id = v_event.id;
+       SET status = 'done', outcome = v_outcome, processed_at = now(), lease_until = NULL, lease_token = NULL
+     WHERE e.id = v_event.id;
     RETURN v_outcome;
   END IF;
   v_matched := CASE WHEN p_status <> 'successful' THEN 'ignored'
@@ -302,7 +331,8 @@ BEGIN
     v_entry := v_post.entry_id;
   END IF;
   -- The contested inserts last (L3): the transaction, once, and the business's receipt. A credit's concurrent duplicate
-  -- waits on the projections above and finds it; one with no projections to wait on ends here as a duplicate.
+  -- waits on the projections above and finds it. One with no projections to wait on lost the race here, and has not been
+  -- compared with what won: it is looked at again at once, and the comparison above decides (a contradiction is not lost).
   INSERT INTO payments.provider_transactions
     (id, provider, provider_tx_id, wallet_id, account_number, amount_minor, currency, provider_status, matched,
      occurred_at, entry_id)
@@ -316,8 +346,8 @@ BEGIN
       RAISE EXCEPTION 'payments: transaction % was credited concurrently', p_provider_tx_id;
     END IF;
     UPDATE payments.provider_events e
-       SET status = 'done', outcome = 'duplicate', processed_at = now(), lease_until = NULL WHERE e.id = v_event.id;
-    RETURN 'duplicate';
+       SET status = 'pending', lease_until = NULL, lease_token = NULL, next_check_at = now() WHERE e.id = v_event.id;
+    RETURN 'pending';
   END IF;
   IF v_matched = 'credited' AND v_wallet.owner_kind = 'merchant' THEN
     INSERT INTO payments.receipts (id, merchant_id, wallet_id, transaction_id, amount_minor, received_entry_id)
@@ -329,7 +359,8 @@ BEGIN
             'success', jsonb_build_object('amountMinor', p_amount_minor::text, 'receiptId', v_receipt::text));
   END IF;
   UPDATE payments.provider_events e
-     SET status = 'done', outcome = v_matched, processed_at = now(), lease_until = NULL WHERE e.id = v_event.id;
+     SET status = 'done', outcome = v_matched, processed_at = now(), lease_until = NULL, lease_token = NULL
+   WHERE e.id = v_event.id;
   RETURN v_matched;
 END
 $function$;
@@ -375,7 +406,7 @@ $function$;
 -- 'unknown' as it is claimed, before anything is sent: a worker that dies after sending leaves it to be looked up, not
 -- sent twice. prior_state says which: 'created' is the one and only licence to send.
 CREATE FUNCTION payments.claim_orders(p_limit integer, p_lease_seconds integer)
- RETURNS TABLE(id uuid, prior_state text, reference text, amount_minor bigint, from_provider_ref text, to_provider_ref text, to_bank jsonb, attempts integer)
+ RETURNS TABLE(id uuid, lease_token uuid, prior_state text, reference text, amount_minor bigint, from_provider_ref text, to_provider_ref text, to_bank jsonb, attempts integer)
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'pg_catalog', 'pg_temp'
@@ -391,10 +422,11 @@ BEGIN
        FOR NO KEY UPDATE SKIP LOCKED)
   UPDATE payments.payment_orders o
      SET state = CASE WHEN due.prior_state = 'created' THEN 'unknown' ELSE o.state END,
-         lease_until = now() + make_interval(secs => p_lease_seconds), attempts = o.attempts + 1
+         lease_until = now() + make_interval(secs => p_lease_seconds), lease_token = util.uuid_v7(),
+         attempts = o.attempts + 1
     FROM due
    WHERE o.id = due.id
-  RETURNING o.id, due.prior_state, o.reference, o.amount_minor,
+  RETURNING o.id, o.lease_token, due.prior_state, o.reference, o.amount_minor,
             (SELECT w.provider_ref FROM payments.live_wallets w WHERE w.id = o.from_wallet_id),
             (SELECT w.provider_ref FROM payments.live_wallets w WHERE w.id = o.to_wallet_id),
             o.to_bank, o.attempts;
@@ -403,8 +435,8 @@ $function$;
 
 -- What the provider said about an order that is not finished: 'submitted', 'unknown' (a timeout, or a lookup that found
 -- nothing: the outcome is not known, TA-8), 'failed' or 'succeeded'. Success posts the order's template once, keyed by
--- the order. Outcomes: 'ok', 'not_found', 'invalid_transition'.
-CREATE FUNCTION payments.record_order(p_order_id uuid, p_state text, p_provider_ref text, p_provider_tx_id text, p_error text)
+-- the order. Outcomes: 'ok', 'not_found', 'invalid_transition', 'stale' (another worker holds the order now).
+CREATE FUNCTION payments.record_order(p_order_id uuid, p_lease_token uuid, p_state text, p_provider_ref text, p_provider_tx_id text, p_error text)
  RETURNS text
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -430,6 +462,9 @@ BEGIN
      OR v_order.state NOT IN ('submitted', 'unknown') THEN
     RETURN 'invalid_transition';
   END IF;
+  IF p_lease_token IS NULL OR v_order.lease_token IS DISTINCT FROM p_lease_token THEN
+    RETURN 'stale';
+  END IF;
   IF p_state = 'succeeded' THEN
     SELECT * INTO v_post
       FROM ledger.post_template_locked(v_order.ledger_id, v_order.posting_template, v_order.amount_minor,
@@ -443,7 +478,7 @@ BEGIN
   UPDATE payments.payment_orders o
      SET state = p_state, provider_ref = coalesce(p_provider_ref, o.provider_ref),
          provider_tx_id = coalesce(p_provider_tx_id, o.provider_tx_id), last_error = left(p_error, 500),
-         entry_id = v_entry, lease_until = NULL,
+         entry_id = v_entry, lease_until = NULL, lease_token = NULL,
          finished_at = CASE WHEN p_state IN ('succeeded', 'failed') THEN now() END,
          next_check_at = now() + make_interval(mins => least(60, power(2, least(o.attempts, 6))::integer))
    WHERE o.id = v_order.id;
@@ -1000,17 +1035,18 @@ BEGIN
 END
 $function$;
 
-REVOKE ALL ON FUNCTION payments.request_wallets(text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.request_wallets(text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.request_customer_wallets(text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.claim_wallets(integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION payments.record_wallet_created(uuid, text, text, text, text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION payments.record_wallet_failed(uuid, text, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.record_wallet_created(uuid, uuid, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.record_wallet_failed(uuid, uuid, text, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.store_event(text, jsonb, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.claim_events(integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION payments.record_event(uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.record_event(uuid, uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.template_accounts(uuid, text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.create_order(uuid, uuid, jsonb, bigint, text, text, uuid, text, jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.claim_orders(integer, integer) FROM PUBLIC;
-REVOKE ALL ON FUNCTION payments.record_order(uuid, text, text, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION payments.record_order(uuid, uuid, text, text, text, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.reconcile_wallets() FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.record_finding(text, uuid, bigint, bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION payments.merchant_wallet(uuid) FROM PUBLIC;
@@ -1024,17 +1060,20 @@ REVOKE ALL ON FUNCTION payments.resolve_finding(uuid, uuid, text, text, text, te
 REVOKE ALL ON FUNCTION payments.request_platform_wallet(uuid, text, text, text, text) FROM PUBLIC;
 -- The worker's functions (TA-11: it connects as the app), the webhook's store, and the session commands and reads.
 -- payments.create_order and payments.template_accounts are called by definer functions and tests only (Q2).
-GRANT EXECUTE ON FUNCTION payments.request_wallets(text, boolean) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.claim_wallets(integer, integer) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.record_wallet_created(uuid, text, text, text, text) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.record_wallet_failed(uuid, text, integer) TO alphakolect_app;
+-- The worker's functions are the worker's alone (P9-R1): they act on what a provider confirmed, and trust their caller
+-- for it. The API can store what it receives; it cannot say what a provider confirmed. request_customer_wallets is
+-- granted to no one (OPEN-12).
+GRANT EXECUTE ON FUNCTION payments.request_wallets(text) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.claim_wallets(integer, integer) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.record_wallet_created(uuid, uuid, text, text, text, text) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.record_wallet_failed(uuid, uuid, text, integer) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.claim_events(integer, integer) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.record_event(uuid, uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.claim_orders(integer, integer) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.record_order(uuid, uuid, text, text, text, text) TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.reconcile_wallets() TO alphakolect_worker;
+GRANT EXECUTE ON FUNCTION payments.record_finding(text, uuid, bigint, bigint) TO alphakolect_worker;
 GRANT EXECUTE ON FUNCTION payments.store_event(text, jsonb, text, text) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.claim_events(integer, integer) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.record_event(uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.claim_orders(integer, integer) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.record_order(uuid, text, text, text, text) TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.reconcile_wallets() TO alphakolect_app;
-GRANT EXECUTE ON FUNCTION payments.record_finding(text, uuid, bigint, bigint) TO alphakolect_app;
 GRANT EXECUTE ON FUNCTION payments.merchant_wallet(uuid) TO alphakolect_app;
 GRANT EXECUTE ON FUNCTION payments.list_receipts(uuid, boolean, integer, timestamp with time zone, uuid) TO alphakolect_app;
 GRANT EXECUTE ON FUNCTION payments.classify_receipt(uuid, uuid, uuid, text, text, text, text) TO alphakolect_app;

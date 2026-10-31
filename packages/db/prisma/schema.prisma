@@ -1070,6 +1070,7 @@ model LiveWallet {
   attempts      Int       @default(0)
   nextAttemptAt DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
   leaseUntil    DateTime? @map("lease_until") @db.Timestamptz(6)
+  leaseToken    String?   @map("lease_token") @db.Uuid
   lastError     String?   @map("last_error")
   requestedBy   String?   @map("requested_by") @db.Uuid
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1103,6 +1104,7 @@ model ProviderEvent {
   attempts    Int       @default(0)
   nextCheckAt DateTime  @default(now()) @map("next_check_at") @db.Timestamptz(6)
   leaseUntil  DateTime? @map("lease_until") @db.Timestamptz(6)
+  leaseToken  String?   @map("lease_token") @db.Uuid
   outcome     String?
   processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
 
@@ -1186,6 +1188,7 @@ model PaymentOrder {
   attempts        Int       @default(0)
   nextCheckAt     DateTime  @default(now()) @map("next_check_at") @db.Timestamptz(6)
   leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  leaseToken      String?   @map("lease_token") @db.Uuid
   lastError       String?   @map("last_error")
   entryId         String?   @map("entry_id") @db.Uuid
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)

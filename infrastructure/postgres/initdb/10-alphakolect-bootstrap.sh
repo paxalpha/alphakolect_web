@@ -8,5 +8,6 @@ psql --no-psqlrc -v ON_ERROR_STOP=1 \
   --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
   -v migrator_password="$DB_MIGRATOR_PASSWORD" \
   -v app_password="$DB_APP_PASSWORD" \
+  -v worker_password="$DB_WORKER_PASSWORD" \
   -v readonly_password="$DB_READONLY_PASSWORD" \
   -f /alphakolect/bootstrap/bootstrap.psql

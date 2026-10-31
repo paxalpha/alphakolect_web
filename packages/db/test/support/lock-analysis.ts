@@ -72,6 +72,14 @@ export const CATEGORY: Readonly<Record<string, number>> = {
   'savings.collections': 17,
   'savings.remittances': 17,
   'savings.movements': 17,
+  // P9 (plan §3): payments after savings, so a command holds the projections it posts to (14) before its own rows.
+  // Within the category: wallets, then events, then transactions, receipts, orders and findings.
+  'payments.live_wallets': 18,
+  'payments.provider_events': 18,
+  'payments.provider_transactions': 18,
+  'payments.receipts': 18,
+  'payments.payment_orders': 18,
+  'payments.reconciliation_findings': 18,
 };
 
 /** The lock helpers (migration 20261013000900): one sorted acquisition of a category per call. */

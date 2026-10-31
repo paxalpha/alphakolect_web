@@ -44,6 +44,9 @@ const NO_APP_ACCESS_TENANT_TABLES = [
   'savings.collections',
   'savings.movements',
   'savings.target_goals',
+  // P9: payments, through the payments.* functions alone (B1)
+  'payments.live_wallets',
+  'payments.receipts',
   'audit.audit_events',
   'tenancy.role_permissions',
   'tenancy.merchants',

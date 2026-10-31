@@ -50,6 +50,12 @@ const CATALOG: ReadonlyArray<readonly [string, 'merchant' | 'platform', boolean]
   ['merchant.packages.manage', 'merchant', true],
   ['merchant.remittances.approve', 'merchant', true],
   ['merchant.withdrawals.create', 'merchant', true],
+  // P9: payments (the owner's answers of 2026-10-26, Q8, Q6)
+  ['merchant.wallet.read', 'merchant', true],
+  ['merchant.wallet.classify', 'merchant', true],
+  ['platform.payments.read', 'platform', true],
+  ['platform.payments.resolve', 'platform', true],
+  ['platform.wallet.create', 'platform', false],
   ['platform.merchants.read', 'platform', true],
   ['platform.audit.read', 'platform', true],
   ['platform.merchants.lifecycle', 'platform', false],

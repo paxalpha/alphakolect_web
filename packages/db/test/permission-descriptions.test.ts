@@ -53,6 +53,11 @@ const APPROVED: Record<string, string> = {
     "Check an agent's cash and approve or leave out the collections it covers, or cancel a collection recorded by mistake.",
   'merchant.withdrawals.create':
     "Record a customer's withdrawal and pay it out, and move savings into target savings.",
+  // P9: the Live wallet's permissions — approved by the owner as written on 2026-10-26
+  // (docs/business/P9_OWNER_PAYMENTS.md Q8)
+  'merchant.wallet.read':
+    "See the business's Live wallet: its account number, balance and the money received.",
+  'merchant.wallet.classify': 'Record what money received in the Live wallet was for.',
 };
 
 describe('the merchant permission descriptions (O13)', () => {
@@ -70,7 +75,7 @@ describe('the merchant permission descriptions (O13)', () => {
     for (const r of rows) expect(r.description.endsWith('Owner only.'), r.identifier).toBe(!r.grantable);
   });
 
-  it('a merchant permission cannot be added without one, and the platform ones have none yet', async () => {
+  it('a merchant permission cannot be added without one, and the platform ones are the approved few', async () => {
     await owner.query('BEGIN');
     try {
       await expectSqlState(
@@ -82,9 +87,25 @@ describe('the merchant permission descriptions (O13)', () => {
     } finally {
       await owner.query('ROLLBACK');
     }
+    // P9: the first platform ones, approved by the owner as written (docs/business/P9_OWNER_PAYMENTS.md Q8); the
+    // Platform Live wallet's is asked in docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md.
     const { rows } = await owner.query(
-      `SELECT count(*)::int AS n FROM identity.permission_catalog WHERE scope = 'platform' AND description IS NOT NULL`,
+      `SELECT identifier, description FROM identity.permission_catalog
+        WHERE scope = 'platform' AND description IS NOT NULL ORDER BY identifier`,
     );
-    expect(rows[0].n).toBe(0);
+    expect(rows).toEqual([
+      {
+        identifier: 'platform.payments.read',
+        description: 'See the Live wallets, payments and reconciliation results of every business.',
+      },
+      {
+        identifier: 'platform.payments.resolve',
+        description: 'Resolve money we have no record of, and differences found by reconciliation.',
+      },
+      {
+        identifier: 'platform.wallet.create',
+        description: "Create AlphaKolect's Platform Live wallet, once. Super admin only.",
+      },
+    ]);
   });
 });

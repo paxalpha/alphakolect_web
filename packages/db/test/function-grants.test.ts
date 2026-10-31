@@ -85,6 +85,32 @@ const EXPECTED: Record<string, Grantee[]> = {
   'customers.read_self(uuid)': APP,
   'customers.set_customer_status(uuid, uuid, text, text, text, text)': APP,
   'customers.update_customer(uuid, uuid, jsonb, text, text, text)': APP,
+  // payments — P9: the worker's functions (TA-11: it connects as the app), the webhook's store, the session commands and
+  // reads; the order's creation and the template lookup are called by definer functions and tests only (Q2)
+  'payments.claim_events(integer, integer)': APP,
+  'payments.claim_orders(integer, integer)': APP,
+  'payments.claim_wallets(integer, integer)': APP,
+  'payments.classify_receipt(uuid, uuid, uuid, text, text, text, text)': APP,
+  'payments.create_order(uuid, uuid, jsonb, bigint, text, text, uuid, text, jsonb)': OWNER_ONLY,
+  'payments.list_receipts(uuid, boolean, integer, timestamp with time zone, uuid)': APP,
+  'payments.merchant_wallet(uuid)': APP,
+  'payments.platform_list_findings(uuid, integer, boolean, timestamp with time zone, uuid, text, text, text)':
+    APP,
+  'payments.platform_list_unmatched(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
+  'payments.platform_list_wallets(uuid, integer, timestamp with time zone, uuid, text, text, text)': APP,
+  'payments.reconcile_wallets()': APP,
+  'payments.record_event(uuid, boolean, text, text, bigint, text, text, timestamp with time zone, integer)':
+    APP,
+  'payments.record_finding(text, uuid, bigint, bigint)': APP,
+  'payments.record_order(uuid, text, text, text, text)': APP,
+  'payments.record_wallet_created(uuid, text, text, text, text)': APP,
+  'payments.record_wallet_failed(uuid, text, integer)': APP,
+  'payments.request_platform_wallet(uuid, text, text, text, text)': APP,
+  'payments.request_wallets(text, boolean)': APP,
+  'payments.resolve_finding(uuid, uuid, text, text, text, text)': APP,
+  'payments.resolve_unmatched(uuid, uuid, text, uuid, text, text, text, text)': APP,
+  'payments.store_event(text, jsonb, text, text)': APP,
+  'payments.template_accounts(uuid, text, jsonb)': OWNER_ONLY,
   // savings — P8: the commands and reads the API calls; the commands' answers, the summary and the lock helpers are
   // called by definer functions only
   'savings.agent_collections(uuid, text, integer, timestamp with time zone, uuid)': APP,

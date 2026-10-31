@@ -16,6 +16,7 @@ export const CONCURRENCY_SUITES = [
   'test/ledger-races.test.ts',
   'test/customers-races.test.ts',
   'test/savings-races.test.ts',
+  'test/payments-races.test.ts',
 ];
 
 export const baseTest = {

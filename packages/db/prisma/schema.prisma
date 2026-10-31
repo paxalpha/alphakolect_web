@@ -58,6 +58,8 @@ model Merchant {
   collections        Collection[]
   savingsMovements   SavingsMovement[]
   targetGoals        TargetGoal[]
+  liveWallets        LiveWallet[]
+  paymentReceipts    PaymentReceipt[]
   branches          Branch[]
   roles             Role[]
   invitations       Invitation[]
@@ -82,6 +84,7 @@ model Ledger {
   merchant       Merchant?      @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accounts       Account[]
   journalEntries JournalEntry[]
+  paymentOrders PaymentOrder[]
 
   @@unique([merchantId, id])
   @@map("ledgers")
@@ -152,6 +155,10 @@ model JournalEntry {
   collectionFees       Collection[]      @relation("CollectionFeeEntry")
   collectionsCancelled Collection[]      @relation("CollectionCancelEntry")
   savingsMovements     SavingsMovement[]
+  providerTransactions ProviderTransaction[]
+  receiptsReceived     PaymentReceipt[]  @relation("ReceiptReceivedEntry")
+  receiptsClassified   PaymentReceipt[]  @relation("ReceiptClassifiedEntry")
+  paymentOrders        PaymentOrder[]    @relation("PaymentOrderEntry")
 
   @@unique([merchantId, id])
   @@unique([merchantId, idempotencyKey])
@@ -466,6 +473,9 @@ model Identity {
   platformMembership            PlatformMembership?
   merchantMemberships           MerchantMembership[]
   sessions                      Session[]
+  liveWalletsRequested LiveWallet[] @relation("LiveWalletRequestedBy")
+  transactionsResolved ProviderTransaction[] @relation("ProviderTransactionResolvedBy")
+  findingsResolved     ReconciliationFinding[] @relation("FindingResolvedBy")
   oneTimeTokens                 OneTimeToken[]
   mfaChallenges                 MfaChallenge[]
   membershipSelectionChallenges MembershipSelectionChallenge[]
@@ -754,6 +764,7 @@ model MerchantMembership {
   collectionsCancelled Collection[]        @relation("CollectionCancelledBy")
   savingsMovementsMade SavingsMovement[]
   targetGoalsSet      TargetGoal[]
+  receiptsClassified  PaymentReceipt[]     @relation("ReceiptClassifiedBy")
 
   @@unique([merchantId, id])
   @@unique([merchantId, identityId])
@@ -799,6 +810,7 @@ model Customer {
   collections    Collection[]
   movements      SavingsMovement[]
   targetGoals    TargetGoal[]
+  liveWallets    LiveWallet[]
 
   @@unique([merchantId, id], map: "customers_merchant_id_id_key")
   @@index([merchantId, branchId, createdAt, id], map: "customers_merchant_branch_idx")
@@ -1036,6 +1048,179 @@ model TargetGoal {
   @@unique([merchantId, id], map: "target_goals_merchant_id_id_key")
   @@map("target_goals")
   @@schema("savings")
+}
+
+// ── payments ────────────────────────────────────────────────────────────────────────────────────
+
+/// A Live wallet (P9; BR-2.3, 4.1–4.3): a business's, the platform's, or a customer's (switched off until OPEN-12), and
+/// its provider account. Partial unique indexes live in the migration: one per business, customer and platform, one
+/// wallet per provider account number.
+model LiveWallet {
+  id            String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  ownerKind     String    @map("owner_kind")
+  merchantId    String?   @map("merchant_id") @db.Uuid
+  customerId    String?   @map("customer_id") @db.Uuid
+  provider      String
+  alias         String
+  status        String    @default("provisioning")
+  providerRef   String?   @map("provider_ref")
+  accountNumber String?   @map("account_number")
+  accountName   String?   @map("account_name")
+  bankName      String?   @map("bank_name")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime  @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  leaseUntil    DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError     String?   @map("last_error")
+  requestedBy   String?   @map("requested_by") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  activatedAt   DateTime? @map("activated_at") @db.Timestamptz(6)
+
+  merchant     Merchant?             @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "live_wallets_merchant_fkey")
+  customer     Customer?             @relation(fields: [merchantId, customerId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "live_wallets_customer_fkey")
+  requester    Identity?             @relation("LiveWalletRequestedBy", fields: [requestedBy], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "live_wallets_requested_by_fkey")
+  transactions ProviderTransaction[]
+  receipts     PaymentReceipt[]
+  ordersFrom   PaymentOrder[]        @relation("PaymentOrderFrom")
+  ordersTo     PaymentOrder[]        @relation("PaymentOrderTo")
+  findings     ReconciliationFinding[]
+
+  @@unique([merchantId, id], map: "live_wallets_merchant_id_id_key")
+  @@unique([provider, alias], map: "live_wallets_alias_key")
+  @@index([createdAt, id], map: "live_wallets_created_idx")
+  @@map("live_wallets")
+  @@schema("payments")
+}
+
+/// A provider's notification exactly as received (TA-8): never trusted, confirmed with the provider by the worker.
+model ProviderEvent {
+  id          String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  provider    String
+  receivedAt  DateTime  @default(now()) @map("received_at") @db.Timestamptz(6)
+  headers     Json
+  body        String
+  reference   String?
+  status      String    @default("received")
+  attempts    Int       @default(0)
+  nextCheckAt DateTime  @default(now()) @map("next_check_at") @db.Timestamptz(6)
+  leaseUntil  DateTime? @map("lease_until") @db.Timestamptz(6)
+  outcome     String?
+  processedAt DateTime? @map("processed_at") @db.Timestamptz(6)
+
+  @@map("provider_events")
+  @@schema("payments")
+}
+
+/// A provider transaction acted on, once (TA-8): what the provider confirmed and what was done with it.
+model ProviderTransaction {
+  id             String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  provider       String
+  providerTxId   String    @map("provider_tx_id")
+  walletId       String?   @map("wallet_id") @db.Uuid
+  accountNumber  String?   @map("account_number")
+  amountMinor    BigInt    @map("amount_minor")
+  currency       String
+  providerStatus String    @map("provider_status")
+  matched        String
+  occurredAt     DateTime? @map("occurred_at") @db.Timestamptz(6)
+  confirmedAt    DateTime  @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  entryId        String?   @map("entry_id") @db.Uuid
+  resolution     String?
+  resolutionNote String?   @map("resolution_note")
+  resolvedBy     String?   @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  wallet   LiveWallet?     @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "provider_transactions_wallet_fkey")
+  entry    JournalEntry?   @relation(fields: [entryId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "provider_transactions_entry_fkey")
+  resolver Identity?       @relation("ProviderTransactionResolvedBy", fields: [resolvedBy], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "provider_transactions_resolved_by_fkey")
+  receipt  PaymentReceipt?
+
+  @@unique([provider, providerTxId], map: "provider_transactions_once")
+  @@map("provider_transactions")
+  @@schema("payments")
+}
+
+/// Money credited to a business's Live wallet, to be classified (Q1).
+model PaymentReceipt {
+  id                  String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  merchantId          String    @map("merchant_id") @db.Uuid
+  walletId            String    @map("wallet_id") @db.Uuid
+  transactionId       String    @unique(map: "receipts_transaction_key") @map("transaction_id") @db.Uuid
+  amountMinor         BigInt    @map("amount_minor")
+  receivedEntryId     String    @map("received_entry_id") @db.Uuid
+  classifiedAccountId String?   @map("classified_account_id") @db.Uuid
+  classifiedEntryId   String?   @map("classified_entry_id") @db.Uuid
+  classifiedNote      String?   @map("classified_note")
+  classifiedBy        String?   @map("classified_by") @db.Uuid
+  classifiedAt        DateTime? @map("classified_at") @db.Timestamptz(6)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  merchant        Merchant            @relation(fields: [merchantId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_merchant_fkey")
+  wallet          LiveWallet          @relation(fields: [merchantId, walletId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_wallet_fkey")
+  transaction     ProviderTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_transaction_fkey")
+  receivedEntry   JournalEntry        @relation("ReceiptReceivedEntry", fields: [merchantId, receivedEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_received_entry_fkey")
+  classifiedEntry JournalEntry?       @relation("ReceiptClassifiedEntry", fields: [merchantId, classifiedEntryId], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_classified_entry_fkey")
+  classifier      MerchantMembership? @relation("ReceiptClassifiedBy", fields: [merchantId, classifiedBy], references: [merchantId, id], onDelete: Restrict, onUpdate: Restrict, map: "receipts_classified_by_fkey")
+
+  @@unique([merchantId, id], map: "receipts_merchant_id_id_key")
+  @@index([merchantId, createdAt, id], map: "receipts_merchant_created_idx")
+  @@map("receipts")
+  @@schema("payments")
+}
+
+/// Money leaving a wallet (TA-8), with the 'unknown' state a timeout leaves it in. Machinery in P9 (Q2); first used by
+/// billing (P10).
+model PaymentOrder {
+  id              String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  fromWalletId    String    @map("from_wallet_id") @db.Uuid
+  toWalletId      String?   @map("to_wallet_id") @db.Uuid
+  toBank          Json?     @map("to_bank")
+  amountMinor     BigInt    @map("amount_minor")
+  reference       String    @unique(map: "payment_orders_reference_key")
+  purpose         String
+  ledgerId        String    @map("ledger_id") @db.Uuid
+  postingTemplate String    @map("posting_template")
+  postingSubjects Json      @default("{}") @map("posting_subjects")
+  state           String    @default("created")
+  providerRef     String?   @map("provider_ref")
+  providerTxId    String?   @map("provider_tx_id")
+  attempts        Int       @default(0)
+  nextCheckAt     DateTime  @default(now()) @map("next_check_at") @db.Timestamptz(6)
+  leaseUntil      DateTime? @map("lease_until") @db.Timestamptz(6)
+  lastError       String?   @map("last_error")
+  entryId         String?   @map("entry_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  finishedAt      DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  fromWallet LiveWallet    @relation("PaymentOrderFrom", fields: [fromWalletId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_orders_from_fkey")
+  toWallet   LiveWallet?   @relation("PaymentOrderTo", fields: [toWalletId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_orders_to_fkey")
+  ledger     Ledger        @relation(fields: [ledgerId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_orders_ledger_fkey")
+  entry      JournalEntry? @relation("PaymentOrderEntry", fields: [entryId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "payment_orders_entry_fkey")
+
+  @@map("payment_orders")
+  @@schema("payments")
+}
+
+/// A difference between the books and the provider, kept for the platform team until a person resolves it (Q5). One open
+/// per scope and wallet (reconciliation_findings_one_open, in the migration).
+model ReconciliationFinding {
+  id                   String    @id @default(dbgenerated("util.uuid_v7()")) @db.Uuid
+  scope                String
+  walletId             String?   @map("wallet_id") @db.Uuid
+  providerBalanceMinor BigInt    @map("provider_balance_minor")
+  booksBalanceMinor    BigInt    @map("books_balance_minor")
+  status               String    @default("open")
+  foundAt              DateTime  @default(now()) @map("found_at") @db.Timestamptz(6)
+  lastSeenAt           DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  resolutionNote       String?   @map("resolution_note")
+  resolvedBy           String?   @map("resolved_by") @db.Uuid
+  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz(6)
+
+  wallet   LiveWallet? @relation(fields: [walletId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "reconciliation_findings_wallet_fkey")
+  resolver Identity?   @relation("FindingResolvedBy", fields: [resolvedBy], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "reconciliation_findings_resolved_by_fkey")
+
+  @@index([foundAt, id], map: "reconciliation_findings_found_idx")
+  @@map("reconciliation_findings")
+  @@schema("payments")
 }
 
 // ── util ────────────────────────────────────────────────────────────────────────────────────────

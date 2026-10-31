@@ -329,6 +329,133 @@ export const CLASSES: Readonly<Record<string, FnClass>> = {
     planned: ['2:S', 'A3:NKU', '7:S', '8:S', '16:NKU', '17:NKU', '+17'],
     writes: ['savings.target_goals', 'audit.audit_events'],
   },
+  // ── P9: payments (plan §3) ──
+  // The worker's functions (TA-11: no session, no actor): a lease claim takes nothing that waits (FOR NO KEY UPDATE SKIP
+  // LOCKED); a record takes the projections it posts to (14), then its row (18), its contested inserts last (L3), and
+  // posts through the …_locked core (P8). The business's command and the platform team's: the business (S), the actor —
+  // the platform member's own membership (A1:S) for the platform team — then as above. The platform reads are
+  // sensitive reads: the reader's membership, then the read event.
+  'payments.request_wallets': {
+    class: 'operation',
+    planned: ['+18'],
+    writes: ['payments.live_wallets'],
+  },
+  'payments.claim_wallets': {
+    class: 'operation',
+    planned: [],
+    writes: ['payments.live_wallets'],
+  },
+  'payments.record_wallet_created': {
+    class: 'operation',
+    planned: ['18:NKU'],
+    writes: ['payments.live_wallets', 'audit.audit_events'],
+  },
+  'payments.record_wallet_failed': {
+    class: 'operation',
+    planned: ['18:NKU'],
+    writes: ['payments.live_wallets'],
+  },
+  'payments.store_event': {
+    class: 'operation',
+    planned: [],
+    writes: ['payments.provider_events'],
+  },
+  'payments.claim_events': {
+    class: 'operation',
+    planned: [],
+    writes: ['payments.provider_events'],
+  },
+  'payments.record_event': {
+    class: 'operation',
+    planned: ['14:NKU', '18:NKU', '18:W', '+15', '+18'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'payments.provider_events',
+      'payments.provider_transactions',
+      'payments.receipts',
+      'audit.audit_events',
+    ],
+  },
+  'payments.create_order': {
+    class: 'operation',
+    planned: ['+18'],
+    writes: ['payments.payment_orders'],
+  },
+  'payments.claim_orders': {
+    class: 'operation',
+    planned: [],
+    writes: ['payments.payment_orders'],
+  },
+  'payments.record_order': {
+    class: 'operation',
+    planned: ['14:NKU', '18:NKU', '+15'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'payments.payment_orders',
+      'audit.audit_events',
+    ],
+  },
+  'payments.record_finding': {
+    class: 'operation',
+    planned: ['18:W', '+18'],
+    writes: ['payments.reconciliation_findings', 'audit.audit_events'],
+  },
+  'payments.classify_receipt': {
+    class: 'operation',
+    planned: ['2:S', 'A3:NKU', '7:S', '14:NKU', '18:NKU', '+15'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'payments.receipts',
+      'audit.audit_events',
+    ],
+  },
+  'payments.platform_list_wallets': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
+  'payments.platform_list_unmatched': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
+  'payments.platform_list_findings': {
+    class: 'operation',
+    planned: ['A1:S'],
+    writes: ['audit.audit_events'],
+  },
+  'payments.resolve_unmatched': {
+    class: 'operation',
+    planned: ['A1:S', '14:NKU', '18:NKU', '+15', '+18'],
+    writes: [
+      'ledger.journal_entries',
+      'ledger.journal_lines',
+      'ledger.balance_projection',
+      'payments.provider_transactions',
+      'payments.receipts',
+      'audit.audit_events',
+    ],
+  },
+  'payments.resolve_finding': {
+    class: 'operation',
+    planned: ['A1:S', '18:NKU'],
+    writes: ['payments.reconciliation_findings', 'audit.audit_events'],
+  },
+  'payments.request_platform_wallet': {
+    class: 'operation',
+    planned: ['A1:S', '+18'],
+    writes: ['payments.live_wallets', 'audit.audit_events'],
+  },
+  'payments.template_accounts': { class: 'reader' },
+  'payments.reconcile_wallets': { class: 'reader' },
+  'payments.merchant_wallet': { class: 'reader' },
+  'payments.list_receipts': { class: 'reader' },
   // operator only: the containment switch (§11.1, P5.5 step 6) — its one row, then #39
   'util.set_authorization_containment': {
     class: 'operation',
@@ -778,6 +905,8 @@ export const MERCHANT_SCOPED_READS: readonly string[] = [
   'ledger.read_entry',
   'ledger.read_statement',
   'ledger.statement_balances',
+  'payments.list_receipts',
+  'payments.merchant_wallet',
   'savings.agent_collections',
   'savings.collection_branch',
   'savings.customer_savings',
@@ -805,6 +934,14 @@ export const MERCHANT_SCOPE_EXEMPT: Readonly<Record<string, string>> = {
     'a platform read, cross-tenant by design: platform.merchants.read under the reader’s lock, and recorded (P5.7)',
   'audit.read_platform_events':
     'a platform read, cross-tenant by design: platform.audit.read under the reader’s lock, and recorded (P5.8)',
+  'payments.platform_list_wallets':
+    'a platform read, cross-tenant by design: platform.payments.read under the reader’s lock, and recorded (P9)',
+  'payments.platform_list_unmatched':
+    'a platform read, cross-tenant by design: platform.payments.read under the reader’s lock, and recorded (P9)',
+  'payments.platform_list_findings':
+    'a platform read, cross-tenant by design: platform.payments.read under the reader’s lock, and recorded (P9)',
+  'payments.reconcile_wallets':
+    'the worker’s reconciliation (TA-11, P9): every active wallet with its books balance, cross-tenant by design; it takes no session and returns no personal detail',
 };
 
 /**
@@ -826,6 +963,8 @@ export const MERCHANT_SCOPE_INTERNAL: Readonly<Record<string, string>> = {
     'a customer command’s answer: the customer the command holds and wrote, returned by that definer command',
   'customers.current_agent':
     'P8’s check that an agent records collections only for their own customers (D1): called by its definer functions',
+  'payments.template_accounts':
+    'the accounts a posting template posts to, for payments.record_order to lock before it posts (P8-3)',
   'savings.package_result':
     'a package command’s answer: the package the command holds and wrote, returned by that definer command',
   'savings.collection_result':
@@ -847,6 +986,9 @@ export const SENSITIVE_READS: Readonly<Record<string, string>> = {
   'platform.merchant_members_read/success': 'tenancy.platform_list_merchant_members',
   'merchant.audit_read/success': 'audit.read_merchant_events',
   'platform.audit_read/success': 'audit.read_platform_events',
+  'platform.wallets_read/success': 'payments.platform_list_wallets',
+  'platform.unmatched_read/success': 'payments.platform_list_unmatched',
+  'platform.findings_read/success': 'payments.platform_list_findings',
 };
 
 /**

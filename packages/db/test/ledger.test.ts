@@ -189,7 +189,7 @@ async function seed(ledgerId: string, accountId: string, amount: bigint) {
 }
 
 describe('ledgers and the chart (TA-1, owner Q1)', () => {
-  it('every business has one ledger with the 23 system accounts of the chart, each with its projection', async () => {
+  it('every business has one ledger with the 24 system accounts of the chart, each with its projection', async () => {
     const b = await business();
     const { rows } = await owner.query(
       `SELECT a.code, a.name, a.type, a.non_negative, a.is_system, p.balance_minor::text AS balance
@@ -202,7 +202,7 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
         `SELECT code, name, type, non_negative FROM ledger.chart_template WHERE ledger_kind = 'merchant' ORDER BY code`,
       )
     ).rows;
-    expect(rows).toHaveLength(23);
+    expect(rows).toHaveLength(24);
     expect(rows.map(({ code, name, type, non_negative }) => ({ code, name, type, non_negative }))).toEqual(
       chart,
     );
@@ -229,7 +229,7 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
           WHERE l.merchant_id = $1`,
         [id],
       );
-      expect(n).toBe(23);
+      expect(n).toBe(24);
     } finally {
       await owner.query('ROLLBACK');
     }
@@ -242,7 +242,7 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
         WHERE l.owner_kind = 'platform' GROUP BY l.id`,
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ merchant_id: null, accounts: 6 });
+    expect(rows[0]).toMatchObject({ merchant_id: null, accounts: 7 });
     await expectSqlState(
       owner.query(`INSERT INTO ledger.ledgers (owner_kind, merchant_id) VALUES ('platform', NULL)`),
       SQLSTATE.uniqueViolation,
@@ -260,7 +260,7 @@ describe('ledgers and the chart (TA-1, owner Q1)', () => {
     const { n } = await one(`SELECT count(*)::int AS n FROM ledger.accounts WHERE ledger_id = $1`, [
       b.ledgerId,
     ]);
-    expect(n).toBe(23);
+    expect(n).toBe(24);
   });
 
   it('every template names accounts of its own chart, with the right subject (checked at migration, here again)', async () => {
@@ -712,7 +712,7 @@ describe('every posting template (§4) balances and moves the accounts it names'
       code: string;
       lines: Array<{ side: string; code: string; subject?: 'customer' | 'agent' }>;
     }>;
-    expect(templates.length).toBe(28);
+    expect(templates.length).toBe(29);
     for (const t of templates) {
       const amount = 12345n;
       // The accounts, opened (sub-accounts) and seeded where the template takes from them.
@@ -891,7 +891,7 @@ describe('versioned posting templates (§4, revision 3)', () => {
     const { rows } = await owner.query(
       `SELECT count(*)::int AS n, min(version) AS lo, max(version) AS hi FROM ledger.posting_templates WHERE status = 'active'`,
     );
-    expect(rows[0]).toEqual({ n: 29, lo: 1, hi: 1 });
+    expect(rows[0]).toEqual({ n: 31, lo: 1, hi: 1 });
     const b = await business();
     const r = await template(b.ledgerId, 'directors.funding', 500n, {});
     expect(
@@ -1379,11 +1379,11 @@ describe('the reads (§3.5): the business from the session', () => {
 
   it('the chart with balances: a control account includes its sub-accounts; sub-accounts on request', async () => {
     const { rows } = await app.query(`SELECT * FROM ledger.list_accounts($1)`, [b.session]);
-    expect(rows).toHaveLength(23);
+    expect(rows).toHaveLength(24);
     const byCode = Object.fromEntries(rows.map((r) => [r.code, r.balance_minor]));
     expect(byCode).toMatchObject({ '1200': '1750', '2100': '1650', '4400': '100' });
     const all = (await app.query(`SELECT * FROM ledger.list_accounts($1, true)`, [b.session])).rows;
-    expect(all).toHaveLength(25);
+    expect(all).toHaveLength(26);
     expect(all.find((r) => r.id === customerSavings)).toMatchObject({
       subject_type: 'customer',
       balance_minor: '1150',

@@ -183,4 +183,4 @@ condition 1).
 | Reconciliation scenarios | Pass |
 | Worker failure and recovery | Pass, simulated (§2) |
 | Sandbox tests documented, assumptions kept as blockers | Documented here (§5). **Not run** |
-| Existing gates green | Recorded in the plan after this document is committed |
+| Existing gates green | At `5454ebb4`, clean tree, every step exit 0: contracts 105, db 909, API 2095 passed and 2 skipped (sandbox), concurrency 38. Run locally; no CI run is on record |

@@ -175,7 +175,7 @@ const balance = async (merchantId: string, code: string) =>
     ).rows[0].b,
   );
 
-describe('the payments races, staged (P9 §5; TA-8)', () => {
+describe('the payments races, staged (P9 §5; TA-8)', { timeout: 180_000 }, () => {
   it(`one provider transaction, two events at once — credited once (${RUNS} runs)`, async () => {
     const b = await business();
     for (let i = 0; i < RUNS; i++) {

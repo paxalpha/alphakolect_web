@@ -8605,6 +8605,903 @@
           }
         }
       }
+    },
+    "/v1/merchant/wallet/receipts/{receiptId}/classification": {
+      "post": {
+        "operationId": "classifyWalletReceipt",
+        "summary": "Record what money received was for (moved from \"to classify\" to the account chosen)",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.wallet.classify",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "receiptId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifyReceiptRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.wallet.classify",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND — no such receipt in this business",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ALREADY_CLASSIFIED",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_ACCOUNT — not one of the business’s own active accounts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/wallet": {
+      "post": {
+        "operationId": "createPlatformWallet",
+        "summary": "Request AlphaKolect’s Platform Live wallet, once (the super admin only)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.wallet.create",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformWalletRequested"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.wallet.create",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "ALREADY_EXISTS",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/wallet": {
+      "get": {
+        "operationId": "getMerchantWallet",
+        "summary": "The business’s Live wallet: its account number, balance and the money still to classify",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.wallet.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The wallet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveWallet"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.wallet.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/payments/findings": {
+      "get": {
+        "operationId": "listPlatformFindings",
+        "summary": "Differences between the books and TransactPay (each page is recorded)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.payments.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "default": "open",
+              "type": "string",
+              "enum": [
+                "open",
+                "all"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationFindingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.payments.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/payments/unmatched": {
+      "get": {
+        "operationId": "listPlatformUnmatched",
+        "summary": "Money we have no record of, and transactions under review (each page is recorded)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.payments.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnmatchedTransactionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.payments.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/payments/wallets": {
+      "get": {
+        "operationId": "listPlatformWallets",
+        "summary": "Every Live wallet, newest first (each page is recorded in the activity record)",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.payments.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of wallets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlatformWalletList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR — not a cursor of this list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.payments.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/merchant/wallet/receipts": {
+      "get": {
+        "operationId": "listWalletReceipts",
+        "summary": "The money received in the Live wallet",
+        "tags": [
+          "merchant"
+        ],
+        "x-audience": "merchant",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "merchant.wallet.read",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 50,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "in": "query",
+            "name": "classified",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of receipts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletReceiptList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR; INVALID_CURSOR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold merchant.wallet.read",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/webhooks/transactpay": {
+      "post": {
+        "operationId": "receiveTransactPayEvent",
+        "summary": "TransactPay’s notifications: stored, then confirmed with TransactPay before anything is done",
+        "tags": [
+          "public"
+        ],
+        "x-audience": "public",
+        "x-authorization": {
+          "class": "public"
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderEventBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "received": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "received"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "PAYLOAD_TOO_LARGE",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "RATE_LIMITED",
+            "headers": {
+              "retry-after": {
+                "required": true,
+                "description": "Seconds to wait",
+                "schema": {
+                  "type": "string",
+                  "description": "Seconds to wait"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/payments/findings/{findingId}/resolution": {
+      "post": {
+        "operationId": "resolveReconciliationFinding",
+        "summary": "Close a difference that has been understood, with a note",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.payments.resolve",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "findingId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveFindingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedFinding"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.payments.resolve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/platform/payments/unmatched/{transactionId}/resolution": {
+      "post": {
+        "operationId": "resolveUnmatchedTransaction",
+        "summary": "Credit money we had no record of to a business, or note that it was returned or dismissed",
+        "tags": [
+          "platform"
+        ],
+        "x-audience": "platform",
+        "x-authorization": {
+          "class": "permission",
+          "permission": "platform.payments.resolve",
+          "branchScope": "merchant_wide"
+        },
+        "security": [
+          {
+            "cookieSession": [],
+            "csrfToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transactionId",
+            "schema": {
+              "$ref": "#/components/schemas/Id"
+            },
+            "required": true,
+            "description": "UUIDv7 identifier"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveUnmatchedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Resolved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolvedTransaction"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "FORBIDDEN — the caller does not hold platform.payments.resolve",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "NOT_FOUND",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "INVALID_LIFECYCLE_TRANSITION — already resolved, or it cannot be credited",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "INVALID_WALLET — not an active business wallet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error (standard error envelope)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9578,6 +10475,65 @@
         "required": [
           "customerId",
           "amountMinor"
+        ]
+      },
+      "ClassifyReceiptRequest": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "accountId"
+        ]
+      },
+      "ProviderEventBody": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": {}
+      },
+      "ResolveFindingRequest": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "note"
+        ]
+      },
+      "ResolveUnmatchedRequest": {
+        "type": "object",
+        "properties": {
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "credited",
+              "returned",
+              "dismissed"
+            ]
+          },
+          "walletId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "resolution",
+          "note"
         ]
       },
       "Currency": {
@@ -12703,6 +13659,554 @@
         ],
         "additionalProperties": false,
         "description": "One of the customer’s collections; \"recorded\" is awaiting the business’s confirmation"
+      },
+      "WalletReceipt": {
+        "type": "object",
+        "properties": {
+          "receiptId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "receivedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "classifiedAccountId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "classifiedNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "classifiedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "receiptId",
+          "amount",
+          "receivedAt",
+          "classifiedAccountId",
+          "classifiedNote",
+          "classifiedAt",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "Money received in the Live wallet"
+      },
+      "PlatformWalletRequested": {
+        "type": "object",
+        "properties": {
+          "walletId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active",
+              "failed",
+              "closed"
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "walletId",
+          "status",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "The worker creates the account at TransactPay"
+      },
+      "LiveWallet": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "none",
+              "provisioning",
+              "active",
+              "failed",
+              "closed"
+            ]
+          },
+          "accountNumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "accountName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bankName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "balance": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "toClassify": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "activatedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "accountNumber",
+          "accountName",
+          "bankName",
+          "balance",
+          "toClassify",
+          "activatedAt"
+        ],
+        "additionalProperties": false,
+        "description": "The business’s Live wallet: its bank virtual account"
+      },
+      "ReconciliationFindingList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReconciliationFinding"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Newest first"
+      },
+      "ReconciliationFinding": {
+        "type": "object",
+        "properties": {
+          "findingId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "wallet",
+              "pooled"
+            ]
+          },
+          "walletId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "books": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "open",
+              "resolved"
+            ]
+          },
+          "foundAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "lastSeenAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "resolutionNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "findingId",
+          "scope",
+          "walletId",
+          "merchantId",
+          "provider",
+          "books",
+          "status",
+          "foundAt",
+          "lastSeenAt",
+          "resolutionNote",
+          "resolvedAt"
+        ],
+        "additionalProperties": false,
+        "description": "A difference between the books and TransactPay"
+      },
+      "UnmatchedTransactionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnmatchedTransaction"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Newest first"
+      },
+      "UnmatchedTransaction": {
+        "type": "object",
+        "properties": {
+          "transactionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "providerTxId": {
+            "type": "string"
+          },
+          "accountNumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "amount": {
+            "$ref": "#/components/schemas/Money"
+          },
+          "providerStatus": {
+            "type": "string",
+            "enum": [
+              "successful",
+              "failed",
+              "reversed"
+            ]
+          },
+          "matched": {
+            "type": "string",
+            "enum": [
+              "unmatched",
+              "review"
+            ]
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "occurredAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "confirmedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "transactionId",
+          "provider",
+          "providerTxId",
+          "accountNumber",
+          "amount",
+          "providerStatus",
+          "matched",
+          "merchantId",
+          "occurredAt",
+          "confirmedAt"
+        ],
+        "additionalProperties": false,
+        "description": "A provider transaction waiting for a person"
+      },
+      "PlatformWalletList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlatformWallet"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Newest first"
+      },
+      "PlatformWallet": {
+        "type": "object",
+        "properties": {
+          "walletId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "ownerKind": {
+            "type": "string",
+            "enum": [
+              "merchant",
+              "platform",
+              "customer"
+            ]
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "merchantName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "provisioning",
+              "active",
+              "failed",
+              "closed"
+            ]
+          },
+          "accountNumber": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "bankName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "books": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Money"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "walletId",
+          "ownerKind",
+          "merchantId",
+          "merchantName",
+          "status",
+          "accountNumber",
+          "bankName",
+          "attempts",
+          "lastError",
+          "books",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "description": "A Live wallet, as AlphaKolect’s team sees it"
+      },
+      "WalletReceiptList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WalletReceipt"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false,
+        "description": "Oldest first"
+      },
+      "ResolvedFinding": {
+        "type": "object",
+        "properties": {
+          "findingId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "resolutionNote": {
+            "type": "string"
+          },
+          "resolvedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "findingId",
+          "resolutionNote",
+          "resolvedAt"
+        ],
+        "additionalProperties": false
+      },
+      "ResolvedTransaction": {
+        "type": "object",
+        "properties": {
+          "transactionId": {
+            "$ref": "#/components/schemas/Id"
+          },
+          "resolution": {
+            "type": "string",
+            "enum": [
+              "credited",
+              "returned",
+              "dismissed"
+            ]
+          },
+          "merchantId": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Id"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "resolvedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        },
+        "required": [
+          "transactionId",
+          "resolution",
+          "merchantId",
+          "resolvedAt"
+        ],
+        "additionalProperties": false
       },
       "Money": {
         "type": "object",

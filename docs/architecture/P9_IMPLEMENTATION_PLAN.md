@@ -236,3 +236,10 @@ Found in the same pass, in the same classes, and fixed:
 - An event with no usable answer was retried in silence. After 8 looks it opens one `event` finding for the platform team and is still looked at. The finding's amounts are a marker (1 and 0), not money; the log names the event. Listing such events individually is left for the console's later work.
 
 What remains true: a worker cannot fully rule out a duplicate account at the provider without the provider's help (§10 condition 7); the lease closes the case where two workers overlap, not a lookup that lags at TransactPay.
+
+Gate at commit `5fa190b`, on a clean tree, 31 October 2026, every step exit 0: `format:check`, `lint`, `typecheck`, `build`,
+`openapi:check`; `test` (contracts 105, db 909, API 2083 passed, 2 skipped: the TransactPay sandbox suite); `test:concurrency`
+38. Run with `npm_config_workspace_concurrency=1`. The run before it, at `ba9487a`, did not pass: every API test passed but
+Vitest reported its worker RPC timeout, and a payments race timed out at 30 seconds, which took the next race down with it on
+their shared connections. That suite takes 29 seconds alone. The machine has too little free memory, so the suite's limit was
+raised (`5fa190b`), with no change to code under test.

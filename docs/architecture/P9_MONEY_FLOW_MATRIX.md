@@ -185,7 +185,7 @@ an alias, a session and a payout, reading the balance's shape, and that repeatin
 | Reconciliation scenarios | Pass |
 | Worker failure and recovery | Pass, including a real process killed mid-call (G1 to G3) |
 | Sandbox tests documented, assumptions kept as blockers | Run in part (§5). **No real deposit yet**, so the journeys are unproven against TransactPay |
-| Existing gates green | Recorded once the gate has run on this revision |
+| Existing gates green | At `fe2a827`, clean tree, every step exit 0: contracts 105, db 909, API 2099 passed and 4 skipped (the sandbox suite, run separately on demand), concurrency 38. Run locally. CI runs only on pull requests and `main`, so no CI run exists until a pull request is opened |
 
 ## 7. Rulings required from the independent reviewer
 

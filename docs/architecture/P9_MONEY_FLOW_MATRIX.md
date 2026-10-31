@@ -58,9 +58,10 @@ active wallet and zero balance.
 | A1 | Active business, no wallet | Worker's sweep | `active`, one | — | — | 0 | `wallet_provisioned` event | W "a business gets a wallet"; D "BR-2.3"; Journey 1 |
 | A2 | Email unconfirmed | Worker's sweep | none | — | — | — | — | W, D same tests; Journey 1 |
 | A3 | Wallet due | Two workers at once | `active`, one account at the provider | — | — | 0 | — | W "A3" |
-| A4 | Wallet due | Lookup: JSON 404 | Creation attempted, `active` | — | — | 0 | — | T "P9-R2"; W "TransactPay's answers" |
-| A5 | Wallet due | Lookup: 400, 401, 403, 429, 5xx, non-JSON 404, timeout | `provisioning`, no creation, retried later | — | — | 0 | `last_error`; `failed` after 50 attempts | T "P9-R2"; W "an unclear lookup", "TransactPay's answers" |
+| A4 | Wallet due | Lookup: TransactPay's own not-found (200, status false, code 04, "Account not found") | Creation attempted, `active` | — | — | 0 | — | T "P9-R2"; W "TransactPay's answers"; sandbox |
+| A5 | Wallet due | Lookup: any other answer: 4xx, 5xx, HTML, or status false without that code and message; timeout | `provisioning`, no creation, retried later | — | — | 0 | `last_error`; `failed` after 50 attempts | T "P9-R2"; W "an unclear lookup", "TransactPay's answers" |
 | A6 | Wallet due | Creation succeeds, answer lost | `provisioning`, then `active` by lookup | — | — | 0 | `last_error` until recovered | W "a lost answer"; Journey 3 |
+| A6a | Another account exists for the alias | Creation returns a second account; the lookup names the first | `active`, holding the lookup's account | — | — | 0 | — | W "B1"; sandbox |
 | A7 | No platform wallet | Requested twice | One platform wallet | — | — | 0 | — | D "only the super admin requests it, once" |
 | A8 | Lookup outlasts the lease | Second worker claims | `active`, one account; the first abandons | — | — | 0 | Warning logged | W "P9-R3: a lookup that outlasts" |
 
@@ -155,23 +156,22 @@ All three are in W, under "the journeys, end to end".
 | **2. Forged and replayed** | A forged event; a valid one delivered three times at once; two workers at once; the forged one aged out | One credit, one receipt, one entry; one event `credited` and two `duplicate`; the forged one `rejected`; balance is the confirmed amount |
 | **3. Uncertain outcome** | Lookup rate limited; creation times out after taking effect; recovery by lookup; a deposit whose confirmation fails three times, past the point a forged one is rejected; recovery | One creation; wallet `active`; the event never rejected; one posting of two lines; correct balance |
 
-## 5. Not tested: TransactPay's sandbox
+## 5. TransactPay's sandbox
 
-No sandbox keys are available, so the sandbox block in T is skipped. Everything below is an assumption, and each is a release
-blocker under `P9_IMPLEMENTATION_PLAN.md` §10.
+Run on 31 October 2026 with test keys only (plan §14). Run again with `TRANSACTPAY_SANDBOX=run`, using the test file T.
+
+**Proven against the sandbox:** creating an account, the response fields, finding it by alias at once, the not-found answers for
+an alias, a session and a payout, reading the balance's shape, and that repeating a creation makes a second account.
+
+**Not proven.** Each stays a release blocker under `P9_IMPLEMENTATION_PLAN.md` §10.
 
 | Assumption | If it is wrong | §10 |
 |---|---|---|
-| Field names, status table, and amounts in naira | Wrong amounts or statuses: must be proven first | 1 |
-| An unknown alias or session answers a JSON 404 | No wallet is created and no forged event is rejected (safe, visible, and not working) | 1 |
+| A real deposit: session fields, status table, and amounts in naira | Wrong amounts or statuses. No deposit has been made: TransactPay documents no way to simulate one into a virtual account (A2) | 1 |
 | A session's details name the destination account | Every deposit lands as unmatched | 2 |
-| The balance enquiry covers virtual-account money | Every comparison is a false difference | 3 |
+| Which balance field holds virtual-account money | The answer also has a `collection` field, and the reconciler reads `availableBalance`. Both were 0, so this is open; if deposits land in `collection`, every comparison is a false difference | 3 |
 | Webhook authenticity, and a transaction listing | A missed notification shows only as a difference, with no transaction a person can credit | 4 |
-| A lookup sees a new account at once, or creation is idempotent | A second account is possible after a lost answer | 7 |
-
-To run it, set the `TRANSACTPAY_SANDBOX_*` variables. The block covers only creation, lookup and balance today. A real deposit
-through the webhook and worker, and the unknown-alias and unknown-session answers, must be added once keys exist (§10
-condition 1).
+| A lookup always sees a new account at once | Seen at once each time tried, a few times only. If it ever lags after a lost answer, a second, real account is made. Money sent to it arrives unmatched and is not lost | 7 |
 
 ## 6. Against the review's closure criteria
 
@@ -184,8 +184,8 @@ condition 1).
 | Payment-order transitions | Pass |
 | Reconciliation scenarios | Pass |
 | Worker failure and recovery | Pass, including a real process killed mid-call (G1 to G3) |
-| Sandbox tests documented, assumptions kept as blockers | Documented here (§5). **Not run** |
-| Existing gates green | At `ec74d19`, clean tree, every step exit 0: contracts 105, db 909, API 2098 passed and 2 skipped (sandbox), concurrency 38. Run locally. CI runs only on pull requests and `main`, so no CI run exists until a pull request is opened |
+| Sandbox tests documented, assumptions kept as blockers | Run in part (§5). **No real deposit yet**, so the journeys are unproven against TransactPay |
+| Existing gates green | Recorded once the gate has run on this revision |
 
 ## 7. Rulings required from the independent reviewer
 

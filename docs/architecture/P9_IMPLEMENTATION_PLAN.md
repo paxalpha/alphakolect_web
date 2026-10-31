@@ -1,6 +1,6 @@
 # P9 implementation plan — payments
 
-**Status: revision 5 (2026-10-31) — open. The reviewer narrowed the approval of §12 to the findings' fixes, and asked for a money-flow coverage check (§13, `P9_MONEY_FLOW_MATRIX.md`). Not approved for live money.** Planned and built
+**Status: revision 6 (2026-10-31) — open. The sandbox's first results changed the adapter (§14), so the reviewer's approval of R2 needs a fresh look; the four rulings of `P9_MONEY_FLOW_MATRIX.md` §7 are awaited. Not approved for live money.** Planned and built
 in one pass, as P6 to P8 were. Decisions that would go to the project lead take the recommended option (his standing
 instruction) and are recorded in §7. The owner answered `docs/business/P9_OWNER_PAYMENTS.md` (Q1–Q8) on 26 October 2026 and
 `docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md` on 31 October 2026, each with the suggested option.
@@ -173,6 +173,7 @@ task: closing the old virtual accounts (Q3) once TransactPay answers B3.
 
 | Rev | Date | Change |
 |---|---|---|
+| 6 | 2026-10-31 | The sandbox's first results (§14): real not-found answers, creation not idempotent, the wallet holds the lookup's account |
 | 5 | 2026-10-31 | The money-flow matrix and three journeys (§13); P9 stays open |
 | 4 | 2026-10-31 | The re-check: code scope approved at `5fa190b`, live money not (§12); condition 9 added |
 | 3 | 2026-10-31 | The gate review's findings resolved (§11); the permission's wording answered; P9-5 and P9-10 revised |
@@ -206,13 +207,13 @@ Nothing here touches production, and in P9 nothing leaves a wallet (Q2). Before 
 
 | # | Condition | Why |
 |---|---|---|
-| 1 | Run the sandbox suite, and a real deposit through the webhook and the worker, including what TransactPay answers for an alias and a session it does not know | field names, the amount's unit (taken as naira from the old client) and the status table are unproven against the real API. A not-found answer is undocumented: only a JSON 404 is taken as one (P9-R2), so with any other answer no wallet is created and no forged event ends rejected. Both fail safe, and show as failed wallets and an `event` finding |
+| 1 | A real deposit through the webhook and the worker | field names, the amount's unit (taken as naira from the old client) and the status table are unproven against a real session. The rest of the sandbox suite has run (§14); TransactPay documents no way to simulate a deposit into a virtual account (A2), so this needs their answer or a real test deposit |
 | 2 | TransactPay confirms that a session's details name the destination account (C5) | without it, every deposit lands as unmatched: safe, but every one needs a person |
-| 3 | TransactPay confirms what the balance enquiry covers (B4) | if the payout balance does not hold virtual-account money, every comparison is a false difference |
+| 3 | TransactPay confirms what the balance enquiry covers (B4) | the answer has `availableBalance`, which the reconciler reads, and `collection`. If virtual-account money lands in `collection`, every comparison is a false difference |
 | 4 | TransactPay answers webhook authenticity (C2), and a transaction listing (C4) | events are confirmed by the API regardless; but with no listing a missed notification shows only as a difference, with no transaction a person can credit in the system: a listing, or a way to enter a session id, is needed |
 | 5 | For billing (P10): VA-to-VA transfers (D1), payout idempotency (D2), the payout's required fields (the documentation lists `accountName`, which orders do not carry yet) | the adapter refuses VA-to-VA today, and orders are never resent |
 | 6 | Closing the old virtual accounts (Q3) | an operator task, once TransactPay answers B3 |
-| 7 | TransactPay confirms that an alias lookup sees an account as soon as it exists, or that creation is idempotent (B1) | the lease keeps two workers from racing (§11, R3), but a creation whose answer was lost is followed by a lookup: a lookup that lags could still lead to a second account |
+| 7 | TransactPay confirms that a lookup always sees a new account at once | the sandbox shows creation is **not** idempotent (§14). Only the lookup prevents a second account, and if it lags after a lost answer a second real account is made. Money sent there arrives unmatched: for a person, not lost |
 | 8 | Each environment re-runs the role bootstrap before these migrations, with `worker_password` | the migration grants to `alphakolect_worker` and stops if the role is missing; the worker needs `WORKER_DATABASE_URL` |
 | 9 | Each environment's bootstrap confirms that `alphakolect_worker` has no role memberships | `roles.sql` re-applies attributes and the password, and does not remove a membership that already exists. The tests prove zero only on a fresh role (the re-check's observation) |
 
@@ -268,3 +269,22 @@ exercised. P9 stays open until the scenario coverage is reviewed. `P9_MONEY_FLOW
 gives the gaps the audit found, and lists four differences from the review's expected results for its ruling. The new tests,
 including three end-to-end journeys, are in `apps/api/test/payments/worker.test.ts`. No production code changed. TransactPay's
 sandbox has not been run: its assumptions stay release blockers (§10).
+
+## 14. The sandbox's first results (2026-10-31)
+
+Run with test keys only, which TransactPay documents as not interchangeable with live ones. The host is the same for both, so
+the sandbox suite refuses any key not marked as a test key, and reads only `TRANSACTPAY_TEST_*`. Live keys were not used.
+
+| Question | What the sandbox answered | What changed |
+|---|---|---|
+| An unknown alias | HTTP 200, `status: false`, `code: "04"`, "Account not found" | **The review's JSON 404 was an assumption, and wrong:** no wallet would ever have been created. Only this answer is "no such account" now; a 404 is an unclear answer |
+| An unknown session | HTTP 200, `status: false`, `code` empty, "SessionId not found" | The same: no forged event would ever have been rejected |
+| An unknown payout | HTTP 200, `status: false`, `code: "04"`, "Payout not found" | The same; any other answer without a reference is now `UNKNOWN_OUTCOME` |
+| The same alias created twice (B1) | Two different account numbers; the lookup names the first | **Creation is not idempotent.** After creating, the worker reads the alias again and records the lookup's account. The lease bound allows for the third call |
+| A lookup straight after creation | Found | Observed a few times only (§10 condition 7) |
+| The balance | `availableBalance` and `collection`, both 0 | Nothing yet: §10 condition 3 |
+| Response fields of creation and lookup | As the adapter reads them | Nothing |
+| The account number's form | Letters and digits in test mode (`TRP` and digits) | Nothing assumes digits: the column and the contract are free text. A live account's form is unseen |
+
+R2's rule stands, that only a definite answer creates an account, but which answer is definite has changed, so the reviewer
+should look at it again. A few test virtual accounts now exist in the sandbox from these runs.

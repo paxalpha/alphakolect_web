@@ -112,6 +112,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   // Required now so every environment is wired to its own database before P1 lands.
   DATABASE_URL: postgresUrl,
+  // The worker's own connection, as alphakolect_worker (P9-R1). Only the worker reads it, and refuses to start without.
+  WORKER_DATABASE_URL: postgresUrl.optional(),
   // Access-token signing (ADR-14 D6): the current key signs; the previous one (if set) still verifies.
   AUTH_SIGNING_JWK: jsonJwk,
   AUTH_SIGNING_JWK_PREVIOUS: jsonJwk.optional(),
@@ -145,8 +147,6 @@ const EnvSchema = z.object({
   TRANSACTPAY_PUBLIC_KEY: z.string().min(1).optional(),
   TRANSACTPAY_SECRET_KEY: z.string().min(1).optional(),
   TRANSACTPAY_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
-  // Customer Live wallets (owner Q7): off, and refused in production until custody is settled in writing (OPEN-12).
-  CUSTOMER_LIVE_WALLETS: z.enum(['true', 'false']).default('false'),
 });
 
 /** Settings that have a convenient local default but must be set explicitly in production. */
@@ -179,12 +179,6 @@ const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
       path: ['PAYMENT_PROVIDER'],
       message: 'must be transactpay in production',
     });
-  if (e.CUSTOMER_LIVE_WALLETS === 'true')
-    ctx.addIssue({
-      code: 'custom',
-      path: ['CUSTOMER_LIVE_WALLETS'],
-      message: 'must be false in production until custody is settled in writing (OPEN-12)',
-    });
   for (const name of Object.keys(LOCAL_DEFAULTS) as Array<keyof typeof LOCAL_DEFAULTS>) {
     if (e[name] === undefined)
       ctx.addIssue({ code: 'custom', path: [name], message: 'is required in production' });
@@ -196,6 +190,7 @@ export type Config = Readonly<{
   port: number;
   logLevel: z.infer<typeof EnvSchema>['LOG_LEVEL'];
   databaseUrl: string;
+  workerDatabaseUrl: string | undefined;
   webOrigins: ReadonlySet<string>;
   cookieDomain: string | undefined;
   trustProxy: TrustedProxies;
@@ -204,7 +199,6 @@ export type Config = Readonly<{
   webAppUrl: string;
   payments: Readonly<{
     provider: 'fake' | 'transactpay';
-    customerLiveWallets: boolean;
     transactPay?: Readonly<{ baseUrl: string; publicKey: string; secretKey: string; encryptionKey: string }>;
   }>;
   auth: Readonly<{
@@ -245,6 +239,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
+    workerDatabaseUrl: e.WORKER_DATABASE_URL,
     webOrigins: e.WEB_ORIGINS,
     cookieDomain: e.COOKIE_DOMAIN,
     trustProxy: e.TRUST_PROXY,
@@ -255,7 +250,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAppUrl: new URL(e.WEB_APP_URL ?? LOCAL_DEFAULTS.WEB_APP_URL).origin,
     payments: Object.freeze({
       provider: e.PAYMENT_PROVIDER,
-      customerLiveWallets: e.CUSTOMER_LIVE_WALLETS === 'true',
       ...(e.PAYMENT_PROVIDER === 'transactpay'
         ? {
             transactPay: Object.freeze({

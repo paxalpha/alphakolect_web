@@ -20,7 +20,10 @@ import {
 // funding details, the payout balance, bank payouts and their requery by our reference. What neither establishes it
 // declares unsupported (VA-to-VA transfers D1, listing C4, a per-account balance B4, closing B3), and relies on no
 // provider guarantee that is unconfirmed (idempotency B1, D2): the worker looks an alias or a reference up instead of
-// repeating a request. A timeout, a network failure or a server error is UNKNOWN_OUTCOME, never a failure (TA-8).
+// repeating a request. A timeout, a network failure or a server error is UNKNOWN_OUTCOME, never a failure (TA-8). So is
+// every answer that is not a stated result: an authentication failure, a rate limit, a body we cannot read. "It does not
+// exist" takes a JSON 404 (P9-R2), because creating an account or rejecting an event acts on it. TransactPay documents no
+// not-found answer, so the sandbox has to show theirs before this is relied on (plan §10); until then the worker waits.
 // Secrets come from the configuration and are never logged; errors carry no response bodies.
 
 export type TransactPayConfig = Readonly<{
@@ -35,14 +38,21 @@ export type TransactPayConfig = Readonly<{
 
 type Json = Record<string, unknown>;
 
-/** Naira as the API writes them ("1500", 1500.5, "1,500.00") to kobo; more than two decimals are cut (a balance). */
-function nairaToKobo(value: unknown, what: string): bigint {
+/**
+ * Naira as the API writes them ("1500", 1500.5, "1,500.00") to kobo. A value below a kobo is no amount of money we can
+ * record: refused, so it never reaches the ledger as something else (P9-R4). Only a balance rounds, down, with
+ * `floorBalance`: the reconciler compares whole kobo, and what is below one cannot be spent or recorded.
+ */
+function nairaToKobo(value: unknown, what: string, { floorBalance = false } = {}): bigint {
   const text = String(value ?? '')
     .replace(/,/g, '')
     .trim();
   const m = /^(\d+)(?:\.(\d+))?$/.exec(text);
   if (!m) throw new ProviderError('INVALID_EVENT', `${what} is not an amount`);
-  return BigInt(m[1]!) * 100n + BigInt((m[2] ?? '').padEnd(2, '0').slice(0, 2));
+  const decimals = m[2] ?? '';
+  if (!floorBalance && /[1-9]/.test(decimals.slice(2)))
+    throw new ProviderError('INVALID_EVENT', `${what} has more precision than a kobo`);
+  return BigInt(m[1]!) * 100n + BigInt(decimals.padEnd(2, '0').slice(0, 2));
 }
 const koboToNaira = (minor: bigint) => `${minor / 100n}.${String(minor % 100n).padStart(2, '0')}`;
 
@@ -74,11 +84,11 @@ export class TransactPayProvider implements PaymentProvider {
   readonly capabilities = { listTransactions: false, perAccountBalance: false, vaTransfer: false } as const;
 
   private readonly fetch: typeof globalThis.fetch;
-  private readonly timeoutMs: number;
+  readonly requestTimeoutMs: number;
 
   constructor(private readonly config: TransactPayConfig) {
     this.fetch = config.fetch ?? globalThis.fetch;
-    this.timeoutMs = config.timeoutMs ?? 20_000;
+    this.requestTimeoutMs = config.timeoutMs ?? 20_000;
   }
 
   /** The idempotency key is the wallet's alias: the account is tied to it, and found by it after a timeout. */
@@ -92,21 +102,23 @@ export class TransactPayProvider implements PaymentProvider {
         body: { data: this.encrypt({ Alias: idempotencyKey }) },
       },
     );
-    if (status >= 400 || !this.succeeded(body)) {
+    if (status === 400 || status === 422)
       throw new ProviderError('INVALID_REQUEST', `Virtual account refused (HTTP ${status})`);
-    }
+    if (status >= 400 || !this.succeeded(body))
+      throw new ProviderError('UNKNOWN_OUTCOME', `No stated result for the account (HTTP ${status})`);
     return this.accountRef(idempotencyKey, (body.data as Json | undefined) ?? body);
   }
 
   async findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null> {
-    const { status, body } = await this.call(
+    const { status, body, isJson } = await this.call(
       'GET',
       `/payment/account-details?alias=${encodeURIComponent(alias)}`,
       this.config.secretKey,
     );
-    if (status === 404 || !this.succeeded(body)) return null;
-    const data = (body.data as Json | undefined) ?? body;
-    return firstString(data, 'accountNumber', 'account_number') ? this.accountRef(alias, data) : null;
+    if (status === 404 && isJson) return null;
+    if (status >= 400 || !this.succeeded(body))
+      throw new ProviderError('UNKNOWN_OUTCOME', `The account lookup did not answer (HTTP ${status})`);
+    return this.accountRef(alias, (body.data as Json | undefined) ?? body);
   }
 
   async getVirtualAccount(providerRef: string): Promise<VirtualAccountState> {
@@ -133,7 +145,10 @@ export class TransactPayProvider implements PaymentProvider {
         debitCurrency: amount.currency,
       },
     });
-    if (status >= 400) throw new ProviderError('INVALID_REQUEST', `Payout refused (HTTP ${status})`);
+    if (status === 400 || status === 422)
+      throw new ProviderError('INVALID_REQUEST', `Payout refused (HTTP ${status})`);
+    if (status >= 400)
+      throw new ProviderError('UNKNOWN_OUTCOME', `No stated result for the payout (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
     return {
       providerTxId: firstString(data, 'reference', 'providerReference') ?? reference,
@@ -142,12 +157,14 @@ export class TransactPayProvider implements PaymentProvider {
   }
 
   async findTransferByReference(reference: string): Promise<ProviderTxRef | null> {
-    const { status, body } = await this.call(
+    const { status, body, isJson } = await this.call(
       'GET',
       `/payout/requery?clientReference=${encodeURIComponent(reference)}`,
       this.config.secretKey,
     );
-    if (status === 404) return null;
+    if (status === 404 && isJson) return null;
+    if (status >= 400)
+      throw new ProviderError('UNKNOWN_OUTCOME', `The lookup did not answer (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
     if (!firstString(data, 'clientReference', 'reference', 'providerReference')) return null;
     return {
@@ -158,13 +175,15 @@ export class TransactPayProvider implements PaymentProvider {
 
   /** A session's funding details: what the worker confirms an event with (P9-2). */
   async getTransaction(providerTxId: string): Promise<ProviderTransaction> {
-    const { status, body } = await this.call(
+    const { status, body, isJson } = await this.call(
       'GET',
       `/payment/transaction-details/${encodeURIComponent(providerTxId)}`,
       this.config.publicKey,
     );
-    if (status === 404 || !this.succeeded(body))
-      throw new ProviderError('NOT_FOUND', 'Transaction not found');
+    // Not found rejects an event in the end: an outage of ours or theirs must not reject real money.
+    if (status === 404 && isJson) throw new ProviderError('NOT_FOUND', 'Transaction not found');
+    if (status >= 400 || !this.succeeded(body))
+      throw new ProviderError('UNKNOWN_OUTCOME', `The transaction lookup did not answer (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
     const toAccountNumber = firstString(data, 'accountNumber', 'account_number', 'destinationAccountNumber');
     const createdAt = new Date(
@@ -200,7 +219,7 @@ export class TransactPayProvider implements PaymentProvider {
     );
     if (status >= 400) throw new ProviderError('UNKNOWN_OUTCOME', `Balance unavailable (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
-    return ngn(nairaToKobo(data.availableBalance, 'The balance'));
+    return ngn(nairaToKobo(data.availableBalance, 'The balance', { floorBalance: true }));
   }
 
   /** The event is a lead only (P9-2): TransactPay documents no signature (C2), and sample payloads differ in casing. */
@@ -255,7 +274,7 @@ export class TransactPayProvider implements PaymentProvider {
     path: string,
     apiKey: string,
     options: { encryption?: string; body?: object } = {},
-  ): Promise<{ status: number; body: Json }> {
+  ): Promise<{ status: number; body: Json; isJson: boolean }> {
     let response: Response;
     let text: string;
     try {
@@ -267,7 +286,7 @@ export class TransactPayProvider implements PaymentProvider {
           ...(options.encryption ? { encryption: options.encryption } : {}),
         },
         ...(options.body ? { body: JSON.stringify(options.body) } : {}),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
       });
       text = await response.text();
     } catch {
@@ -284,9 +303,10 @@ export class TransactPayProvider implements PaymentProvider {
       return {
         status: response.status,
         body: (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Json,
+        isJson: typeof parsed === 'object' && parsed !== null,
       };
     } catch {
-      if (response.status >= 400) return { status: response.status, body: {} };
+      if (response.status >= 400) return { status: response.status, body: {}, isJson: false };
       throw new ProviderError('UNKNOWN_OUTCOME', 'TransactPay answered with something unreadable');
     }
   }

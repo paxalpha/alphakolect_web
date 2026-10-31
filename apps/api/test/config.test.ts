@@ -95,7 +95,7 @@ describe('loadConfig', () => {
     expect(config.webAppUrl).toBe('http://localhost:3000');
   });
 
-  it('P9: the provider’s keys are required with TransactPay; production refuses the fake and customer wallets (OPEN-12)', () => {
+  it('P9: the provider’s keys are required with TransactPay; production refuses the fake', () => {
     expect(problemsOf({ ...valid, PAYMENT_PROVIDER: 'transactpay' }).problems).toEqual([
       'TRANSACTPAY_BASE_URL is required when PAYMENT_PROVIDER is transactpay',
       'TRANSACTPAY_PUBLIC_KEY is required when PAYMENT_PROVIDER is transactpay',
@@ -111,18 +111,22 @@ describe('loadConfig', () => {
     };
     expect(problemsOf(live).problems).toEqual(['PAYMENT_PROVIDER must be transactpay in production']);
     expect(
-      problemsOf({
+      loadConfig({
         ...live,
         PAYMENT_PROVIDER: 'transactpay',
         TRANSACTPAY_BASE_URL: 'https://tp.example.test',
         TRANSACTPAY_PUBLIC_KEY: 'p',
         TRANSACTPAY_SECRET_KEY: 's',
         TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
-        CUSTOMER_LIVE_WALLETS: 'true',
-      }).problems,
-    ).toEqual([
-      'CUSTOMER_LIVE_WALLETS must be false in production until custody is settled in writing (OPEN-12)',
-    ]);
+      }).payments.provider,
+    ).toBe('transactpay');
+  });
+
+  it('P9-R1: the worker’s connection is its own, and only the worker needs it', () => {
+    expect(loadConfig({ ...valid }).workerDatabaseUrl).toBeUndefined();
+    const url = 'postgresql://alphakolect_worker:x@127.0.0.1:5436/alphakolect'; // gitleaks:allow
+    expect(loadConfig({ ...valid, WORKER_DATABASE_URL: url }).workerDatabaseUrl).toBe(url);
+    expect(problemsOf({ ...valid, WORKER_DATABASE_URL: 'https://not-a-database' }).problems).toHaveLength(1);
   });
 
   it('requires the email settings and the web app URL in production', () => {

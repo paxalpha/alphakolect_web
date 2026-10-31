@@ -75,6 +75,8 @@ export class ProviderError extends Error {
 export interface PaymentProvider {
   readonly name: string;
   /** What this provider offers beyond the core; the worker adapts (P9-3). */
+  /** The longest one call can take before it gives up: the worker's lease has to outlast it (P9-R3). */
+  readonly requestTimeoutMs: number;
   readonly capabilities: Readonly<{
     listTransactions: boolean;
     perAccountBalance: boolean;

@@ -1,9 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import pino from 'pino';
 import request from 'supertest';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, inject, it, vi } from 'vitest';
 import { FakeProvider } from '../../src/integrations/payments/fake-provider.js';
+import { ProviderError } from '../../src/integrations/payments/provider.js';
+import { TransactPayProvider } from '../../src/integrations/payments/transactpay-provider.js';
 import { PaymentsWorker } from '../../src/modules/payments/worker-tasks.js';
+import { createDb } from '../../src/platform/db.js';
 import { ngn } from '../../src/platform/money.js';
 import { createTestApp } from '../support/app.js';
 import { uniquePhone } from '../support/customers.js';
@@ -11,17 +14,19 @@ import { tenancyFixtures } from '../support/tenancy.js';
 
 // The payments worker against the real database, through the webhook the app exposes (P9 §3, §5; TA-8, TA-11): wallets
 // only after a business confirms its email (BR-2.3), a forged or replayed event credits nothing more (the exit), an
-// order in doubt is never sent twice, and the reconciler finds a difference (the exit). Other test files share this
+// order in doubt is never sent twice, and the reconciler finds a difference (the exit). It connects as its own role,
+// alphakolect_worker, and the app's connection is refused its functions (P9-R1). Other test files share this
 // database, so each test moves its own rows to the front of the queue and targets its failures by alias or reference.
 
-const { app, db, auth } = await createTestApp();
+const { app, db: webDb, auth } = await createTestApp();
+const db = createDb(inject('workerDatabaseUrl'));
+afterAll(() => db.close());
 const { owner, business } = tenancyFixtures(app, auth);
 const fake = new FakeProvider();
 const worker = new PaymentsWorker({
   db,
   provider: fake,
   logger: pino({ level: 'silent' }),
-  customerLiveWallets: false,
 });
 
 const one = async (sql: string, params: unknown[] = []) => (await owner.query(sql, params)).rows[0];
@@ -29,7 +34,7 @@ const walletOf = (merchantId: string) =>
   one(`SELECT * FROM payments.live_wallets WHERE owner_kind = 'merchant' AND merchant_id = $1`, [merchantId]);
 /** Requests this business's wallet and puts it first in the queue. */
 const queued = async (merchantId: string) => {
-  await owner.query(`SELECT payments.request_wallets('fake', false)`);
+  await owner.query(`SELECT payments.request_wallets('fake')`);
   await owner.query(
     `UPDATE payments.live_wallets SET next_attempt_at = '2000-01-01', lease_until = NULL
       WHERE owner_kind = 'merchant' AND merchant_id = $1`,
@@ -101,7 +106,92 @@ describe('wallets (BR-2.3)', () => {
     expect(fake.accountCount).toBeGreaterThanOrEqual(accounts);
   });
 
-  it('customer wallets are not requested with the switch off (Q7)', async () => {
+  it('P9-R2: an unclear lookup never creates an account, and the wallet is tried again later', async () => {
+    const b = await business();
+    await queued(b.merchantId);
+    const { alias } = await walletOf(b.merchantId);
+    fake.failNext('find', 'UNKNOWN_OUTCOME', { match: alias });
+    const create = vi.spyOn(fake, 'createVirtualAccount');
+    await worker.provisionWallets();
+    expect(create.mock.calls.filter(([, key]) => key === alias)).toEqual([]);
+    create.mockRestore();
+    expect(await walletOf(b.merchantId)).toMatchObject({ status: 'provisioning', account_number: null });
+    expect((await walletOf(b.merchantId)).last_error).toContain('UNKNOWN_OUTCOME');
+    expect(await fake.findVirtualAccountByAlias(alias)).toBeNull();
+  });
+
+  it('P9-R2: TransactPay’s answers, through the worker: only a stated no creates', async () => {
+    const answer = async (response: () => Response) => {
+      const b = await business();
+      await queued(b.merchantId);
+      const { alias } = await walletOf(b.merchantId);
+      const lookups = new TransactPayProvider({
+        baseUrl: 'https://tp.test',
+        publicKey: 'p',
+        secretKey: 's',
+        encryptionKey: 'e',
+        fetch: (async () => response()) as typeof fetch,
+      });
+      const other = new FakeProvider();
+      const created: string[] = [];
+      const provider = Object.assign(other, {
+        // Only this business's wallet is answered by the stub; the others in the queue are refused without a lookup.
+        findVirtualAccountByAlias: (a: string) =>
+          a === alias
+            ? lookups.findVirtualAccountByAlias(a)
+            : Promise.reject(new ProviderError('UNKNOWN_OUTCOME', 'Not in this test')),
+        createVirtualAccount: async (...args: Parameters<FakeProvider['createVirtualAccount']>) => {
+          created.push(args[1]);
+          return FakeProvider.prototype.createVirtualAccount.apply(other, args);
+        },
+      });
+      await new PaymentsWorker({ db, provider, logger: pino({ level: 'silent' }) }).provisionWallets();
+      return created.includes(alias);
+    };
+    const json = (body: unknown, status: number) => () => new Response(JSON.stringify(body), { status });
+    for (const status of [400, 401, 403, 429, 500])
+      expect(await answer(json({ status: false }, status))).toBe(false);
+    expect(await answer(() => new Response('<html>', { status: 404 }))).toBe(false);
+    expect(await answer(() => new Response('<html>', { status: 200 }))).toBe(false);
+    expect(await answer(json({ status: false, message: 'Not found' }, 404))).toBe(true);
+  });
+
+  it('P9-R3: a lookup that outlasts the lease cannot create a second account; the later worker’s stands', async () => {
+    const b = await business();
+    await queued(b.merchantId);
+    const { alias } = await walletOf(b.merchantId);
+    const create = vi.spyOn(fake, 'createVirtualAccount');
+    fake.delayNextLookup(alias, 1_600);
+    const slow = new PaymentsWorker({
+      db,
+      provider: fake,
+      logger: pino({ level: 'silent' }),
+      leaseSeconds: 1,
+    });
+    const pass = slow.provisionWallets();
+    // The lookup has seen no account, and takes longer than the lease. The lease passes; another worker claims the wallet.
+    await new Promise((resolve) => setTimeout(resolve, 1_200));
+    await queued(b.merchantId);
+    await worker.provisionWallets();
+    const after = await walletOf(b.merchantId);
+    expect(after.status).toBe('active');
+    await pass;
+    expect(create.mock.calls.filter(([, key]) => key === alias)).toHaveLength(1);
+    create.mockRestore();
+    expect(await walletOf(b.merchantId)).toMatchObject({
+      status: 'active',
+      account_number: after.account_number,
+    });
+  });
+
+  it('P9-R3: a lease that a provider’s timeouts could outlast is refused at the start', () => {
+    const provider = Object.assign(new FakeProvider(), { requestTimeoutMs: 20_000 });
+    const logger = pino({ level: 'silent' });
+    expect(() => new PaymentsWorker({ db, provider, logger, leaseSeconds: 30 })).toThrow(/lease/);
+    expect(() => new PaymentsWorker({ db, provider, logger })).not.toThrow();
+  });
+
+  it('customer wallets are not requested (Q7)', async () => {
     const b = await business();
     const branch = (
       await one(`INSERT INTO tenancy.branches (merchant_id, name) VALUES ($1, 'Main') RETURNING id`, [
@@ -188,6 +278,50 @@ describe('events (TA-8; the exit’s forged and replayed)', () => {
     );
     await worker.confirmEvents();
     expect(await balance(b.merchantId, '1100')).toBe(1_000);
+  });
+
+  it('P9-R4: an answer we cannot record credits nothing, is looked at again, and reaches the platform team', async () => {
+    const { b, va } = await activeWallet();
+    const inbound = fake.simulateInboundTransfer(va, ngn(1_000n), 'deposit');
+    await notify(inbound);
+    const { id } = await eventOf(inbound.providerTxId);
+    await owner.query(`UPDATE payments.provider_events SET attempts = 7 WHERE id = $1`, [id]);
+    await owner.query(
+      `UPDATE payments.reconciliation_findings SET status = 'resolved', resolved_at = now(), resolution_note = 'Test'
+        WHERE scope = 'event' AND status = 'open'`,
+    );
+    fake.failNext('get', 'INVALID_EVENT', { match: inbound.providerTxId });
+    await worker.confirmEvents();
+    expect((await eventOf(inbound.providerTxId)).status).toBe('pending');
+    expect(await balance(b.merchantId, '1100')).toBe(0);
+    expect(
+      await one(
+        `SELECT scope FROM payments.reconciliation_findings WHERE scope = 'event' AND status = 'open'`,
+      ),
+    ).toEqual({ scope: 'event' });
+    await owner.query(
+      `UPDATE payments.provider_events SET next_check_at = now(), lease_until = NULL WHERE id = $1`,
+      [id],
+    );
+    await worker.confirmEvents();
+    expect(await balance(b.merchantId, '1100')).toBe(1_000);
+  });
+
+  it('P9-R1: through the API’s own connection, a provider’s confirmation cannot be fabricated', async () => {
+    const { b, wallet } = await activeWallet();
+    await notify({ type: 'transfer.inbound', providerTxId: `web-${randomBytes(6).toString('hex')}` });
+    await expect(
+      webDb.transaction((tx) =>
+        tx.query(
+          `SELECT payments.record_event(gen_random_uuid(), gen_random_uuid(), true, 'tx', $1, 100, 'NGN', 'successful', now(), 5)`,
+          [wallet.account_number],
+        ),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      webDb.transaction((tx) => tx.query(`SELECT payments.request_wallets('fake')`)),
+    ).rejects.toMatchObject({ code: '42501' });
+    expect(await balance(b.merchantId, '1100')).toBe(0);
   });
 
   it('a reversal the provider reports later goes to a person; nothing is debited', async () => {
@@ -336,7 +470,6 @@ describe('the reconciler (Q5; the exit’s drift)', () => {
       db,
       provider: pooled,
       logger: pino({ level: 'silent' }),
-      customerLiveWallets: false,
     });
     await pooledWorker.reconcile();
     const found = await one(
@@ -360,7 +493,6 @@ describe('the reconciler (Q5; the exit’s drift)', () => {
         getBalance: () => Promise.reject(new Error('down')),
       }),
       logger: pino({ level: 'silent' }),
-      customerLiveWallets: false,
     });
     await quiet.reconcile();
     expect(await openFinding(w.wallet.id)).toBeUndefined();

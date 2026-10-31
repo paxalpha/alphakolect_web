@@ -160,6 +160,7 @@ describe('enforcing mode (R34, R17): every repository transaction matches exactl
       'PaymentsService.resolveUnmatched',
       'PaymentsWorker.confirmEvents #1',
       'PaymentsWorker.confirmEvents #2',
+      'PaymentsWorker.confirmEvents #3',
       'PaymentsWorker.provisionWallets #1',
       'PaymentsWorker.provisionWallets #2',
       'PaymentsWorker.provisionWallets #3',

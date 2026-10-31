@@ -37,8 +37,17 @@ export async function paymentResources(owner: pg.Client, merchantId: string): Pr
       merchantId,
     ])
   ).id as string;
-  await one(`SELECT payments.record_wallet_created($1, $2, $3, 'Matrix', 'Test Bank')`, [
+  // A claim's token, staged: the claims are tested with the worker.
+  const leased = async (table: string, id: string) =>
+    (
+      await one(
+        `UPDATE payments.${table} SET lease_token = gen_random_uuid() WHERE id = $1 RETURNING lease_token`,
+        [id],
+      )
+    ).lease_token as string;
+  await one(`SELECT payments.record_wallet_created($1, $2, $3, $4, 'Matrix', 'Test Bank')`, [
     walletId,
+    await leased('live_wallets', walletId),
     `ref-${randomBytes(6).toString('hex')}`,
     digits(10),
   ]);
@@ -47,8 +56,9 @@ export async function paymentResources(owner: pg.Client, merchantId: string): Pr
   ).account_number as string;
   const event = async (tx: string, amount: number, status = 'successful') => {
     const id = (await one(`SELECT payments.store_event('fake', '{}', '{}', NULL) AS id`)).id;
-    await one(`SELECT payments.record_event($1, true, $2, $3, $4, 'NGN', $5, now(), 5)`, [
+    await one(`SELECT payments.record_event($1, $2, true, $3, $4, $5, 'NGN', $6, now(), 5)`, [
       id,
+      await leased('provider_events', id as string),
       tx,
       accountNumber,
       amount,

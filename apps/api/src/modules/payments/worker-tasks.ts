@@ -11,17 +11,25 @@ import {
 import type { Db } from '../../platform/db.js';
 import { ngn } from '../../platform/money.js';
 
-// The payments worker's tasks (P9 §3; TA-8, TA-11). Each claims due rows in one short transaction, calls the provider
-// with no transaction open (P9-4), and records what the provider said in another. The database functions decide what it
-// means; the worker never makes up an amount or an account (P9-2). It connects as alphakolect_app; the functions take
-// the business from the row, so a job cannot touch another business's books.
+// The payments worker's tasks (P9 §3; TA-8, TA-11). Each claims one row in a short transaction, calls the provider with
+// no transaction open (P9-4), and records what the provider said in another. The database functions decide what it means;
+// the worker never makes up an amount or an account (P9-2). It connects as alphakolect_worker, and the functions take the
+// business from the row, so a job cannot touch another business's books.
+//
+// Leases (P9-R3). A row is claimed only when the worker is about to work on it, and a call with an effect at the provider
+// starts only if it will have ended, at its timeout, before the lease does: no second worker can be asking about a row
+// while such a call is in flight. A worker too late to start one abandons the row to the next claim. Whatever it does
+// record carries its claim's token, so an answer from an expired lease changes nothing.
 
 const LEASE_SECONDS = 300;
+/** Claimed one at a time; this many in one pass. */
 const BATCH = 50;
 /** About two days of attempts at the longest delay: then the platform team sees the wallet as failed. */
 const WALLET_MAX_ATTEMPTS = 50;
 /** An event the provider does not know after this many looks is rejected: forged, or never real. */
 const EVENT_MAX_ATTEMPTS = 8;
+/** An event that has had no usable answer after this many looks is one for the platform team, and still looked at. */
+const EVENT_STUCK_ATTEMPTS = 8;
 
 const errorText = (err: unknown) =>
   err instanceof ProviderError ? `${err.code}: ${err.message}` : 'Unexpected error';
@@ -30,61 +38,87 @@ export type PaymentsWorkerDeps = {
   db: Db;
   provider: PaymentProvider;
   logger: Pick<Logger, 'error' | 'warn' | 'info'>;
-  customerLiveWallets: boolean;
+  leaseSeconds?: number;
 };
 
 export class PaymentsWorker {
-  constructor(private readonly deps: PaymentsWorkerDeps) {}
+  private readonly leaseMs: number;
+
+  constructor(private readonly deps: PaymentsWorkerDeps) {
+    this.leaseMs = (deps.leaseSeconds ?? LEASE_SECONDS) * 1000;
+    // A lookup and the call that follows it both end inside the lease, with a tenth of it to spare.
+    if (2 * deps.provider.requestTimeoutMs >= this.leaseMs * 0.9)
+      throw new Error('The worker’s lease must outlast the provider’s timeouts');
+  }
+
+  /** Whether a call started now ends, at its timeout, inside a lease asked for at `claimedAt`. */
+  private inLease(claimedAt: number): boolean {
+    const elapsed = performance.now() - claimedAt;
+    return elapsed + this.deps.provider.requestTimeoutMs < this.leaseMs * 0.9;
+  }
 
   /** Request a wallet for each business whose email is confirmed (BR-2.3), then create those due. */
   async provisionWallets(): Promise<void> {
-    const { db, provider, customerLiveWallets } = this.deps;
+    const { db, provider, logger } = this.deps;
     await db.transaction(async (tx) => {
-      await tx.query(`SELECT payments.request_wallets($1, $2)`, [provider.name, customerLiveWallets]);
+      await tx.query(`SELECT payments.request_wallets($1)`, [provider.name]);
     });
-    const due = await db.transaction((tx) =>
-      tx.query<{
-        id: string;
-        owner_kind: VaOwner['kind'];
-        merchant_id: string | null;
-        customer_id: string | null;
-        alias: string;
-        display_name: string;
-      }>(
-        `SELECT id, owner_kind, merchant_id, customer_id, alias, display_name FROM payments.claim_wallets($1, $2)`,
-        [BATCH, LEASE_SECONDS],
-      ),
-    );
-    for (const w of due) {
+    for (let n = 0; n < BATCH; n++) {
+      const claimedAt = performance.now();
+      const [w] = await db.transaction((tx) =>
+        tx.query<{
+          id: string;
+          lease_token: string;
+          owner_kind: VaOwner['kind'];
+          merchant_id: string | null;
+          customer_id: string | null;
+          alias: string;
+          display_name: string;
+        }>(
+          `SELECT id, lease_token, owner_kind, merchant_id, customer_id, alias, display_name
+             FROM payments.claim_wallets(1, $1)`,
+          [this.leaseMs / 1000],
+        ),
+      );
+      if (!w) return;
       try {
-        // Asked first: a request that timed out may have created it (B1: creation is not documented as idempotent).
-        const account =
-          (await provider.findVirtualAccountByAlias(w.alias)) ??
-          (await provider.createVirtualAccount(
+        // Asked first: a request that timed out may have created it (B1: creation is not documented as idempotent). Only a
+        // definite "no such account" goes on to create one (P9-R2); anything else throws, and is tried again later.
+        let account = await provider.findVirtualAccountByAlias(w.alias);
+        if (!account) {
+          if (!this.inLease(claimedAt)) {
+            logger.warn(
+              { walletId: w.id },
+              'Too late in the lease to create a wallet: left for the next claim',
+            );
+            continue;
+          }
+          account = await provider.createVirtualAccount(
             {
               kind: w.owner_kind,
               ownerId: w.customer_id ?? w.merchant_id ?? 'platform',
               name: w.display_name,
             },
             w.alias,
-          ));
+          );
+        }
+        const { providerRef, accountNumber, accountName, bankName } = account;
         await db.transaction(async (tx) => {
-          await tx.query(`SELECT payments.record_wallet_created($1, $2, $3, $4, $5)`, [
+          await tx.query(`SELECT payments.record_wallet_created($1, $2, $3, $4, $5, $6)`, [
             w.id,
-            account.providerRef,
-            account.accountNumber,
-            account.accountName,
-            account.bankName,
+            w.lease_token,
+            providerRef,
+            accountNumber,
+            accountName,
+            bankName,
           ]);
         });
       } catch (err) {
-        this.deps.logger.warn(
-          { walletId: w.id, code: (err as ProviderError).code },
-          'A wallet was not created',
-        );
+        logger.warn({ walletId: w.id, code: (err as ProviderError).code }, 'A wallet was not created');
         await db.transaction(async (tx) => {
-          await tx.query(`SELECT payments.record_wallet_failed($1, $2, $3)`, [
+          await tx.query(`SELECT payments.record_wallet_failed($1, $2, $3, $4)`, [
             w.id,
+            w.lease_token,
             errorText(err),
             WALLET_MAX_ATTEMPTS,
           ]);
@@ -95,32 +129,38 @@ export class PaymentsWorker {
 
   /** Confirm each stored event by asking the provider; only what it answers is recorded (TA-8, P9-2). */
   async confirmEvents(): Promise<void> {
-    const { db, provider } = this.deps;
-    const due = await db.transaction((tx) =>
-      tx.query<{ id: string; reference: string | null }>(
-        `SELECT id, reference FROM payments.claim_events($1, $2)`,
-        [BATCH, LEASE_SECONDS],
-      ),
-    );
-    for (const e of due) {
+    const { db, provider, logger } = this.deps;
+    for (let n = 0; n < BATCH; n++) {
+      const [e] = await db.transaction((tx) =>
+        tx.query<{ id: string; lease_token: string; reference: string | null; attempts: number }>(
+          `SELECT id, lease_token, reference, attempts FROM payments.claim_events(1, $1)`,
+          [this.leaseMs / 1000],
+        ),
+      );
+      if (!e) return;
       let tx: ProviderTransaction | null = null;
       let unavailable = false;
       if (e.reference) {
         try {
           tx = await provider.getTransaction(e.reference);
         } catch (err) {
-          // NOT_FOUND: the provider does not know it. Anything else tells nothing: look again later.
+          // NOT_FOUND: the provider does not know it. Anything else tells nothing, an amount we cannot record included:
+          // look again later.
           unavailable = !(err instanceof ProviderError && err.code === 'NOT_FOUND');
           if (unavailable)
-            this.deps.logger.warn({ eventId: e.id }, 'The provider could not confirm an event');
+            logger.warn(
+              { eventId: e.id, code: (err as ProviderError).code },
+              'The provider could not confirm an event',
+            );
         }
       }
       // Could not ask: found, still pending. Unknown to the provider, or not money arriving (an order is settled by its
       // own lookup): not found. Otherwise what the provider said.
       const money = !unavailable && tx?.to.kind === 'va' ? tx : null;
       await db.transaction(async (t) => {
-        await t.query(`SELECT payments.record_event($1, $2, $3, $4, $5::bigint, $6, $7, $8, $9)`, [
+        await t.query(`SELECT payments.record_event($1, $2, $3, $4, $5, $6::bigint, $7, $8, $9, $10)`, [
           e.id,
+          e.lease_token,
           unavailable || money !== null,
           money?.providerTxId ?? null,
           money?.toAccountNumber ?? null,
@@ -131,6 +171,14 @@ export class PaymentsWorker {
           EVENT_MAX_ATTEMPTS,
         ]);
       });
+      if (unavailable && e.attempts >= EVENT_STUCK_ATTEMPTS) {
+        // Money may be behind it, and the books will not show it: one open finding says so (the amounts are a marker, not
+        // money: this is not a balance). The log names the event.
+        logger.error({ eventId: e.id }, 'An event has had no usable answer from the provider');
+        await db.transaction(async (t) => {
+          await t.query(`SELECT payments.record_finding('event', NULL, 1, 0)`);
+        });
+      }
     }
   }
 
@@ -140,27 +188,30 @@ export class PaymentsWorker {
    */
   async settleOrders(): Promise<void> {
     const { db, provider } = this.deps;
-    const due = await db.transaction((tx) =>
-      tx.query<{
-        id: string;
-        prior_state: string;
-        reference: string;
-        amount_minor: string;
-        from_provider_ref: string;
-        to_provider_ref: string | null;
-        to_bank: { accountNumber: string; bankCode: string } | null;
-      }>(
-        `SELECT id, prior_state, reference, amount_minor, from_provider_ref, to_provider_ref, to_bank
-           FROM payments.claim_orders($1, $2)`,
-        [BATCH, LEASE_SECONDS],
-      ),
-    );
-    for (const o of due) {
+    for (let n = 0; n < BATCH; n++) {
+      const claimedAt = performance.now();
+      const [o] = await db.transaction((tx) =>
+        tx.query<{
+          id: string;
+          lease_token: string;
+          prior_state: string;
+          reference: string;
+          amount_minor: string;
+          from_provider_ref: string;
+          to_provider_ref: string | null;
+          to_bank: { accountNumber: string; bankCode: string } | null;
+        }>(
+          `SELECT id, lease_token, prior_state, reference, amount_minor, from_provider_ref, to_provider_ref, to_bank
+             FROM payments.claim_orders(1, $1)`,
+          [this.leaseMs / 1000],
+        ),
+      );
+      if (!o) return;
       let state: string;
       let ref: ProviderTxRef | null = null;
       let error: string | null = null;
       try {
-        if (o.prior_state === 'created') {
+        if (o.prior_state === 'created' && this.inLease(claimedAt)) {
           const to: VaRef | BankAccount = o.to_bank
             ? { kind: 'bank', bankCode: o.to_bank.bankCode, accountNumber: o.to_bank.accountNumber }
             : { kind: 'va', providerRef: o.to_provider_ref! };
@@ -194,8 +245,9 @@ export class PaymentsWorker {
             : 'unknown';
       }
       await db.transaction(async (tx) => {
-        await tx.query(`SELECT payments.record_order($1, $2, $3, $4, $5)`, [
+        await tx.query(`SELECT payments.record_order($1, $2, $3, $4, $5, $6)`, [
           o.id,
+          o.lease_token,
           state,
           ref?.providerTxId ?? null,
           ref?.providerTxId ?? null,

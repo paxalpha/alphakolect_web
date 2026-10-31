@@ -11,6 +11,8 @@ declare module 'vitest' {
   export interface ProvidedContext {
     /** The API's connection: the least-privilege alphakolect_app role. */
     apiDatabaseUrl: string;
+    /** The worker's connection: alphakolect_worker (P9-R1). */
+    workerDatabaseUrl: string;
     /** Table-owner connection, for test setup and assertions only. */
     ownerDatabaseUrl: string;
   }
@@ -28,6 +30,7 @@ export default async function setup(project: TestProject) {
     throw err;
   }
   project.provide('apiDatabaseUrl', connectionUrl('app', database));
+  project.provide('workerDatabaseUrl', connectionUrl('worker', database));
   project.provide('ownerDatabaseUrl', connectionUrl('migrator', database));
   return async () => {
     await dropTestDatabase(database);

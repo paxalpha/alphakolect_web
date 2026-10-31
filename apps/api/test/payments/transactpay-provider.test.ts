@@ -62,13 +62,32 @@ describe('virtual accounts', () => {
     expect(JSON.parse(clear.toString('utf8'))).toEqual({ Alias: 'AKM-1' });
   });
 
-  it('finds one by its alias, with the secret key; none is null', async () => {
+  it('finds one by its alias, with the secret key', async () => {
     const { p, seen } = provider(() => json({ status: true, data: { accountNumber: '0123456789' } }));
     expect((await p.findVirtualAccountByAlias('AKM 1'))?.accountNumber).toBe('0123456789');
     expect(seen[0]!.url).toBe('https://tp.test/payment/account-details?alias=AKM%201');
     expect(seen[0]!.headers['api-key']).toBe('secret-test-key');
-    const { p: none } = provider(() => json({ status: false, message: 'not found' }));
-    await expect(none.findVirtualAccountByAlias('x')).resolves.toBeNull();
+  });
+
+  it('P9-R2: only a JSON 404 says there is no such account; anything else is not an answer', async () => {
+    const { p: none } = provider(() => json({ status: false, message: 'Not found' }, 404));
+    await expect(none.findVirtualAccountByAlias('a')).resolves.toBeNull();
+    for (const answer of [
+      () => json({ status: false }, 400),
+      () => json({ status: false }, 401),
+      () => json({ status: false }, 403),
+      () => json({ status: false }, 429),
+      () => json({}, 503),
+      () => json({ status: false }),
+      () => json({ status: true, data: {} }), // success, and no account in it
+      () => new Response('<html>Not Found</html>', { status: 404 }), // a proxy's or a wrong address's, not theirs
+      () => new Response('<html>', { status: 200 }),
+      () => json('nope', 404),
+      () => Promise.reject(new Error('timeout')),
+    ]) {
+      const { p } = provider(answer);
+      await expect(p.findVirtualAccountByAlias('a')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
   });
 
   it('a refusal is a refusal; a timeout, a dropped connection or a server error is UNKNOWN_OUTCOME (TA-8)', async () => {
@@ -76,6 +95,9 @@ describe('virtual accounts', () => {
     await expect(refuses.createVirtualAccount(owner, 'a')).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
     for (const answer of [
       () => json({}, 503),
+      () => json({}, 401),
+      () => json({}, 429),
+      () => json({ status: false }),
       () => Promise.reject(new Error('timeout')),
       () => new Response('<html>', { status: 200 }),
     ]) {
@@ -124,15 +146,36 @@ describe('confirming a transaction', () => {
     expect((await p.getTransaction('S')).status).toBe(status);
   });
 
-  it('without an account named, there is nothing to match it by (C5); unknown to them is NOT_FOUND', async () => {
+  it('without an account named, there is nothing to match it by (C5); only a JSON 404 is NOT_FOUND', async () => {
     const { p } = provider(() => json({ status: true, data: { amount: 10, statusId: 5 } }));
     expect((await p.getTransaction('S')).toAccountNumber).toBeUndefined();
-    const { p: unknown } = provider(() => json({ status: false }));
-    await expect(unknown.getTransaction('S')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     const { p: gone } = provider(() => json({}, 404));
     await expect(gone.getTransaction('S')).rejects.toMatchObject({ code: 'NOT_FOUND' });
-    const { p: down } = provider(() => json({}, 500));
-    await expect(down.getTransaction('S')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    // A real deposit's event must not end rejected because of an outage or our own expired key.
+    for (const answer of [
+      () => json({}, 500),
+      () => json({}, 401),
+      () => json({}, 403),
+      () => json({}, 429),
+      () => json({ status: false }),
+      () => new Response('<html>', { status: 404 }),
+    ]) {
+      const { p } = provider(answer);
+      await expect(p.getTransaction('S')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
+  });
+
+  it('P9-R4: an amount below a kobo is refused, never cut; zeros past the kobo are only zeros', async () => {
+    const tx = (amount: unknown) => provider(() => json({ status: true, data: { amount, statusId: 5 } })).p;
+    for (const amount of ['1500.999', 1500.999, '1500.001', '0.009'])
+      await expect(tx(amount).getTransaction('S')).rejects.toMatchObject({ code: 'INVALID_EVENT' });
+    for (const [amount, kobo] of [
+      ['1500.990', 150_099n],
+      ['1500.50', 150_050n],
+      ['1,500.00', 150_000n],
+      [1500, 150_000n],
+    ] as const)
+      expect((await tx(amount).getTransaction('S')).amount).toEqual(ngn(kobo));
   });
 
   it('takes the session id from a notification, in the casings the documentation shows; believes nothing else', () => {
@@ -170,11 +213,24 @@ describe('money and what is not offered', () => {
   it('a lookup that finds nothing is null, and a server error is not an answer', async () => {
     const { p } = provider(() => json({}, 404));
     await expect(p.findTransferByReference('x')).resolves.toBeNull();
-    const { p: down } = provider(() => json({}, 502));
-    await expect(down.findTransferByReference('x')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    for (const status of [401, 429, 502]) {
+      const { p: down } = provider(() => json({}, status));
+      await expect(down.findTransferByReference('x')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
   });
 
-  it('reads the pooled balance, cutting what is below a kobo', async () => {
+  it('a payout: only a 400 or 422 is a refusal; anything else may have taken effect (TA-8)', async () => {
+    const to = { kind: 'bank', bankCode: '058', accountNumber: '0123456789' } as const;
+    const from = { kind: 'va', providerRef: 'a' } as const;
+    const send = (status: number) =>
+      provider(() => json({}, status)).p.transfer(from, to, ngn(100n), 'r', 'r');
+    await expect(send(400)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    await expect(send(422)).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    for (const status of [401, 403, 408, 429])
+      await expect(send(status)).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+  });
+
+  it('reads the pooled balance, rounding down what is below a kobo (P9-R4: a balance only)', async () => {
     const { p, seen } = provider(() => json({ currency: 'NGN', availableBalance: 2463.085 }));
     await expect(p.getBalance()).resolves.toEqual(ngn(246_308n));
     expect(seen[0]!.url).toBe('https://tp.test/payout/balance-enquiry?currency=NGN');

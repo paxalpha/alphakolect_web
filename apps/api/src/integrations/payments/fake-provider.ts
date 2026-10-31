@@ -23,6 +23,7 @@ const PAGE_SIZE = 50;
  */
 export class FakeProvider implements PaymentProvider {
   readonly name = 'fake';
+  readonly requestTimeoutMs = 0;
   readonly capabilities: PaymentProvider['capabilities'];
 
   private readonly accounts = new Map<string, Account>();
@@ -30,8 +31,9 @@ export class FakeProvider implements PaymentProvider {
   private readonly vaByIdempotencyKey = new Map<string, { ownerKey: string; ref: VirtualAccountRef }>();
   private readonly txByIdempotencyKey = new Map<string, { fingerprint: string; ref: ProviderTxRef }>();
   private seq = 0;
+  private readonly lookupDelays = new Map<string, number>();
   private readonly failures: {
-    op: 'create' | 'transfer' | 'get';
+    op: 'create' | 'transfer' | 'get' | 'find';
     code: ProviderError['code'];
     afterEffect: boolean;
     match: string | undefined;
@@ -58,7 +60,16 @@ export class FakeProvider implements PaymentProvider {
   }
 
   async findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null> {
-    return this.vaByIdempotencyKey.get(alias)?.ref ?? null;
+    const failure = this.takeFailure('find', alias);
+    if (failure) throw new ProviderError(failure.code, 'Injected failure');
+    // Read before the delay: a slow answer can be out of date by the time it arrives.
+    const found = this.vaByIdempotencyKey.get(alias)?.ref ?? null;
+    const delay = this.lookupDelays.get(alias);
+    if (delay !== undefined) {
+      this.lookupDelays.delete(alias);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+    return found;
   }
 
   private createAccount(owner: VaOwner, idempotencyKey: string): VirtualAccountRef {
@@ -192,11 +203,16 @@ export class FakeProvider implements PaymentProvider {
    * only after it has taken effect (a lost answer).
    */
   failNext(
-    op: 'create' | 'transfer' | 'get',
+    op: 'create' | 'transfer' | 'get' | 'find',
     code: ProviderError['code'],
     { afterEffect = false, match }: { afterEffect?: boolean; match?: string } = {},
   ): void {
     this.failures.push({ op, code, afterEffect, match });
+  }
+
+  /** The next lookup of this alias answers only after `ms`, with what was true when it was asked. */
+  delayNextLookup(alias: string, ms: number): void {
+    this.lookupDelays.set(alias, ms);
   }
 
   /** Move money in a VA behind the books' back: a difference for the reconciler to find. */
@@ -249,7 +265,7 @@ export class FakeProvider implements PaymentProvider {
     return full;
   }
 
-  private takeFailure(op: 'create' | 'transfer' | 'get', key: string) {
+  private takeFailure(op: 'create' | 'transfer' | 'get' | 'find', key: string) {
     const at = this.failures.findIndex((f) => f.op === op && (f.match === undefined || f.match === key));
     return at < 0 ? undefined : this.failures.splice(at, 1)[0];
   }

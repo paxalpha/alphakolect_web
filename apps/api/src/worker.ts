@@ -4,8 +4,9 @@ import { ConfigError, loadConfig, type Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
 import { createLogger } from './platform/logger.js';
 
-// The background worker (P9 §3.7; TA-11): a second entry point of the API, connecting as alphakolect_app. The work is
-// kept in the domain's own rows, claimed with a lease (P9-1), so several workers can run and a dead one loses nothing.
+// The background worker (P9 §3.7; TA-11): a second entry point of the API, connecting as its own role,
+// alphakolect_worker (P9-R1). The work is kept in the domain's own rows, claimed with a lease (P9-1, P9-R3), so several
+// workers can run and a dead one loses nothing.
 
 const PASS_MS = 30_000;
 const RECONCILE_MS = 15 * 60_000;
@@ -24,13 +25,12 @@ function readConfig(): Config {
 
 const config = readConfig();
 const logger = createLogger(config);
-const db = createDb(config.databaseUrl);
-const worker = new PaymentsWorker({
-  db,
-  provider: createPaymentProvider(config),
-  logger,
-  customerLiveWallets: config.payments.customerLiveWallets,
-});
+if (!config.workerDatabaseUrl) {
+  process.stderr.write('WORKER_DATABASE_URL is required.\nRefusing to start. See apps/api/.env.example.\n');
+  process.exit(1);
+}
+const db = createDb(config.workerDatabaseUrl);
+const worker = new PaymentsWorker({ db, provider: createPaymentProvider(config), logger });
 
 let stopping = false;
 const stop = (signal: NodeJS.Signals) => {

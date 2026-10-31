@@ -1,6 +1,6 @@
 # P9 implementation plan — payments
 
-**Status: revision 3 (2026-10-31) — the gate review's findings resolved (§11); awaiting the re-check.** Planned and built
+**Status: revision 4 (2026-10-31) — the independent reviewer approved the code scope at `5fa190b` (§12); not approved for live money, and the project lead's closure is still to be recorded.** Planned and built
 in one pass, as P6 to P8 were. Decisions that would go to the project lead take the recommended option (his standing
 instruction) and are recorded in §7. The owner answered `docs/business/P9_OWNER_PAYMENTS.md` (Q1–Q8) on 26 October 2026 and
 `docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md` on 31 October 2026, each with the suggested option.
@@ -173,6 +173,7 @@ task: closing the old virtual accounts (Q3) once TransactPay answers B3.
 
 | Rev | Date | Change |
 |---|---|---|
+| 4 | 2026-10-31 | The re-check: code scope approved at `5fa190b`, live money not (§12); condition 9 added |
 | 3 | 2026-10-31 | The gate review's findings resolved (§11); the permission's wording answered; P9-5 and P9-10 revised |
 | 2 | 2026-10-30 | The answers recorded; built as §9 maps; decisions P9-8 to P9-13, P9-1 and P9-3 revised; §10 the conditions before real money |
 | 1 | 2026-10-26 | First plan; the owner's questions and TransactPay's asked |
@@ -212,6 +213,7 @@ Nothing here touches production, and in P9 nothing leaves a wallet (Q2). Before 
 | 6 | Closing the old virtual accounts (Q3) | an operator task, once TransactPay answers B3 |
 | 7 | TransactPay confirms that an alias lookup sees an account as soon as it exists, or that creation is idempotent (B1) | the lease keeps two workers from racing (§11, R3), but a creation whose answer was lost is followed by a lookup: a lookup that lags could still lead to a second account |
 | 8 | Each environment re-runs the role bootstrap before these migrations, with `worker_password` | the migration grants to `alphakolect_worker` and stops if the role is missing; the worker needs `WORKER_DATABASE_URL` |
+| 9 | Each environment's bootstrap confirms that `alphakolect_worker` has no role memberships | `roles.sql` re-applies attributes and the password, and does not remove a membership that already exists. The tests prove zero only on a fresh role (the re-check's observation) |
 
 ## 11. The gate review (2026-10-31)
 
@@ -243,3 +245,17 @@ Gate at commit `5fa190b`, on a clean tree, 31 October 2026, every step exit 0: `
 Vitest reported its worker RPC timeout, and a payments race timed out at 30 seconds, which took the next race down with it on
 their shared connections. That suite takes 29 seconds alone. The machine has too little free memory, so the suite's limit was
 raised (`5fa190b`), with no change to code under test.
+
+## 12. The re-check (2026-10-31)
+
+The independent reviewer re-checked the pushed branch, with `5fa190b` as the gated commit and `ecab2ce` as the tip (one commit
+later, adding only the gate record).
+
+- **Approved for P9 code scope.** R1 to R5 are resolved in the code inspected, and the fixes of §11 were checked. R6 is
+  correctly carried to P10.
+- **Not approved for live-money activation, nor for applying these migrations to production.** The go-live decision is
+  separate. §10 stays as the release gates; the reviewer names the sandbox's answers (condition 1), duplicate accounts
+  (condition 7) and the environment's setup (conditions 8 and 9).
+- **What the review rests on.** The reviewer inspected the code and the recorded gate, and did not run the suites. GitHub has
+  no status checks for `5fa190b`, so no CI run has been certified.
+- No pull request existed at the re-check.

@@ -136,7 +136,7 @@ export type ResolvedTransaction = z.infer<typeof ResolvedTransaction>;
 export const ReconciliationFinding = z
   .object({
     findingId: Id,
-    scope: z.enum(['wallet', 'pooled']),
+    scope: z.enum(['wallet', 'pooled', 'event']),
     walletId: Id.nullable(),
     merchantId: Id.nullable(),
     provider: Money,

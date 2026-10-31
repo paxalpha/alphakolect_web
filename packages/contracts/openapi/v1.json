@@ -13841,7 +13841,8 @@
             "type": "string",
             "enum": [
               "wallet",
-              "pooled"
+              "pooled",
+              "event"
             ]
           },
           "walletId": {

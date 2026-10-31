@@ -1,6 +1,6 @@
 # P9 implementation plan — payments
 
-**Status: revision 4 (2026-10-31) — the independent reviewer approved the code scope at `5fa190b` (§12); not approved for live money, and the project lead's closure is still to be recorded.** Planned and built
+**Status: revision 5 (2026-10-31) — open. The reviewer narrowed the approval of §12 to the findings' fixes, and asked for a money-flow coverage check (§13, `P9_MONEY_FLOW_MATRIX.md`). Not approved for live money.** Planned and built
 in one pass, as P6 to P8 were. Decisions that would go to the project lead take the recommended option (his standing
 instruction) and are recorded in §7. The owner answered `docs/business/P9_OWNER_PAYMENTS.md` (Q1–Q8) on 26 October 2026 and
 `docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md` on 31 October 2026, each with the suggested option.
@@ -173,6 +173,7 @@ task: closing the old virtual accounts (Q3) once TransactPay answers B3.
 
 | Rev | Date | Change |
 |---|---|---|
+| 5 | 2026-10-31 | The money-flow matrix and three journeys (§13); P9 stays open |
 | 4 | 2026-10-31 | The re-check: code scope approved at `5fa190b`, live money not (§12); condition 9 added |
 | 3 | 2026-10-31 | The gate review's findings resolved (§11); the permission's wording answered; P9-5 and P9-10 revised |
 | 2 | 2026-10-30 | The answers recorded; built as §9 maps; decisions P9-8 to P9-13, P9-1 and P9-3 revised; §10 the conditions before real money |
@@ -259,3 +260,11 @@ later, adding only the gate record).
 - **What the review rests on.** The reviewer inspected the code and the recorded gate, and did not run the suites. GitHub has
   no status checks for `5fa190b`, so no CI run has been certified.
 - No pull request existed at the re-check.
+
+## 13. The money-flow coverage check (2026-10-31)
+
+The reviewer narrowed §12: it approved the fixes to the findings, and did not establish that every money-flow journey had been
+exercised. P9 stays open until the scenario coverage is reviewed. `P9_MONEY_FLOW_MATRIX.md` maps each scenario to its test,
+gives the gaps the audit found, and lists four differences from the review's expected results for its ruling. The new tests,
+including three end-to-end journeys, are in `apps/api/test/payments/worker.test.ts`. No production code changed. TransactPay's
+sandbox has not been run: its assumptions stay release blockers (§10).

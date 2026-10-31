@@ -185,7 +185,7 @@ condition 1).
 | Reconciliation scenarios | Pass |
 | Worker failure and recovery | Pass, including a real process killed mid-call (G1 to G3) |
 | Sandbox tests documented, assumptions kept as blockers | Documented here (§5). **Not run** |
-| Existing gates green | Recorded once the gate has run on this revision |
+| Existing gates green | At `ec74d19`, clean tree, every step exit 0: contracts 105, db 909, API 2098 passed and 2 skipped (sandbox), concurrency 38. Run locally. CI runs only on pull requests and `main`, so no CI run exists until a pull request is opened |
 
 ## 7. Rulings required from the independent reviewer
 

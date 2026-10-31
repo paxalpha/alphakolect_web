@@ -1,4 +1,6 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import pino from 'pino';
 import request from 'supertest';
 import { afterAll, describe, expect, inject, it, vi } from 'vitest';
@@ -889,4 +891,88 @@ describe('the journeys, end to end (P9 money-flow matrix)', () => {
     expect(await postingsOf((await internalTxOf(inbound.providerTxId))!)).toHaveLength(2);
     expect(await balance(b.merchantId, '1100')).toBe(25_000);
   });
+});
+
+describe('a worker process killed with its provider call in flight (P9 money-flow matrix, G1 to G3)', () => {
+  const CHILD = fileURLToPath(new URL('../support/payments-worker-child.ts', import.meta.url));
+  /** Starts a real worker process, and kills it (SIGKILL: no cleanup runs) once its provider call is in flight. */
+  const killedInFlight = (task: 'wallet' | 'event' | 'order') =>
+    new Promise<void>((resolve, reject) => {
+      const child = spawn(process.execPath, ['--import', 'tsx', CHILD, task], {
+        cwd: fileURLToPath(new URL('../..', import.meta.url)),
+        env: { ...process.env, CHILD_WORKER_DATABASE_URL: inject('workerDatabaseUrl') },
+      });
+      let killed = false;
+      child.stdout.on('data', (chunk: Buffer) => {
+        if (!killed && chunk.toString().includes('in-flight')) {
+          killed = true;
+          child.kill('SIGKILL');
+        }
+      });
+      child.on('exit', () =>
+        killed ? resolve() : reject(new Error('The worker process ended before its provider call')),
+      );
+    });
+  /** Past the child's two-second lease. */
+  const leasePasses = () => new Promise((resolve) => setTimeout(resolve, 2_100));
+
+  it('G1: a wallet stays leased, and is created once by the next worker', { timeout: 120_000 }, async () => {
+    const b = await business();
+    await queued(b.merchantId);
+    const { alias } = await walletOf(b.merchantId);
+    await killedInFlight('wallet');
+    const held = await walletOf(b.merchantId);
+    expect(held).toMatchObject({ status: 'provisioning', attempts: 1 });
+    expect(held.lease_token).not.toBeNull();
+    await leasePasses();
+    const create = vi.spyOn(fake, 'createVirtualAccount');
+    await worker.provisionWallets();
+    expect(create.mock.calls.filter(([, key]) => key === alias)).toHaveLength(1);
+    create.mockRestore();
+    expect((await walletOf(b.merchantId)).status).toBe('active');
+  });
+
+  it('G2: a deposit’s event is confirmed by the next worker: one credit', { timeout: 120_000 }, async () => {
+    const { b, va } = await activeWallet();
+    const inbound = fake.simulateInboundTransfer(va, ngn(40_000n), 'deposit');
+    await notify(inbound);
+    const { id } = await eventOf(inbound.providerTxId);
+    await owner.query(`UPDATE payments.provider_events SET next_check_at = '2000-01-01' WHERE id = $1`, [id]);
+    await killedInFlight('event');
+    expect(await balance(b.merchantId, '1100')).toBe(0);
+    await leasePasses();
+    await worker.confirmEvents();
+    expect(await eventOf(inbound.providerTxId)).toMatchObject({ status: 'done', outcome: 'credited' });
+    expect(await balance(b.merchantId, '1100')).toBe(40_000);
+  });
+
+  it(
+    'G3: an order killed mid-send is unknown, and no later worker sends it',
+    { timeout: 120_000 },
+    async () => {
+      const w = await activeWallet();
+      await notify(fake.simulateInboundTransfer(w.va, ngn(100_000n), 'deposit'));
+      await worker.confirmEvents();
+      const ledger = (await one(`SELECT id FROM ledger.ledgers WHERE merchant_id = $1`, [w.b.merchantId])).id;
+      const id = (
+        await one(
+          `SELECT payments.create_order($1, NULL, '{"accountNumber":"0123456789","bankCode":"058"}', 30000, $2, 'test', $3, 'subscription.paid', '{}') AS id`,
+          [w.wallet.id, `AKO-${randomBytes(8).toString('hex')}`, ledger],
+        )
+      ).id as string;
+      await owner.query(`UPDATE payments.payment_orders SET next_check_at = '2000-01-01' WHERE id = $1`, [
+        id,
+      ]);
+      await killedInFlight('order');
+      const stateOf = async () =>
+        (await one(`SELECT state FROM payments.payment_orders WHERE id = $1`, [id])).state as string;
+      expect(await stateOf()).toBe('unknown');
+      await leasePasses();
+      const sent = fake.transferCount;
+      await worker.settleOrders();
+      expect(await stateOf()).toBe('unknown');
+      expect(fake.transferCount).toBe(sent);
+      expect(await balance(w.b.merchantId, '1100')).toBe(100_000);
+    },
+  );
 });

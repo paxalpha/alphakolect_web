@@ -191,6 +191,11 @@ task: closing the old virtual accounts (Q3) once TransactPay answers B3.
 | Tests (API) | `payments/worker.test.ts` (the worker against the real database through the webhook), `payments/transactpay-provider.test.ts`, `payments/payments-api.test.ts`; the matrices, writer and coverage guards, transaction classes |
 | A test helper | the matrices' snapshots leave out what a worker in a parallel test file keeps up to date |
 
+Gate at commit `3017ad4`, on a clean tree, 31 October 2026, every step exit 0: `format:check`, `lint`, `typecheck`,
+`build`, `openapi:check`; `test` (contracts 105, db 902, API 2073 passed, 2 skipped: the TransactPay sandbox suite, §10);
+`test:concurrency` 37. Run with `npm_config_workspace_concurrency=1`: packages one at a time, because this machine has too
+little free memory to run them together, and an earlier parallel run timed out for that reason alone.
+
 ## 10. Before real money flows
 
 The exit criteria are met against the FakeProvider. P9 has **not** been run against TransactPay: no sandbox keys were

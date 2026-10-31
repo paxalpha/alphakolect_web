@@ -8,6 +8,7 @@ import { requiredQuery } from '../support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from '../support/ledger.js';
 import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from '../support/customers.js';
 import { savingsBodies, savingsResources, SAVINGS_SNAPSHOT_SQL } from '../support/savings.js';
+import { paymentBodies, paymentResources, PAYMENTS_SNAPSHOT_SQL } from '../support/payments.js';
 
 // The tenant-isolation matrix (P4 exit criterion; ADR-15 T3, T9, T14, T15), driven by the contract registry: every
 // merchant- and agent-audience endpoint, as it is registered — not a hand-picked list. A new tenant endpoint is in
@@ -46,6 +47,7 @@ async function setUp(name: string) {
     ledger: await ledgerResources(owner, b.merchantId),
     customerId: await customerOf(owner, b.merchantId, b.branchId),
     savings: await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId, agent),
+    payments: await paymentResources(owner, b.merchantId),
   };
 }
 
@@ -60,6 +62,9 @@ const RESOLVERS: Record<string, (t: Tenant) => string> = {
   customerId: (t) => t.customerId,
   packageId: (t) => t.savings.packageId,
   collectionId: (t) => t.savings.collectionId,
+  receiptId: (t) => t.payments.receiptId,
+  transactionId: (t) => t.payments.transactionId,
+  findingId: (t) => t.payments.findingId,
 };
 
 /** A valid request body for each tenant endpoint that takes one (`t` is the CALLER's tenant). */
@@ -68,6 +73,7 @@ const BODIES: Partial<Record<keyof typeof endpoints, (t: Tenant) => object>> = {
   postJournalEntry: (t) => ledgerBodies.postJournalEntry(t.ledger),
   ...customerBodies,
   ...savingsBodies,
+  ...paymentBodies,
   updateMerchantProfile: () => ({ name: `Matrix ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -127,7 +133,8 @@ const snapshot = async (merchantId: string) =>
          'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
          ${LEDGER_SNAPSHOT_SQL},
          ${CUSTOMERS_SNAPSHOT_SQL},
-         ${SAVINGS_SNAPSHOT_SQL}
+         ${SAVINGS_SNAPSHOT_SQL},
+         ${PAYMENTS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )

@@ -23,16 +23,45 @@ const PAGE_SIZE = 50;
  */
 export class FakeProvider implements PaymentProvider {
   readonly name = 'fake';
+  readonly capabilities: PaymentProvider['capabilities'];
 
   private readonly accounts = new Map<string, Account>();
   private readonly transactions: ProviderTransaction[] = [];
   private readonly vaByIdempotencyKey = new Map<string, { ownerKey: string; ref: VirtualAccountRef }>();
   private readonly txByIdempotencyKey = new Map<string, { fingerprint: string; ref: ProviderTxRef }>();
   private seq = 0;
+  private readonly failures: {
+    op: 'create' | 'transfer' | 'get';
+    code: ProviderError['code'];
+    afterEffect: boolean;
+    match: string | undefined;
+  }[] = [];
 
-  constructor(private readonly clock: () => Date = () => new Date()) {}
+  constructor(
+    private readonly clock: () => Date = () => new Date(),
+    capabilities: Partial<PaymentProvider['capabilities']> = {},
+  ) {
+    this.capabilities = {
+      listTransactions: true,
+      perAccountBalance: true,
+      vaTransfer: true,
+      ...capabilities,
+    };
+  }
 
   async createVirtualAccount(owner: VaOwner, idempotencyKey: string): Promise<VirtualAccountRef> {
+    const failure = this.takeFailure('create', idempotencyKey);
+    if (failure && !failure.afterEffect) throw new ProviderError(failure.code, 'Injected failure');
+    const ref = this.createAccount(owner, idempotencyKey);
+    if (failure) throw new ProviderError(failure.code, 'Injected failure, after the account was created');
+    return ref;
+  }
+
+  async findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null> {
+    return this.vaByIdempotencyKey.get(alias)?.ref ?? null;
+  }
+
+  private createAccount(owner: VaOwner, idempotencyKey: string): VirtualAccountRef {
     const ownerKey = `${owner.kind}:${owner.ownerId}`;
     const existing = this.vaByIdempotencyKey.get(idempotencyKey);
     if (existing) {
@@ -65,6 +94,25 @@ export class FakeProvider implements PaymentProvider {
     reference: string,
     idempotencyKey: string,
   ): Promise<ProviderTxRef> {
+    const failure = this.takeFailure('transfer', reference);
+    if (failure && !failure.afterEffect) throw new ProviderError(failure.code, 'Injected failure');
+    const ref = this.doTransfer(from, to, amount, reference, idempotencyKey);
+    if (failure) throw new ProviderError(failure.code, 'Injected failure, after the transfer was made');
+    return ref;
+  }
+
+  async findTransferByReference(reference: string): Promise<ProviderTxRef | null> {
+    const tx = this.transactions.find((t) => t.reference === reference && t.from.kind === 'va');
+    return tx ? { providerTxId: tx.providerTxId, status: tx.status } : null;
+  }
+
+  private doTransfer(
+    from: VaRef,
+    to: VaRef | BankAccount,
+    amount: Money,
+    reference: string,
+    idempotencyKey: string,
+  ): ProviderTxRef {
     const fingerprint = JSON.stringify([from, to, amount.amountMinor.toString(), amount.currency, reference]);
     const existing = this.txByIdempotencyKey.get(idempotencyKey);
     if (existing) {
@@ -91,6 +139,8 @@ export class FakeProvider implements PaymentProvider {
   }
 
   async getTransaction(providerTxId: string): Promise<ProviderTransaction> {
+    const failure = this.takeFailure('get', providerTxId);
+    if (failure) throw new ProviderError(failure.code, 'Injected failure');
     const tx = this.transactions.find((t) => t.providerTxId === providerTxId);
     if (!tx) throw new ProviderError('NOT_FOUND', 'Transaction not found');
     return tx;
@@ -137,6 +187,40 @@ export class FakeProvider implements PaymentProvider {
 
   // ── Test/dev helpers (not part of PaymentProvider) ────────────────────────────────
 
+  /**
+   * The next call of `op` (for this alias, reference or transaction id, if given) fails with `code`; with `afterEffect`,
+   * only after it has taken effect (a lost answer).
+   */
+  failNext(
+    op: 'create' | 'transfer' | 'get',
+    code: ProviderError['code'],
+    { afterEffect = false, match }: { afterEffect?: boolean; match?: string } = {},
+  ): void {
+    this.failures.push({ op, code, afterEffect, match });
+  }
+
+  /** Move money in a VA behind the books' back: a difference for the reconciler to find. */
+  adjustBalance(account: VaRef, deltaMinor: bigint): void {
+    this.account(account.providerRef).balance += deltaMinor;
+  }
+
+  /** The provider's later word on a transaction: a reversal or a failure. */
+  setTransactionStatus(providerTxId: string, status: ProviderTransaction['status']): void {
+    const at = this.transactions.findIndex((t) => t.providerTxId === providerTxId);
+    if (at < 0) throw new ProviderError('NOT_FOUND', 'Transaction not found');
+    this.transactions[at] = { ...this.transactions[at]!, status };
+  }
+
+  /** How many transfers were really made: what a test of "never sent twice" counts. */
+  get transferCount(): number {
+    return this.transactions.filter((t) => t.from.kind === 'va').length;
+  }
+
+  /** How many accounts were really created. */
+  get accountCount(): number {
+    return this.accounts.size;
+  }
+
   /** Simulate money arriving into a VA from outside the provider; returns the webhook payload. */
   simulateInboundTransfer(
     to: VaRef,
@@ -152,14 +236,22 @@ export class FakeProvider implements PaymentProvider {
   // ── internals ─────────────────────────────────────────────────────────────────────
 
   private record(tx: Pick<ProviderTransaction, 'reference' | 'amount' | 'from' | 'to'>): ProviderTransaction {
+    const toAccountNumber =
+      tx.to.kind === 'va' ? this.accounts.get(tx.to.providerRef)?.state.accountNumber : undefined;
     const full: ProviderTransaction = {
       ...tx,
+      ...(toAccountNumber ? { toAccountNumber } : {}),
       providerTxId: `fake-tx-${++this.seq}`,
       status: 'successful',
       createdAt: this.clock(),
     };
     this.transactions.push(full);
     return full;
+  }
+
+  private takeFailure(op: 'create' | 'transfer' | 'get', key: string) {
+    const at = this.failures.findIndex((f) => f.op === op && (f.match === undefined || f.match === key));
+    return at < 0 ? undefined : this.failures.splice(at, 1)[0];
   }
 
   private validateAmount(amount: Money): void {

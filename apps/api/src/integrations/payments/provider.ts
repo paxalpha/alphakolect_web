@@ -23,7 +23,7 @@ export type BankAccount = Readonly<{ kind: 'bank'; bankCode: string; accountNumb
 /** Money arriving from outside the provider (e.g. a customer's bank transfer into a VA). */
 export type ExternalSource = Readonly<{ kind: 'external'; description: string }>;
 
-export type ProviderTxStatus = 'pending' | 'successful' | 'failed';
+export type ProviderTxStatus = 'pending' | 'successful' | 'failed' | 'reversed';
 
 export type ProviderTxRef = Readonly<{ providerTxId: string; status: ProviderTxStatus }>;
 
@@ -34,6 +34,8 @@ export type ProviderTransaction = Readonly<{
   amount: Money;
   from: VaRef | ExternalSource;
   to: VaRef | BankAccount;
+  /** The account the money arrived in, as the provider names it: what a credit is matched by (P9). */
+  toAccountNumber?: string;
   createdAt: Date;
 }>;
 
@@ -58,7 +60,11 @@ export class ProviderError extends Error {
       | 'ACCOUNT_CLOSED'
       | 'IDEMPOTENCY_CONFLICT'
       | 'INVALID_REQUEST'
-      | 'INVALID_EVENT',
+      | 'INVALID_EVENT'
+      /** A timeout, no answer or a server error: the request may or may not have taken effect (TA-8). */
+      | 'UNKNOWN_OUTCOME'
+      /** The provider does not offer this (see capabilities). */
+      | 'UNSUPPORTED',
     message: string,
   ) {
     super(message);
@@ -68,7 +74,16 @@ export class ProviderError extends Error {
 
 export interface PaymentProvider {
   readonly name: string;
+  /** What this provider offers beyond the core; the worker adapts (P9-3). */
+  readonly capabilities: Readonly<{
+    listTransactions: boolean;
+    perAccountBalance: boolean;
+    vaTransfer: boolean;
+  }>;
+  /** The idempotency key is the wallet's alias, whatever the provider guarantees: see findVirtualAccountByAlias. */
   createVirtualAccount(owner: VaOwner, idempotencyKey: string): Promise<VirtualAccountRef>;
+  /** The account created under an alias, if any: what a retry asks first, so a timeout never creates a second one. */
+  findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null>;
   getVirtualAccount(providerRef: string): Promise<VirtualAccountState>;
   transfer(
     from: VaRef,
@@ -77,6 +92,8 @@ export interface PaymentProvider {
     reference: string,
     idempotencyKey: string,
   ): Promise<ProviderTxRef>;
+  /** A transfer by our own reference, if the provider has it: how an order in doubt is settled (TA-8). */
+  findTransferByReference(reference: string): Promise<ProviderTxRef | null>;
   /** Verification source of truth for any event. */
   getTransaction(providerTxId: string): Promise<ProviderTransaction>;
   /** For polling/reconciliation; transactions touching `account`, oldest first. */

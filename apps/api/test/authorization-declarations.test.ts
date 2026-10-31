@@ -126,14 +126,25 @@ const FROZEN: Record<string, unknown> = {
   listAgentCollections: SELF,
   getCustomerSelfSavings: SELF,
   listCustomerSelfCollections: SELF,
+  // P9: payments — the business's Live wallet; the platform team's lists and resolutions; a webhook takes no session
+  getMerchantWallet: perm('merchant.wallet.read'),
+  listWalletReceipts: perm('merchant.wallet.read'),
+  classifyWalletReceipt: perm('merchant.wallet.classify'),
+  listPlatformWallets: perm('platform.payments.read'),
+  listPlatformUnmatched: perm('platform.payments.read'),
+  listPlatformFindings: perm('platform.payments.read'),
+  resolveUnmatchedTransaction: perm('platform.payments.resolve'),
+  resolveReconciliationFinding: perm('platform.payments.resolve'),
+  createPlatformWallet: perm('platform.wallet.create'),
+  receiveTransactPayEvent: { class: 'public' },
 };
 
 describe('the registry’s declarations', () => {
-  it('declare exactly the frozen route map: 99 operations, one class each', () => {
+  it('declare exactly the frozen route map: 109 operations, one class each', () => {
     const declared = Object.fromEntries(
       (Object.values(endpoints) as EndpointContract[]).map((e) => [e.id, e.authorization]),
     );
-    expect(Object.keys(declared)).toHaveLength(99);
+    expect(Object.keys(declared)).toHaveLength(109);
     expect(declared).toEqual(FROZEN);
   });
 

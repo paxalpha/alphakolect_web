@@ -217,6 +217,22 @@ export const AUDIT_CATALOG = [
     goalAmountMinor: { type: 'string', max: 20, nullable: true },
     goalDate: { type: 'string', max: 10, nullable: true },
   }),
+  // payments (P9): identifiers, kinds and amounts only (TA-14); the worker's events have no actor
+  atomicA('payments.wallet_provisioned', { ownerKind: status16 }),
+  atomicA('payments.money_received', { amountMinor: { type: 'string', max: 20 }, receiptId: uuid }),
+  atomicA('payments.receipt_classified', { accountId: uuid, amountMinor: { type: 'string', max: 20 } }),
+  atomicA('payments.finding_recorded', {
+    scope: status16,
+    providerMinor: { type: 'string', max: 20 },
+    booksMinor: { type: 'string', max: 20 },
+  }),
+  atomicA('payments.unmatched_resolved', { resolution: status16, merchantId: nullableUuid }),
+  atomicA('payments.finding_resolved', {}),
+  atomicA('payments.platform_wallet_requested', {}),
+  // sensitive reads (P9): the platform team's view of the payments, one event per page
+  sensitiveRead('platform.wallets_read', { limit: { type: 'integer' }, continued: flag }),
+  sensitiveRead('platform.unmatched_read', { limit: { type: 'integer' }, continued: flag }),
+  sensitiveRead('platform.findings_read', { limit: { type: 'integer' }, continued: flag }),
   // sensitive reads (P5.7): the platform team's view of the businesses, one event per page
   sensitiveRead('platform.merchant_list_read', { limit: { type: 'integer' }, continued: flag }),
   sensitiveRead('platform.merchant_members_read', { limit: { type: 'integer' }, continued: flag }),
@@ -305,6 +321,13 @@ export const AUDIT_CATALOG = [
     ] as const
   ).map((identifier) => bestEffort(identifier, 'denied', denial)),
   bestEffort('customer.app_access_accepted', 'failure', { reason }),
+  bestEffort('payments.receipt_classified', 'denied', denial),
+  bestEffort('payments.unmatched_resolved', 'denied', { reason }),
+  bestEffort('payments.finding_resolved', 'denied', { reason }),
+  bestEffort('payments.platform_wallet_requested', 'denied', { reason }),
+  bestEffort('platform.wallets_read', 'denied', { reason }),
+  bestEffort('platform.unmatched_read', 'denied', { reason }),
+  bestEffort('platform.findings_read', 'denied', { reason }),
   ...(
     [
       'savings.package_created',

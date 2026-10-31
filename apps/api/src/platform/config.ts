@@ -138,6 +138,15 @@ const EnvSchema = z.object({
       message: 'must be an origin such as https://app.alphakolect.com, without a path',
     })
     .optional(),
+  // Payments (P9). The provider the worker and the webhook use; its keys are required when it is TransactPay. The fake
+  // is refused in production.
+  PAYMENT_PROVIDER: z.enum(['fake', 'transactpay']).default('fake'),
+  TRANSACTPAY_BASE_URL: z.url({ protocol: /^https$/, error: 'must be an https:// URL' }).optional(),
+  TRANSACTPAY_PUBLIC_KEY: z.string().min(1).optional(),
+  TRANSACTPAY_SECRET_KEY: z.string().min(1).optional(),
+  TRANSACTPAY_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
+  // Customer Live wallets (owner Q7): off, and refused in production until custody is settled in writing (OPEN-12).
+  CUSTOMER_LIVE_WALLETS: z.enum(['true', 'false']).default('false'),
 });
 
 /** Settings that have a convenient local default but must be set explicitly in production. */
@@ -148,7 +157,34 @@ const LOCAL_DEFAULTS = {
 } as const;
 
 const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
+  if (e.PAYMENT_PROVIDER === 'transactpay') {
+    for (const name of [
+      'TRANSACTPAY_BASE_URL',
+      'TRANSACTPAY_PUBLIC_KEY',
+      'TRANSACTPAY_SECRET_KEY',
+      'TRANSACTPAY_ENCRYPTION_KEY_BASE64',
+    ] as const) {
+      if (e[name] === undefined)
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'is required when PAYMENT_PROVIDER is transactpay',
+        });
+    }
+  }
   if (e.NODE_ENV !== 'production') return;
+  if (e.PAYMENT_PROVIDER === 'fake')
+    ctx.addIssue({
+      code: 'custom',
+      path: ['PAYMENT_PROVIDER'],
+      message: 'must be transactpay in production',
+    });
+  if (e.CUSTOMER_LIVE_WALLETS === 'true')
+    ctx.addIssue({
+      code: 'custom',
+      path: ['CUSTOMER_LIVE_WALLETS'],
+      message: 'must be false in production until custody is settled in writing (OPEN-12)',
+    });
   for (const name of Object.keys(LOCAL_DEFAULTS) as Array<keyof typeof LOCAL_DEFAULTS>) {
     if (e[name] === undefined)
       ctx.addIssue({ code: 'custom', path: [name], message: 'is required in production' });
@@ -166,6 +202,11 @@ export type Config = Readonly<{
   email: Readonly<{ smtpUrl: string; from: string }>;
   /** Origin of the web app, for links in emails. */
   webAppUrl: string;
+  payments: Readonly<{
+    provider: 'fake' | 'transactpay';
+    customerLiveWallets: boolean;
+    transactPay?: Readonly<{ baseUrl: string; publicKey: string; secretKey: string; encryptionKey: string }>;
+  }>;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -212,6 +253,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       from: e.MAIL_FROM ?? LOCAL_DEFAULTS.MAIL_FROM,
     }),
     webAppUrl: new URL(e.WEB_APP_URL ?? LOCAL_DEFAULTS.WEB_APP_URL).origin,
+    payments: Object.freeze({
+      provider: e.PAYMENT_PROVIDER,
+      customerLiveWallets: e.CUSTOMER_LIVE_WALLETS === 'true',
+      ...(e.PAYMENT_PROVIDER === 'transactpay'
+        ? {
+            transactPay: Object.freeze({
+              baseUrl: e.TRANSACTPAY_BASE_URL!,
+              publicKey: e.TRANSACTPAY_PUBLIC_KEY!,
+              secretKey: e.TRANSACTPAY_SECRET_KEY!,
+              encryptionKey: e.TRANSACTPAY_ENCRYPTION_KEY_BASE64!,
+            }),
+          }
+        : {}),
+    }),
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

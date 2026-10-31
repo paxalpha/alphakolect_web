@@ -1,3 +1,4 @@
+import { createPaymentProvider } from './integrations/payments/index.js';
 import { AccessTokens } from './modules/identity/access-tokens.js';
 import { IdentityRepository } from './modules/identity/repository.js';
 import { ConfigError, loadConfig, type Config } from './platform/config.js';
@@ -28,6 +29,7 @@ const app = createApp({
   db,
   email,
   webAppUrl: config.webAppUrl,
+  paymentProvider: createPaymentProvider(config),
   mfaEncryption: {
     current: config.auth.mfaEncryptionKey,
     previous: config.auth.previousMfaEncryptionKey,

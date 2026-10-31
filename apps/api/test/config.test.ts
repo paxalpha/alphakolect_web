@@ -95,8 +95,39 @@ describe('loadConfig', () => {
     expect(config.webAppUrl).toBe('http://localhost:3000');
   });
 
+  it('P9: the provider’s keys are required with TransactPay; production refuses the fake and customer wallets (OPEN-12)', () => {
+    expect(problemsOf({ ...valid, PAYMENT_PROVIDER: 'transactpay' }).problems).toEqual([
+      'TRANSACTPAY_BASE_URL is required when PAYMENT_PROVIDER is transactpay',
+      'TRANSACTPAY_PUBLIC_KEY is required when PAYMENT_PROVIDER is transactpay',
+      'TRANSACTPAY_SECRET_KEY is required when PAYMENT_PROVIDER is transactpay',
+      'TRANSACTPAY_ENCRYPTION_KEY_BASE64 is required when PAYMENT_PROVIDER is transactpay',
+    ]);
+    const live = {
+      ...valid,
+      NODE_ENV: 'production',
+      SMTP_URL: 'smtp://mail.example.test:25',
+      MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
+      WEB_APP_URL: 'https://app.example.test',
+    };
+    expect(problemsOf(live).problems).toEqual(['PAYMENT_PROVIDER must be transactpay in production']);
+    expect(
+      problemsOf({
+        ...live,
+        PAYMENT_PROVIDER: 'transactpay',
+        TRANSACTPAY_BASE_URL: 'https://tp.example.test',
+        TRANSACTPAY_PUBLIC_KEY: 'p',
+        TRANSACTPAY_SECRET_KEY: 's',
+        TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
+        CUSTOMER_LIVE_WALLETS: 'true',
+      }).problems,
+    ).toEqual([
+      'CUSTOMER_LIVE_WALLETS must be false in production until custody is settled in writing (OPEN-12)',
+    ]);
+  });
+
   it('requires the email settings and the web app URL in production', () => {
     expect(problemsOf({ ...valid, NODE_ENV: 'production' }).problems).toEqual([
+      'PAYMENT_PROVIDER must be transactpay in production',
       'SMTP_URL is required in production',
       'MAIL_FROM is required in production',
       'WEB_APP_URL is required in production',
@@ -107,6 +138,11 @@ describe('loadConfig', () => {
       SMTP_URL: 'smtps://mailer:pw@smtp.example.com:465', // gitleaks:allow
       MAIL_FROM: 'AlphaKolect <no-reply@alphakolect.com>',
       WEB_APP_URL: 'https://app.alphakolect.com/',
+      PAYMENT_PROVIDER: 'transactpay',
+      TRANSACTPAY_BASE_URL: 'https://tp.example.test',
+      TRANSACTPAY_PUBLIC_KEY: 'p',
+      TRANSACTPAY_SECRET_KEY: 's',
+      TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
     });
     expect(config.webAppUrl).toBe('https://app.alphakolect.com');
   });

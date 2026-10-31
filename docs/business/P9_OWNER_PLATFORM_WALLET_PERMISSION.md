@@ -6,7 +6,7 @@
 platform console. Like every action in the console, it needs a permission with a description you approve. This one is
 for you alone: it cannot be given to AlphaKolect staff.
 
-**Answered by:** ______ **Date:** ______
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 31st of October, 2026
 
 ---
 
@@ -20,7 +20,7 @@ for you alone: it cannot be given to AlphaKolect staff.
 - ☐ I approve it with these changes: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: I approve the wording as written.
 
 ---
 

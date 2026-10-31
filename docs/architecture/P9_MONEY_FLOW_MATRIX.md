@@ -40,9 +40,11 @@ The existing suites already covered most scenarios at database level. These were
 - pending and failed deposits (B5, B6) and money for no wallet of ours (B8) through the worker, where only the database level
   had them
 
-No production code changed for this audit, and no scenario found a defect. **Limits:** a "dead" worker is simulated by a claim
-that is never finished, not by killing a process. A timeout through the worker is an injected `UNKNOWN_OUTCOME`; the adapter's
-mapping of a real timeout to it is tested separately in T.
+No production code changed for this audit, and no scenario found a defect. **Limits:** a timeout through the worker is an injected
+`UNKNOWN_OUTCOME`; the adapter's mapping of a real timeout to it is tested separately in T. Worker death is tested two ways: a
+claim that is never finished, and a real process killed with SIGKILL with its provider call in flight (G1 to G3). A worker
+killed just after the provider acted is not staged with a real process, because the FakeProvider's state lives in one process;
+the lost answer is covered by A6 and D2.
 
 ## 3. The scenarios
 
@@ -138,9 +140,9 @@ P9 has no path that creates an order from the app (Q2). These test the machinery
 
 | ID | Scenario | Expected | Test |
 |---|---|---|---|
-| G1 | A worker dies holding a wallet | Claimable once the lease passes; the alias lookup avoids a second account | D "a claim leases the wallet"; W "a lost answer" |
-| G2 | A worker dies holding an event | Claimable once the lease passes; confirmation is idempotent | D "an event: a stale confirmation"; W "a replayed notification" |
-| G3 | A worker dies holding an order | Never sent again (D7) | W "a worker that died" |
+| G1 | A worker process is killed holding a wallet | Stays leased, then the next worker creates it once | W "G1"; D "a claim leases the wallet"; W "a lost answer" |
+| G2 | A worker process is killed holding an event | The next worker confirms it: one credit | W "G2"; D "an event: a stale confirmation" |
+| G3 | A worker process is killed sending an order | `unknown`; no later worker sends it (D7) | W "G3"; W "a worker that died" |
 | G4 | A lease shorter than the provider's timeouts allow | Refused at start | W "P9-R3: a lease" |
 
 ## 4. The three journeys
@@ -181,6 +183,19 @@ condition 1).
 | Ledger invariants | Pass |
 | Payment-order transitions | Pass |
 | Reconciliation scenarios | Pass |
-| Worker failure and recovery | Pass, simulated (§2) |
+| Worker failure and recovery | Pass, including a real process killed mid-call (G1 to G3) |
 | Sandbox tests documented, assumptions kept as blockers | Documented here (§5). **Not run** |
-| Existing gates green | At `5454ebb4`, clean tree, every step exit 0: contracts 105, db 909, API 2095 passed and 2 skipped (sandbox), concurrency 38. Run locally; no CI run is on record |
+| Existing gates green | Recorded once the gate has run on this revision |
+
+## 7. Rulings required from the independent reviewer
+
+P9 does not close until each is answered. Tests passing does not decide any of these.
+
+| # | Accept? | What accepting means | Ruling |
+|---|---|---|---|
+| 1 | `unmatched` for money at no wallet of ours | It reaches the platform team's list (`GET /v1/platform/payments/unmatched`), posts nothing, and is separate from `held`, which only a customer's wallet produces | ☐ Accept ☐ Change: ____ |
+| 2 | `review` for a reversal, in place of a reconciliation finding | The credit stays, nothing corrects itself, and a person resolves it from the same list. No finding opens unless the balance also differs | ☐ Accept ☐ Change: ____ |
+| 3 | The `submitted` order state | The state machine is created, unknown, submitted, then succeeded or failed; only `created` may ever be sent | ☐ Accept ☐ Change: ____ |
+| 4 | The worker as a system-wide trust boundary | Its functions span every business, and `reconcile_wallets` returns every wallet's balance. If its credentials leak, the holder can fabricate a confirmed credit to any wallet and read those balances, but not read tables, use sessions or reach the API's functions | ☐ Accept ☐ Change: ____ |
+
+Reviewer: ______ Date: ______ Commit reviewed: ______

@@ -46,8 +46,8 @@ export class PaymentsWorker {
 
   constructor(private readonly deps: PaymentsWorkerDeps) {
     this.leaseMs = (deps.leaseSeconds ?? LEASE_SECONDS) * 1000;
-    // A lookup and the call that follows it both end inside the lease, with a tenth of it to spare.
-    if (2 * deps.provider.requestTimeoutMs >= this.leaseMs * 0.9)
+    // A lookup, the creation and the lookup after it all end inside the lease, with a tenth of it to spare.
+    if (3 * deps.provider.requestTimeoutMs >= this.leaseMs * 0.9)
       throw new Error('The worker’s lease must outlast the provider’s timeouts');
   }
 
@@ -93,7 +93,7 @@ export class PaymentsWorker {
             );
             continue;
           }
-          account = await provider.createVirtualAccount(
+          const created = await provider.createVirtualAccount(
             {
               kind: w.owner_kind,
               ownerId: w.customer_id ?? w.merchant_id ?? 'platform',
@@ -101,6 +101,9 @@ export class PaymentsWorker {
             },
             w.alias,
           );
+          // The alias's account is the lookup's answer: creation is not idempotent, and if another account was ever made
+          // for this alias, the lookup still names the first (plan §14). An unclear answer retries and finds it.
+          account = (await provider.findVirtualAccountByAlias(w.alias)) ?? created;
         }
         const { providerRef, accountNumber, accountName, bankName } = account;
         await db.transaction(async (tx) => {

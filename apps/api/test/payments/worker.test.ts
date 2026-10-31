@@ -178,7 +178,33 @@ describe('wallets (BR-2.3)', () => {
       expect(await answer(json({ status: false }, status))).toBe(false);
     expect(await answer(() => new Response('<html>', { status: 404 }))).toBe(false);
     expect(await answer(() => new Response('<html>', { status: 200 }))).toBe(false);
-    expect(await answer(json({ status: false, message: 'Not found' }, 404))).toBe(true);
+    expect(await answer(json({ status: false }, 200))).toBe(false);
+    expect(await answer(json({ message: 'Account not found', code: '04', status: false }, 200))).toBe(true);
+  });
+
+  it('B1: the wallet holds the account the lookup names, not the one a repeated creation returned', async () => {
+    const b = await business();
+    await queued(b.merchantId);
+    const { alias } = await walletOf(b.merchantId);
+    const first = {
+      providerRef: alias,
+      accountNumber: '1111111111',
+      accountName: 'First',
+      bankName: 'Test Bank',
+    };
+    const second = { ...first, accountNumber: '2222222222', accountName: 'Second' };
+    const other = new FakeProvider();
+    const looks = { n: 0 };
+    const provider = Object.assign(other, {
+      // No account at the first look; then another worker's, the first made, is the alias's.
+      findVirtualAccountByAlias: (a: string) =>
+        a === alias
+          ? Promise.resolve(looks.n++ === 0 ? null : first)
+          : Promise.reject(new ProviderError('UNKNOWN_OUTCOME', 'Not in this test')),
+      createVirtualAccount: () => Promise.resolve(second),
+    });
+    await new PaymentsWorker({ db, provider, logger: pino({ level: 'silent' }) }).provisionWallets();
+    expect(await walletOf(b.merchantId)).toMatchObject({ status: 'active', account_number: '1111111111' });
   });
 
   it('P9-R3: a lookup that outlasts the lease cannot create a second account; the later worker’s stands', async () => {

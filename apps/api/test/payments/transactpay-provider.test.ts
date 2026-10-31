@@ -1,4 +1,5 @@
-import { constants, generateKeyPairSync, privateDecrypt } from 'node:crypto';
+import { constants, generateKeyPairSync, privateDecrypt, randomBytes } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   TransactPayProvider,
@@ -8,7 +9,7 @@ import { ngn } from '../../src/platform/money.js';
 
 // The TransactPay adapter against a stubbed server (P9; docs/business/P9_TRANSACTPAY_QUESTIONS.md): the requests the old
 // system's client and TransactPay's documentation establish, and — the point of TA-8 — what it does when it gets no clear
-// answer. The sandbox itself needs keys: the last block runs only when TRANSACTPAY_SANDBOX_* are set, never in CI.
+// answer. The sandbox itself needs keys: the last block runs only with TRANSACTPAY_SANDBOX=run and test keys, never in CI.
 
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const jwk = publicKey.export({ format: 'jwk' }) as { n: string; e: string };
@@ -69,8 +70,10 @@ describe('virtual accounts', () => {
     expect(seen[0]!.headers['api-key']).toBe('secret-test-key');
   });
 
-  it('P9-R2: only a JSON 404 says there is no such account; anything else is not an answer', async () => {
-    const { p: none } = provider(() => json({ status: false, message: 'Not found' }, 404));
+  it('P9-R2: only the sandbox’s own not-found says there is no such account; anything else is not an answer', async () => {
+    const { p: none } = provider(() =>
+      json({ message: 'Account not found', code: '04', status: false, data: null }),
+    );
     await expect(none.findVirtualAccountByAlias('a')).resolves.toBeNull();
     for (const answer of [
       () => json({ status: false }, 400),
@@ -79,6 +82,9 @@ describe('virtual accounts', () => {
       () => json({ status: false }, 429),
       () => json({}, 503),
       () => json({ status: false }),
+      () => json({ status: false, code: '04' }), // the code alone
+      () => json({ status: false, code: '91', message: 'Account not found' }), // the message alone
+      () => json({ status: false, code: '04', message: 'Account not found' }, 404),
       () => json({ status: true, data: {} }), // success, and no account in it
       () => new Response('<html>Not Found</html>', { status: 404 }), // a proxy's or a wrong address's, not theirs
       () => new Response('<html>', { status: 200 }),
@@ -146,18 +152,22 @@ describe('confirming a transaction', () => {
     expect((await p.getTransaction('S')).status).toBe(status);
   });
 
-  it('without an account named, there is nothing to match it by (C5); only a JSON 404 is NOT_FOUND', async () => {
+  it('without an account named, there is nothing to match it by (C5); only the sandbox’s own answer is NOT_FOUND', async () => {
     const { p } = provider(() => json({ status: true, data: { amount: 10, statusId: 5 } }));
     expect((await p.getTransaction('S')).toAccountNumber).toBeUndefined();
-    const { p: gone } = provider(() => json({}, 404));
+    const { p: gone } = provider(() =>
+      json({ message: 'SessionId not found', code: null, status: false, data: null }),
+    );
     await expect(gone.getTransaction('S')).rejects.toMatchObject({ code: 'NOT_FOUND' });
     // A real deposit's event must not end rejected because of an outage or our own expired key.
     for (const answer of [
       () => json({}, 500),
       () => json({}, 401),
       () => json({}, 403),
+      () => json({}, 404),
       () => json({}, 429),
       () => json({ status: false }),
+      () => json({ status: false, message: 'Something else' }),
       () => new Response('<html>', { status: 404 }),
     ]) {
       const { p } = provider(answer);
@@ -211,9 +221,13 @@ describe('money and what is not offered', () => {
   });
 
   it('a lookup that finds nothing is null, and a server error is not an answer', async () => {
-    const { p } = provider(() => json({}, 404));
+    const { p } = provider(() =>
+      json({ message: 'Payout not found', code: '04', status: false, data: null }),
+    );
     await expect(p.findTransferByReference('x')).resolves.toBeNull();
-    for (const status of [401, 429, 502]) {
+    const { p: silent } = provider(() => json({ status: false }));
+    await expect(silent.findTransferByReference('x')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    for (const status of [401, 404, 429, 502]) {
       const { p: down } = provider(() => json({}, status));
       await expect(down.findTransferByReference('x')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
     }
@@ -246,23 +260,59 @@ describe('money and what is not offered', () => {
   });
 });
 
-const sandbox = {
-  baseUrl: process.env.TRANSACTPAY_SANDBOX_BASE_URL,
-  publicKey: process.env.TRANSACTPAY_SANDBOX_PUBLIC_KEY,
-  secretKey: process.env.TRANSACTPAY_SANDBOX_SECRET_KEY,
-  encryptionKey: process.env.TRANSACTPAY_SANDBOX_ENCRYPTION_KEY_BASE64,
-};
-describe.runIf(sandbox.baseUrl && sandbox.publicKey && sandbox.secretKey && sandbox.encryptionKey)(
-  'the sandbox, on demand (P9-6)',
-  () => {
-    const p = () => new TransactPayProvider(sandbox as unknown as TransactPayConfig);
-    it('creates a virtual account and finds it by its alias', async () => {
-      const alias = `AKT-${Date.now()}`;
-      const created = await p().createVirtualAccount(owner, alias);
-      expect((await p().findVirtualAccountByAlias(alias))?.accountNumber).toBe(created.accountNumber);
+// On demand only: TRANSACTPAY_SANDBOX=run vitest run test/payments/transactpay-provider.test.ts. It reads the test keys alone
+// from apps/api/.env, or the environment (TRANSACTPAY_TEST_*), and refuses keys not marked as test keys: it can never use
+// the live ones.
+function sandboxConfig(): TransactPayConfig | null {
+  if (process.env.TRANSACTPAY_SANDBOX !== 'run') return null;
+  const env: Record<string, string | undefined> = { ...process.env };
+  const file = new URL('../../.env', import.meta.url);
+  if (existsSync(file))
+    for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+      const m = /^(TRANSACTPAY_TEST_[A-Z0-9_]+)\s*=\s*(.*)$/.exec(line.trim());
+      if (m) env[m[1]!] = m[2]!.replace(/^["']|["']$/g, '');
+    }
+  const publicKey = env.TRANSACTPAY_TEST_PUBLIC_KEY ?? '';
+  const secretKey = env.TRANSACTPAY_TEST_SECRET_KEY ?? '';
+  const key = env.TRANSACTPAY_TEST_ENCRYPTION_KEY_BASE64 ?? '';
+  if (!/test/i.test(publicKey) || !/test/i.test(secretKey) || !key)
+    throw new Error('TRANSACTPAY_SANDBOX=run needs test keys, marked as such');
+  return {
+    baseUrl: 'https://payment-api-service.transactpay.ai',
+    publicKey,
+    secretKey,
+    encryptionKey: key,
+  };
+}
+const sandbox = sandboxConfig();
+describe.runIf(sandbox)('the sandbox, on demand (P9-6; plan §14)', { timeout: 60_000 }, () => {
+  const p = () => new TransactPayProvider(sandbox!);
+  const alias = () => `AKT-${randomBytes(16).toString('hex')}`;
+
+  it('an account: created under its alias, and found by it at once', async () => {
+    const a = alias();
+    const created = await p().createVirtualAccount(owner, a);
+    expect(created.accountNumber).toMatch(/^[A-Za-z0-9]+$/); // the sandbox's are not all digits (TRP...)
+    expect((await p().findVirtualAccountByAlias(a))?.accountNumber).toBe(created.accountNumber);
+  });
+
+  it('creating an alias again makes another account; the lookup keeps naming the first (B1)', async () => {
+    const a = alias();
+    const first = await p().createVirtualAccount(owner, a);
+    const second = await p().createVirtualAccount(owner, a);
+    expect(second.accountNumber).not.toBe(first.accountNumber);
+    expect((await p().findVirtualAccountByAlias(a))?.accountNumber).toBe(first.accountNumber);
+  });
+
+  it('what it does not know: an alias is null, a session NOT_FOUND, a payout null (P9-R2)', async () => {
+    await expect(p().findVirtualAccountByAlias(alias())).resolves.toBeNull();
+    await expect(p().getTransaction(`AKT${randomBytes(16).toString('hex')}`)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
     });
-    it('reads the balance', async () => {
-      expect((await p().getBalance()).currency).toBe('NGN');
-    });
-  },
-);
+    await expect(p().findTransferByReference(alias())).resolves.toBeNull();
+  });
+
+  it('reads the balance', async () => {
+    expect((await p().getBalance()).currency).toBe('NGN');
+  });
+});

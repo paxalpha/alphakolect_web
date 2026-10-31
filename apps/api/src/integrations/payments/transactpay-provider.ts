@@ -22,8 +22,9 @@ import {
 // provider guarantee that is unconfirmed (idempotency B1, D2): the worker looks an alias or a reference up instead of
 // repeating a request. A timeout, a network failure or a server error is UNKNOWN_OUTCOME, never a failure (TA-8). So is
 // every answer that is not a stated result: an authentication failure, a rate limit, a body we cannot read. "It does not
-// exist" takes a JSON 404 (P9-R2), because creating an account or rejecting an event acts on it. TransactPay documents no
-// not-found answer, so the sandbox has to show theirs before this is relied on (plan §10); until then the worker waits.
+// exist" is only the answer the sandbox gave (P9-R2, plan §14): HTTP 200, status false, and its own not-found code or
+// message. Creating an account or rejecting an event acts on it. Creating an alias again makes a second account while the
+// lookup keeps answering with the first, so the lookup's answer is the wallet's account.
 // Secrets come from the configuration and are never logged; errors carry no response bodies.
 
 export type TransactPayConfig = Readonly<{
@@ -110,12 +111,12 @@ export class TransactPayProvider implements PaymentProvider {
   }
 
   async findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null> {
-    const { status, body, isJson } = await this.call(
+    const { status, body } = await this.call(
       'GET',
       `/payment/account-details?alias=${encodeURIComponent(alias)}`,
       this.config.secretKey,
     );
-    if (status === 404 && isJson) return null;
+    if (this.statesNotFound(status, body, '04', /^account not found$/i)) return null;
     if (status >= 400 || !this.succeeded(body))
       throw new ProviderError('UNKNOWN_OUTCOME', `The account lookup did not answer (HTTP ${status})`);
     return this.accountRef(alias, (body.data as Json | undefined) ?? body);
@@ -157,16 +158,17 @@ export class TransactPayProvider implements PaymentProvider {
   }
 
   async findTransferByReference(reference: string): Promise<ProviderTxRef | null> {
-    const { status, body, isJson } = await this.call(
+    const { status, body } = await this.call(
       'GET',
       `/payout/requery?clientReference=${encodeURIComponent(reference)}`,
       this.config.secretKey,
     );
-    if (status === 404 && isJson) return null;
+    if (this.statesNotFound(status, body, '04', /^payout not found$/i)) return null;
     if (status >= 400)
       throw new ProviderError('UNKNOWN_OUTCOME', `The lookup did not answer (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
-    if (!firstString(data, 'clientReference', 'reference', 'providerReference')) return null;
+    if (!firstString(data, 'clientReference', 'reference', 'providerReference'))
+      throw new ProviderError('UNKNOWN_OUTCOME', 'The lookup named no payout');
     return {
       providerTxId: firstString(data, 'reference', 'providerReference') ?? reference,
       status: statusOf(data),
@@ -175,13 +177,14 @@ export class TransactPayProvider implements PaymentProvider {
 
   /** A session's funding details: what the worker confirms an event with (P9-2). */
   async getTransaction(providerTxId: string): Promise<ProviderTransaction> {
-    const { status, body, isJson } = await this.call(
+    const { status, body } = await this.call(
       'GET',
       `/payment/transaction-details/${encodeURIComponent(providerTxId)}`,
       this.config.publicKey,
     );
     // Not found rejects an event in the end: an outage of ours or theirs must not reject real money.
-    if (status === 404 && isJson) throw new ProviderError('NOT_FOUND', 'Transaction not found');
+    if (this.statesNotFound(status, body, null, /^sessionid not found$/i))
+      throw new ProviderError('NOT_FOUND', 'Transaction not found');
     if (status >= 400 || !this.succeeded(body))
       throw new ProviderError('UNKNOWN_OUTCOME', `The transaction lookup did not answer (HTTP ${status})`);
     const data = (body.data as Json | undefined) ?? body;
@@ -239,6 +242,17 @@ export class TransactPayProvider implements PaymentProvider {
 
   // ── internals ─────────────────────────────────────────────────────────────────────
 
+  /** The not-found answers the sandbox gave: 200, status false, the message, and the code where it sends one. */
+  private statesNotFound(status: number, body: Json, code: string | null, message: RegExp): boolean {
+    return (
+      status === 200 &&
+      body.status === false &&
+      (code === null || body.code === code) &&
+      typeof body.message === 'string' &&
+      message.test(body.message)
+    );
+  }
+
   private succeeded(body: Json): boolean {
     return body.status === true || body.status === 'success' || body.availableBalance !== undefined;
   }
@@ -274,7 +288,7 @@ export class TransactPayProvider implements PaymentProvider {
     path: string,
     apiKey: string,
     options: { encryption?: string; body?: object } = {},
-  ): Promise<{ status: number; body: Json; isJson: boolean }> {
+  ): Promise<{ status: number; body: Json }> {
     let response: Response;
     let text: string;
     try {
@@ -303,10 +317,9 @@ export class TransactPayProvider implements PaymentProvider {
       return {
         status: response.status,
         body: (typeof parsed === 'object' && parsed !== null ? parsed : {}) as Json,
-        isJson: typeof parsed === 'object' && parsed !== null,
       };
     } catch {
-      if (response.status >= 400) return { status: response.status, body: {}, isJson: false };
+      if (response.status >= 400) return { status: response.status, body: {} };
       throw new ProviderError('UNKNOWN_OUTCOME', 'TransactPay answered with something unreadable');
     }
   }

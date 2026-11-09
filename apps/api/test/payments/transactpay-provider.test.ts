@@ -261,12 +261,12 @@ describe('money and what is not offered', () => {
 });
 
 // On demand only: TRANSACTPAY_SANDBOX=run vitest run test/payments/transactpay-provider.test.ts. It reads the test keys alone
-// from apps/api/.env, or the environment (TRANSACTPAY_TEST_*), and refuses keys not marked as test keys: it can never use
+// from apps/api/.env.test, or the environment (TRANSACTPAY_TEST_*), and refuses keys not marked as test keys: it can never use
 // the live ones.
 function sandboxConfig(): TransactPayConfig | null {
   if (process.env.TRANSACTPAY_SANDBOX !== 'run') return null;
   const env: Record<string, string | undefined> = { ...process.env };
-  const file = new URL('../../.env', import.meta.url);
+  const file = new URL('../../.env.test', import.meta.url);
   if (existsSync(file))
     for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
       const m = /^(TRANSACTPAY_TEST_[A-Z0-9_]+)\s*=\s*(.*)$/.exec(line.trim());

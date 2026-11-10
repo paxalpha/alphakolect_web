@@ -218,6 +218,17 @@ export class ConfigError extends Error {
 }
 
 /**
+ * The API process's own check (the re-check's ruling 4): in production it refuses to start if it was given the worker's
+ * connection, which must reach the worker's runtime alone. Not part of loadConfig, which the worker shares.
+ */
+export function assertApiConfig(config: Config): void {
+  if (config.nodeEnv === 'production' && config.workerDatabaseUrl !== undefined)
+    throw new ConfigError([
+      'WORKER_DATABASE_URL must not be set for the API in production: it belongs to the worker’s runtime alone',
+    ]);
+}
+
+/**
  * Parse and validate configuration. Error messages name the variable and the rule
  * but never include the supplied value, so secrets cannot leak into logs.
  */

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { ConfigError, loadConfig } from '../src/platform/config.js';
+import { assertApiConfig, ConfigError, loadConfig } from '../src/platform/config.js';
 import { newSigningJwk } from './support/keys.js';
 
 // Test fixtures only; not real credentials.
@@ -120,6 +120,32 @@ describe('loadConfig', () => {
         TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
       }).payments.provider,
     ).toBe('transactpay');
+  });
+
+  it('ruling 4: in production the API refuses the worker’s connection; locally it is tolerated', () => {
+    const url = 'postgresql://alphakolect_worker:x@127.0.0.1:5436/alphakolect'; // gitleaks:allow
+    const production = {
+      ...valid,
+      NODE_ENV: 'production',
+      SMTP_URL: 'smtp://mail.example.test:25',
+      MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
+      WEB_APP_URL: 'https://app.example.test',
+      PAYMENT_PROVIDER: 'transactpay',
+      TRANSACTPAY_BASE_URL: 'https://tp.example.test',
+      TRANSACTPAY_PUBLIC_KEY: 'p',
+      TRANSACTPAY_SECRET_KEY: 's',
+      TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
+    };
+    expect(() => assertApiConfig(loadConfig(production))).not.toThrow();
+    let refused: unknown;
+    try {
+      assertApiConfig(loadConfig({ ...production, WORKER_DATABASE_URL: url }));
+    } catch (err) {
+      refused = err;
+    }
+    expect(refused).toBeInstanceOf(ConfigError);
+    expect((refused as ConfigError).message).not.toContain(url);
+    expect(() => assertApiConfig(loadConfig({ ...valid, WORKER_DATABASE_URL: url }))).not.toThrow();
   });
 
   it('P9-R1: the worker’s connection is its own, and only the worker needs it', () => {

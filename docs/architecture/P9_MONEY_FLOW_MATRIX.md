@@ -185,17 +185,15 @@ an alias, a session and a payout, reading the balance's shape, and that repeatin
 | Reconciliation scenarios | Pass |
 | Worker failure and recovery | Pass, including a real process killed mid-call (G1 to G3) |
 | Sandbox tests documented, assumptions kept as blockers | Run in part (§5). **No real deposit yet**, so the journeys are unproven against TransactPay |
-| Existing gates green | At `fe2a827`, clean tree, every step exit 0: contracts 105, db 909, API 2099 passed and 4 skipped (the sandbox suite, run separately on demand), concurrency 38. Run locally. CI runs only on pull requests and `main`, so no CI run exists until a pull request is opened |
+| Existing gates green | Recorded once the gate has run on this revision |
 
-## 7. Rulings required from the independent reviewer
+## 7. The independent reviewer's rulings (10 November 2026)
 
-P9 does not close until each is answered. Tests passing does not decide any of these.
+Given on draft PR #11 at `d16bba3`.
 
-| # | Accept? | What accepting means | Ruling |
+| # | Question | Ruling | Condition |
 |---|---|---|---|
-| 1 | `unmatched` for money at no wallet of ours | It reaches the platform team's list (`GET /v1/platform/payments/unmatched`), posts nothing, and is separate from `held`, which only a customer's wallet produces | ☐ Accept ☐ Change: ____ |
-| 2 | `review` for a reversal, in place of a reconciliation finding | The credit stays, nothing corrects itself, and a person resolves it from the same list. No finding opens unless the balance also differs | ☐ Accept ☐ Change: ____ |
-| 3 | The `submitted` order state | The state machine is created, unknown, submitted, then succeeded or failed; only `created` may ever be sent | ☐ Accept ☐ Change: ____ |
-| 4 | The worker as a system-wide trust boundary | Its functions span every business, and `reconcile_wallets` returns every wallet's balance. If its credentials leak, the holder can fabricate a confirmed credit to any wallet and read those balances, but not read tables, use sessions or reach the API's functions | ☐ Accept ☐ Change: ____ |
-
-Reviewer: ______ Date: ______ Commit reviewed: ______
+| 1 | `unmatched` for money at no wallet of ours | **Accepted** | `unmatched` must never become a fallback that guesses the business from an alias, reference or webhook payload; a person decides before anything posts |
+| 2 | `review` for a reversal, in place of a reconciliation finding | **Accepted** | The platform team must monitor the review list: a reversal must not disappear because the aggregate balance happens to reconcile |
+| 3 | The `submitted` order state | **Accepted** | An order is never sent again because no answer came back |
+| 4 | The worker as a system-wide trust boundary | **Accepted, with a deployment condition** | The worker's credentials must reach the worker's runtime alone. In production the API now refuses to start if it is given `WORKER_DATABASE_URL`. P15 must prove the rest: a separate process and service identity, no worker credentials in the API's container, the worker's database access limited to its endpoint, and its secrets rotated independently (plan §10, condition 10) |

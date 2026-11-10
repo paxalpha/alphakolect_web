@@ -1,6 +1,6 @@
 # P9 implementation plan — payments
 
-**Status: revision 6 (2026-10-31) — open. The sandbox's first results changed the adapter (§14), so the reviewer's approval of R2 needs a fresh look; the four rulings of `P9_MONEY_FLOW_MATRIX.md` §7 are awaited. Not approved for live money.** Planned and built
+**Status: revision 7 (2026-11-10) — conditional code-scope approval by the independent reviewer (§15); the R2 hardening it asked for is made. The project lead's closure is still to be recorded. Not approved for live money or production migrations.** Planned and built
 in one pass, as P6 to P8 were. Decisions that would go to the project lead take the recommended option (his standing
 instruction) and are recorded in §7. The owner answered `docs/business/P9_OWNER_PAYMENTS.md` (Q1–Q8) on 26 October 2026 and
 `docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md` on 31 October 2026, each with the suggested option.
@@ -173,6 +173,7 @@ task: closing the old virtual accounts (Q3) once TransactPay answers B3.
 
 | Rev | Date | Change |
 |---|---|---|
+| 7 | 2026-11-10 | The reviewer's second re-check (§15): the four rulings, R2 hardened, the API refuses the worker's connection in production; condition 10 |
 | 6 | 2026-10-31 | The sandbox's first results (§14): real not-found answers, creation not idempotent, the wallet holds the lookup's account |
 | 5 | 2026-10-31 | The money-flow matrix and three journeys (§13); P9 stays open |
 | 4 | 2026-10-31 | The re-check: code scope approved at `5fa190b`, live money not (§12); condition 9 added |
@@ -216,6 +217,7 @@ Nothing here touches production, and in P9 nothing leaves a wallet (Q2). Before 
 | 7 | TransactPay confirms that a lookup always sees a new account at once | the sandbox shows creation is **not** idempotent (§14). Only the lookup prevents a second account, and if it lags after a lost answer a second real account is made. Money sent there arrives unmatched: for a person, not lost |
 | 8 | Each environment re-runs the role bootstrap before these migrations, with `worker_password` | the migration grants to `alphakolect_worker` and stops if the role is missing; the worker needs `WORKER_DATABASE_URL` |
 | 9 | Each environment's bootstrap confirms that `alphakolect_worker` has no role memberships | `roles.sql` re-applies attributes and the password, and does not remove a membership that already exists. The tests prove zero only on a fresh role (the re-check's observation) |
+| 10 | The worker's credentials reach its runtime alone (ruling 4) | the worker's role can fabricate a confirmed credit to any wallet. In production the API refuses to start with `WORKER_DATABASE_URL` set. P15 must prove a separate process and service identity, no worker credentials in the API's container, database access limited to its endpoint, and independent rotation |
 
 ## 11. The gate review (2026-10-31)
 
@@ -288,3 +290,19 @@ the sandbox suite refuses any key not marked as a test key, and reads only `TRAN
 
 R2's rule stands, that only a definite answer creates an account, but which answer is definite has changed, so the reviewer
 should look at it again. A few test virtual accounts now exist in the sandbox from these runs.
+
+## 15. The second re-check (2026-11-10)
+
+The independent reviewer re-checked draft PR #11 at `d16bba3`, with Linux CI green.
+
+- **Code scope: approved conditionally.** The four rulings are accepted (`P9_MONEY_FLOW_MATRIX.md` §7). R2's revised rule is
+  accepted, subject to one hardening: a session's not-found was accepted with any code, though the sandbox sent none.
+- **Not approved for live money or production migrations.** A real deposit and the balance field are still unproven, and
+  TransactPay has to confirm the duplicate-account risk (§10, conditions 1, 3 and 7). The questions for TransactPay are in
+  `docs/business/P9_TRANSACTPAY_FOLLOWUP.md`.
+
+| Asked | Done | Tests |
+|---|---|---|
+| R2: a session's not-found only with no code | The code must be absent, null or empty; the same message with a code is `UNKNOWN_OUTCOME` | `transactpay-provider.test.ts`: absent, null and empty are `NOT_FOUND`; `91`, `04` and `0` are not |
+| Ruling 4: the worker's URL must not reach the API | In production the API refuses to start if `WORKER_DATABASE_URL` is set; locally, where one file serves both, it is tolerated. The rest is condition 10, for P15 | `config.test.ts` "ruling 4" |
+| A full local gate at the final HEAD | Recorded below | — |

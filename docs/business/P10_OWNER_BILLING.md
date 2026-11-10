@@ -19,7 +19,7 @@ suggestion.
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ______ **Date:** ______
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 11th of November, 2026
 
 ---
 
@@ -34,7 +34,7 @@ nothing before then.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: From the day the business confirms its email
 
 ## Q2. What counts as an agent being "active"?
 
@@ -47,7 +47,7 @@ Rule 10.6a: an agent with no activity for 15 days or more isn't billed.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: The agent signed in to the mobile app, or recorded a collection, in the 15 days before the billing date
 
 ## Q3. Which day of the month is a business billed?
 
@@ -57,7 +57,7 @@ Rule 10.6a: an agent with no activity for 15 days or more isn't billed.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Each business on its own date: the day its trial ends, then the same day each month
 
 ## Q4. A business with no active agents
 
@@ -69,7 +69,7 @@ dashboard.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: It pays the lowest price (1–3 agents, ₦5,000)
 
 ## Q5. Several unpaid months
 
@@ -82,7 +82,7 @@ A business stays suspended for more than one billing date, so it owes more than 
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Access returns only when everything owed is paid; the business sees the total
 
 ## Q6. Not enough money for the whole amount
 
@@ -93,7 +93,7 @@ The wallet holds ₦3,000 and the business owes ₦5,000.
 - ☐ Take what is there, and the rest later
 - ☐ Not sure
 
-> Answer:
+> Answer: Take nothing; the business stays suspended until the wallet holds the whole amount
 
 ## Q7. Warning before suspension
 
@@ -106,7 +106,7 @@ Rule 10.4 suspends a business as soon as a charge can't be taken.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: No grace period. From 7 days before the billing date, the business's dashboard shows the amount due and that the wallet must hold it. Emails come later, with the notifications stage.
 
 ## Q8. Changing prices
 
@@ -120,7 +120,7 @@ changes.
 - ☐ Notice of ___ days
 - ☐ Not sure
 
-> Answer:
+> Answer: You set the new prices and the date they start. The date must be at least 30 days away, and businesses see the coming price on their Subscription page. A business is always charged the price in force on its billing date.
 
 ## Q9. Businesses with 21 or more agents
 
@@ -132,7 +132,7 @@ Rule 10.1 says the price for 21 or more agents is set by you, business by busine
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Until you set its price, the business isn't charged, and it appears on the platform team's list as waiting for a price.
 
 ## Q10. VAT and other taxes
 
@@ -141,7 +141,7 @@ Rule 10.1 says the price for 21 or more agents is set by you, business by busine
 - ☐ VAT (7.5%) is added on top of these prices
 - ☐ Not sure
 
-> Answer:
+> Answer: The prices in rule 10.1 are the whole amount charged; no tax is added on top. Your accountant confirms how AlphaKolect accounts for VAT.
 
 ## Q11. Switching billing on, and businesses that don't pay
 
@@ -154,7 +154,7 @@ Billing stays off (rule 1.3) until it is switched on.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Only you (the Super Admin) can switch billing on or off, from the platform admin. Only you can mark one business as not billed (for example a test or partner business), with a reason that is recorded. Platform staff can see billing, but can't change either.
 
 ## Q12. The first charge after billing is switched on
 
@@ -165,7 +165,7 @@ When billing is switched on, some businesses' trials will already have ended.
 - ☐ Charge them for the months since their trial ended
 - ☐ Not sure
 
-> Answer:
+> Answer: Nothing is charged for the time before billing was switched on. Each business's first billing date is its trial end or the switch-on day, whichever is later.
 
 ## Q13. What a suspended business can still use
 
@@ -178,7 +178,7 @@ Rule 10.4: the owner and staff go straight to the Subscription page, agents are 
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: The owner and staff can still sign in and out, and see the Subscription page, the amount owed, their invoices, and their Live wallet's account number for loading it. Everything else waits until the amount is paid.
 
 ## Q14. Who in a business can see the subscription and ask for a charge
 
@@ -187,7 +187,7 @@ Rule 10.4: the owner and staff go straight to the Subscription page, agents are 
 - ☐ The owner only
 - ☐ Not sure
 
-> Answer:
+> Answer: The owner, and any staff the owner gives the new subscription permissions to. The owner always has them.
 
 ---
 
@@ -204,4 +204,4 @@ These are the descriptions the platform admin and the business owner would see. 
 | `platform.billing.custom_price` | platform staff | Set the price of a business with 21 or more agents |
 | `platform.billing.switch` | Super Admin only | Switch billing on or off; mark a business as not billed |
 
-> Answer (approved as written, or the changes):
+> Answer (approved as written, or the changes): I approve the wording as written

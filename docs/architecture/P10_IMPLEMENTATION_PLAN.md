@@ -1,14 +1,14 @@
 # P10 implementation plan — billing
 
-**Status: revision 1 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.** It is to be
-built in one pass, as P6 to P9 were, once three things have happened:
+**Status: revision 2 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.** The owner
+answered `docs/business/P10_OWNER_BILLING.md` on 11 November 2026: every question (Q1–Q14) with the suggested option, and
+the permissions' wording approved as written (§8). The plan is to be built in one pass, as P6 to P9 were, once:
 
 - the reviewer has approved this plan;
-- the owner has answered `docs/business/P10_OWNER_BILLING.md` (Q1–Q14 and the permissions' wording);
 - the project lead has agreed to start.
 
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
-§7. The owner's questions are not answered here; where the design depends on one, it names the question. P9 is merged to
+§7. Where the design follows one of the owner's answers, it names the question. P9 is merged to
 `main` but **not closed**. P10 builds on its payment orders and worker, and does not close before P9 does (P10-14).
 **Billing stays paused (BR-1.3)**, and no real money moves in P10: §9 lists what must be true before billing is switched
 on.
@@ -66,7 +66,7 @@ on.
   and author.
 - **Kept apart from the merchant lifecycle** (`tenancy.merchants.status`: `pending_verification`, `active`,
   `deactivated`). A suspended business is still `active`. Billing leaves deactivated and unconfirmed businesses alone.
-- **The trial:** 90 days from email confirmation, or from sign-up if the owner answers Q1 that way. The first billing
+- **The trial:** 90 days from email confirmation (Q1, which settles OPEN-10 and how rule 2.5 is read). The first billing
   date is the later of the trial's end and the day billing was switched on (Q12).
 - **State changes** are made only by the billing functions, each recorded in the activity record:
   - `trial` → `billed`;
@@ -93,14 +93,14 @@ on.
 ### 3.3 Billable agents (BR-10.6a; Q2, Q4; P10-7)
 
 - **Counted from rows that exist already, on the billing date:** an agent membership of the business with an agent
-  session created in the 15 days before that date, or a collection it recorded in that time (Q2 may narrow this to one).
+  session created in the 15 days before that date, or a collection it recorded in that time (Q2, which settles OPEN-11).
   No new activity table is kept, and nothing is added to the sign-in or collection paths. This departs from
   TARGET_ARCHITECTURE §11's `tenancy.agent_activity`.
 - **The invoice stores the count and the agents counted,** so the business and the platform team can see why it was
   charged what it was.
 - A deactivated agent can't sign in (BR-10.6b, enforced since P4), but it is billed by the activity rule alone: an agent
   deactivated today but active last week counts.
-- With no active agents, the business pays the lowest band, or nothing (Q4).
+- With no active agents, the business pays the lowest band, 1–3 agents (Q4).
 
 ### 3.4 The billing run and invoices
 
@@ -114,7 +114,7 @@ on.
 - **`(merchant_id, period)` is unique.** A run repeated, or two workers at once, make one invoice (test).
 - **With billing switched off (BR-1.3),** the run writes nothing: no invoice, no charge, no state change. The platform
   team's preview computes the same figures without writing them.
-- **The amount owed** is the sum of the open invoices. With the owner's suggested Q5, all of them must be paid for
+- **The amount owed** is the sum of the open invoices. By the owner's Q5, all of them must be paid for
   access to return.
 
 ### 3.5 The charge (BR-10.3; P10-8, P10-10, P10-11)
@@ -285,7 +285,7 @@ returns `suspended` when the session's business is suspended and the permission 
 
 | To | Document | What it decides |
 |---|---|---|
-| The owner | `docs/business/P10_OWNER_BILLING.md` | Q1 trial start (OPEN-10, and rule 2.5's wording); Q2 activity (OPEN-11); Q3 billing date; Q4 no active agents; Q5 several unpaid months (TA-12); Q6 part payment; Q7 warning; Q8 price notice; Q9 21+ without a price; Q10 VAT; Q11 the switch and exemptions; Q12 the first charge; Q13 what a suspended business keeps; Q14 who in a business; the permissions' wording |
+| The owner (answered 11 November 2026, every question with the suggested option; the wording approved) | `docs/business/P10_OWNER_BILLING.md` | Q1 trial start (OPEN-10, and rule 2.5's wording); Q2 activity (OPEN-11); Q3 billing date; Q4 no active agents; Q5 several unpaid months (TA-12); Q6 part payment; Q7 warning; Q8 price notice; Q9 21+ without a price; Q10 VAT; Q11 the switch and exemptions; Q12 the first charge; Q13 what a suspended business keeps; Q14 who in a business; the permissions' wording |
 | TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | how money moves between virtual accounts; duplicate references; insufficient funds; fees |
 
 ## 9. Before billing is switched on
@@ -317,4 +317,5 @@ returns `suspended` when the session's business is suspended and the permission 
 
 | Rev | Date | Change |
 |---|---|---|
+| 2 | 2026-11-11 | The owner's answers recorded (Q1–Q14, the wording): the design's open choices take them |
 | 1 | 2026-11-11 | First plan, for the reviewer's plan review; the owner's form and TransactPay's questions written |

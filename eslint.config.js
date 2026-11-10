@@ -20,6 +20,7 @@ export const MODULE_DEPENDENCIES = {
   ledger: ['audit', 'identity', 'tenancy'],
   customers: ['audit', 'identity', 'tenancy'],
   savings: ['audit', 'identity', 'tenancy', 'customers'],
+  payments: ['audit', 'identity', 'tenancy'],
 };
 const MODULES = Object.keys(MODULE_DEPENDENCIES);
 

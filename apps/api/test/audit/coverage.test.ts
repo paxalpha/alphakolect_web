@@ -13,6 +13,7 @@ import { auditRows, FORMER_TRANSITIONAL_PAIRS, failAuditInsert, markerRequestId 
 import { ledgerBodies, ledgerResources } from '../support/ledger.js';
 import { customerOf, uniquePhone } from '../support/customers.js';
 import { savingsResources } from '../support/savings.js';
+import { paymentResources } from '../support/payments.js';
 import { TEST_PASSWORD, tenancyFixtures, uniqueEmail } from '../support/tenancy.js';
 
 // The coverage guard's per-pair tests (P5.3a; P5 plan §8.1): for every atomic pair the API writes, one real request
@@ -1212,6 +1213,90 @@ const CASES: Case[] = [
       };
     },
   },
+  // ── payments (P9): pattern A ─────────────────────────────────────────────────────────────────
+  {
+    pair: 'payments.receipt_classified/success',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const p = await paymentResources(owner, b.merchantId);
+      const res = await asOwner(
+        b,
+        'post',
+        `/v1/merchant/wallet/receipts/${p.openReceiptId}/classification`,
+        rid,
+        {
+          accountId: p.capitalId,
+        },
+      );
+      return {
+        res,
+        expected: { ...ownerActor(b), target_type: 'payments_receipt', target_id: p.openReceiptId },
+        changed: async () =>
+          (await one(`SELECT classified_at FROM payments.receipts WHERE id = $1`, [p.openReceiptId]))
+            .classified_at !== null,
+      };
+    },
+  },
+  {
+    pair: 'payments.unmatched_resolved/success',
+    audience: 'platform',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const admin = await fx.platformAdmin();
+      const p = await paymentResources(owner, b.merchantId);
+      const res = await fx
+        .call(admin.token, 'post', `/v1/platform/payments/unmatched/${p.transactionId}/resolution`, {
+          resolution: 'dismissed',
+          note: 'Coverage',
+        })
+        .set('X-Request-ID', rid);
+      return {
+        res,
+        expected: {
+          merchant_id: null,
+          actor_identity_id: admin.identityId,
+          actor_audience: 'platform',
+          actor_membership_id: admin.membershipId,
+          target_type: 'provider_transaction',
+          target_id: p.transactionId,
+        },
+        changed: async () =>
+          (await one(`SELECT matched FROM payments.provider_transactions WHERE id = $1`, [p.transactionId]))
+            .matched === 'resolved',
+      };
+    },
+  },
+  {
+    pair: 'payments.finding_resolved/success',
+    audience: 'platform',
+    status: 200,
+    run: async (rid) => {
+      const b = await fx.business();
+      const admin = await fx.platformAdmin();
+      const p = await paymentResources(owner, b.merchantId);
+      const res = await fx
+        .call(admin.token, 'post', `/v1/platform/payments/findings/${p.findingId}/resolution`, {
+          note: 'Coverage',
+        })
+        .set('X-Request-ID', rid);
+      return {
+        res,
+        expected: {
+          merchant_id: null,
+          actor_identity_id: admin.identityId,
+          actor_audience: 'platform',
+          actor_membership_id: admin.membershipId,
+          target_type: 'reconciliation_finding',
+          target_id: p.findingId,
+        },
+        changed: async () =>
+          (await one(`SELECT status FROM payments.reconciliation_findings WHERE id = $1`, [p.findingId]))
+            .status === 'resolved',
+      };
+    },
+  },
   // ── savings (P8): pattern A, each command's definer function ─────────────────────────────────
   {
     pair: 'savings.package_created/success',
@@ -1408,6 +1493,11 @@ const DATABASE_COVERED = [
   'platform.purge_report_request_cancelled/success',
   'platform.purge_report_handover_abandoned/success',
   'platform.purge_report_handover_failed/success',
+  // P9: written by the worker's functions, without a request, or once per platform (payments.test.ts, db)
+  'payments.wallet_provisioned/success',
+  'payments.money_received/success',
+  'payments.finding_recorded/success',
+  'payments.platform_wallet_requested/success',
   // P6: written by the posting function for any posting, the session's or a domain's (ledger.test.ts, db)
   'ledger.capital_debited/success',
   'ledger.income_debited/success',

@@ -43,7 +43,7 @@ import {
 // and tables in a schema of their own and show each kind of violation fails the guard — and that a conforming copy
 // passes, so the failures are not noise.
 
-const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers', 'savings'];
+const SCHEMAS = ['identity', 'tenancy', 'audit', 'util', 'ledger', 'customers', 'savings', 'payments'];
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/lock-baseline-5d8904b.json', import.meta.url), 'utf8'),
 ) as { commit: string; functions: FnRow[] };
@@ -122,6 +122,17 @@ describe('enforcing mode (R34): no finding at all', () => {
       'ledger.journal_entries(reverses_entry_id) partial',
       'ledger.ledgers(merchant_id)',
       'ledger.ledgers(owner_kind) partial',
+      // P9: payments — one wallet per business, customer and platform, an alias and an account number per provider;
+      // a provider transaction acted on once, one receipt for it; an order's reference; one open finding per scope
+      'payments.live_wallets(customer_id) partial',
+      'payments.live_wallets(merchant_id) partial',
+      'payments.live_wallets(owner_kind) partial',
+      'payments.live_wallets(provider, account_number) partial',
+      'payments.live_wallets(provider, alias)',
+      'payments.payment_orders(reference)',
+      'payments.provider_transactions(provider, provider_tx_id)',
+      'payments.receipts(transaction_id)',
+      'payments.reconciliation_findings(scope, <expr>) partial',
       // P8: savings — a collection and a movement under the actor's key, a cycle's number, one enrolment and one
       // goal per customer, one active package per name
       'savings.collections(merchant_id, agent_membership_id, idem_key)',

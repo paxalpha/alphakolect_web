@@ -98,6 +98,18 @@ import {
   updateSavingsPackage,
 } from './endpoints/savings.js';
 import {
+  classifyWalletReceipt,
+  createPlatformWallet,
+  getMerchantWallet,
+  listPlatformFindings,
+  listPlatformUnmatched,
+  listPlatformWallets,
+  listWalletReceipts,
+  receiveTransactPayEvent,
+  resolveReconciliationFinding,
+  resolveUnmatchedTransaction,
+} from './endpoints/payments.js';
+import {
   createPlatformStaff,
   deactivatePlatformStaff,
   listPlatformMerchantMembers,
@@ -120,6 +132,7 @@ export * from './endpoints/audit.js';
 export * from './endpoints/ledger.js';
 export * from './endpoints/customers.js';
 export * from './endpoints/savings.js';
+export * from './endpoints/payments.js';
 export { HealthResponse, getHealth } from './endpoints/health.js';
 
 /** Every endpoint of the v1 API, keyed by operation id. Add new endpoints here. */
@@ -223,6 +236,16 @@ export const endpoints = {
   listAgentCollections,
   getCustomerSelfSavings,
   listCustomerSelfCollections,
+  classifyWalletReceipt,
+  createPlatformWallet,
+  getMerchantWallet,
+  listPlatformFindings,
+  listPlatformUnmatched,
+  listPlatformWallets,
+  listWalletReceipts,
+  receiveTransactPayEvent,
+  resolveReconciliationFinding,
+  resolveUnmatchedTransaction,
 } as const;
 
 export type EndpointId = keyof typeof endpoints;

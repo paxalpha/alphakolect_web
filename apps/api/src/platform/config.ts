@@ -112,6 +112,8 @@ const EnvSchema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   // Required now so every environment is wired to its own database before P1 lands.
   DATABASE_URL: postgresUrl,
+  // The worker's own connection, as alphakolect_worker (P9-R1). Only the worker reads it, and refuses to start without.
+  WORKER_DATABASE_URL: postgresUrl.optional(),
   // Access-token signing (ADR-14 D6): the current key signs; the previous one (if set) still verifies.
   AUTH_SIGNING_JWK: jsonJwk,
   AUTH_SIGNING_JWK_PREVIOUS: jsonJwk.optional(),
@@ -138,6 +140,13 @@ const EnvSchema = z.object({
       message: 'must be an origin such as https://app.alphakolect.com, without a path',
     })
     .optional(),
+  // Payments (P9). The provider the worker and the webhook use; its keys are required when it is TransactPay. The fake
+  // is refused in production.
+  PAYMENT_PROVIDER: z.enum(['fake', 'transactpay']).default('fake'),
+  TRANSACTPAY_BASE_URL: z.url({ protocol: /^https$/, error: 'must be an https:// URL' }).optional(),
+  TRANSACTPAY_PUBLIC_KEY: z.string().min(1).optional(),
+  TRANSACTPAY_SECRET_KEY: z.string().min(1).optional(),
+  TRANSACTPAY_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
 });
 
 /** Settings that have a convenient local default but must be set explicitly in production. */
@@ -148,7 +157,28 @@ const LOCAL_DEFAULTS = {
 } as const;
 
 const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
+  if (e.PAYMENT_PROVIDER === 'transactpay') {
+    for (const name of [
+      'TRANSACTPAY_BASE_URL',
+      'TRANSACTPAY_PUBLIC_KEY',
+      'TRANSACTPAY_SECRET_KEY',
+      'TRANSACTPAY_ENCRYPTION_KEY_BASE64',
+    ] as const) {
+      if (e[name] === undefined)
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'is required when PAYMENT_PROVIDER is transactpay',
+        });
+    }
+  }
   if (e.NODE_ENV !== 'production') return;
+  if (e.PAYMENT_PROVIDER === 'fake')
+    ctx.addIssue({
+      code: 'custom',
+      path: ['PAYMENT_PROVIDER'],
+      message: 'must be transactpay in production',
+    });
   for (const name of Object.keys(LOCAL_DEFAULTS) as Array<keyof typeof LOCAL_DEFAULTS>) {
     if (e[name] === undefined)
       ctx.addIssue({ code: 'custom', path: [name], message: 'is required in production' });
@@ -160,12 +190,17 @@ export type Config = Readonly<{
   port: number;
   logLevel: z.infer<typeof EnvSchema>['LOG_LEVEL'];
   databaseUrl: string;
+  workerDatabaseUrl: string | undefined;
   webOrigins: ReadonlySet<string>;
   cookieDomain: string | undefined;
   trustProxy: TrustedProxies;
   email: Readonly<{ smtpUrl: string; from: string }>;
   /** Origin of the web app, for links in emails. */
   webAppUrl: string;
+  payments: Readonly<{
+    provider: 'fake' | 'transactpay';
+    transactPay?: Readonly<{ baseUrl: string; publicKey: string; secretKey: string; encryptionKey: string }>;
+  }>;
   auth: Readonly<{
     issuer: string;
     signingKey: Ed25519PrivateJwk;
@@ -180,6 +215,17 @@ export class ConfigError extends Error {
     super(`Invalid configuration:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
     this.name = 'ConfigError';
   }
+}
+
+/**
+ * The API process's own check (the re-check's ruling 4): in production it refuses to start if it was given the worker's
+ * connection, which must reach the worker's runtime alone. Not part of loadConfig, which the worker shares.
+ */
+export function assertApiConfig(config: Config): void {
+  if (config.nodeEnv === 'production' && config.workerDatabaseUrl !== undefined)
+    throw new ConfigError([
+      'WORKER_DATABASE_URL must not be set for the API in production: it belongs to the worker’s runtime alone',
+    ]);
 }
 
 /**
@@ -204,6 +250,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port: e.PORT,
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
+    workerDatabaseUrl: e.WORKER_DATABASE_URL,
     webOrigins: e.WEB_ORIGINS,
     cookieDomain: e.COOKIE_DOMAIN,
     trustProxy: e.TRUST_PROXY,
@@ -212,6 +259,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       from: e.MAIL_FROM ?? LOCAL_DEFAULTS.MAIL_FROM,
     }),
     webAppUrl: new URL(e.WEB_APP_URL ?? LOCAL_DEFAULTS.WEB_APP_URL).origin,
+    payments: Object.freeze({
+      provider: e.PAYMENT_PROVIDER,
+      ...(e.PAYMENT_PROVIDER === 'transactpay'
+        ? {
+            transactPay: Object.freeze({
+              baseUrl: e.TRANSACTPAY_BASE_URL!,
+              publicKey: e.TRANSACTPAY_PUBLIC_KEY!,
+              secretKey: e.TRANSACTPAY_SECRET_KEY!,
+              encryptionKey: e.TRANSACTPAY_ENCRYPTION_KEY_BASE64!,
+            }),
+          }
+        : {}),
+    }),
     auth: Object.freeze({
       issuer: e.AUTH_ISSUER,
       signingKey: e.AUTH_SIGNING_JWK,

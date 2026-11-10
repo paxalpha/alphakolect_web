@@ -35,7 +35,10 @@ const ALL_PLATFORM = [
   'platform.merchants.lifecycle',
   'platform.merchants.read',
   'platform.merchants.transfer_ownership',
+  'platform.payments.read',
+  'platform.payments.resolve',
   'platform.staff.manage',
+  'platform.wallet.create',
 ];
 
 async function session(identityId: string, membershipId: string, scope = 'full') {

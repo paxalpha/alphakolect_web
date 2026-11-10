@@ -27,11 +27,16 @@ export const PERMISSIONS = [
   'merchant.packages.manage',
   'merchant.remittances.approve',
   'merchant.withdrawals.create',
+  'merchant.wallet.read',
+  'merchant.wallet.classify',
   'platform.merchants.read',
   'platform.audit.read',
   'platform.merchants.lifecycle',
   'platform.merchants.transfer_ownership',
   'platform.staff.manage',
+  'platform.payments.read',
+  'platform.payments.resolve',
+  'platform.wallet.create',
 ] as const;
 
 /** A catalog permission identifier. */

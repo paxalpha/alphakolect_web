@@ -63,7 +63,7 @@ describe('the chart of accounts', () => {
     const res = await call(b.owner.token, 'get', '/v1/merchant/ledger/accounts');
     expect(res.status).toBe(200);
     const { items } = LedgerAccountList.parse(res.body);
-    expect(items).toHaveLength(23);
+    expect(items).toHaveLength(24);
     expect(items[0]).toMatchObject({
       code: '1000',
       name: 'Cash at bank',

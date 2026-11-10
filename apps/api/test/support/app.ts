@@ -1,3 +1,4 @@
+import { FakeProvider } from '../../src/integrations/payments/fake-provider.js';
 import { randomBytes } from 'node:crypto';
 import { pino } from 'pino';
 import { afterAll, inject } from 'vitest';
@@ -45,6 +46,7 @@ export async function createTestApp({
     auth,
     email,
     webAppUrl: TEST_WEB_APP_URL,
+    paymentProvider: new FakeProvider(),
     mfaEncryption: { current: TEST_MFA_KEY },
     ...(serverRequestIds ? {} : { requestId: honourRequestId }),
     ...options,

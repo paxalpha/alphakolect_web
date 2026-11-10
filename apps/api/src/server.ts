@@ -1,6 +1,7 @@
+import { createPaymentProvider } from './integrations/payments/index.js';
 import { AccessTokens } from './modules/identity/access-tokens.js';
 import { IdentityRepository } from './modules/identity/repository.js';
-import { ConfigError, loadConfig, type Config } from './platform/config.js';
+import { assertApiConfig, ConfigError, loadConfig, type Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
 import { createApp } from './platform/http/app.js';
 import { createLogger } from './platform/logger.js';
@@ -8,7 +9,9 @@ import { SmtpEmailSender } from './platform/smtp-email-sender.js';
 
 function readConfig(): Config {
   try {
-    return loadConfig();
+    const config = loadConfig();
+    assertApiConfig(config);
+    return config;
   } catch (err) {
     if (err instanceof ConfigError) {
       // The logger depends on configuration, so report directly. Messages never contain values.
@@ -28,6 +31,7 @@ const app = createApp({
   db,
   email,
   webAppUrl: config.webAppUrl,
+  paymentProvider: createPaymentProvider(config),
   mfaEncryption: {
     current: config.auth.mfaEncryptionKey,
     previous: config.auth.previousMfaEncryptionKey,

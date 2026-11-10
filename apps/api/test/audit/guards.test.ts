@@ -229,6 +229,42 @@ const INVENTORY: Record<
   },
   'savings.money_moved/success': { class: 'atomic', pattern: 'A', writer: 'savings.move_savings' },
   'savings.target_goal_set/success': { class: 'atomic', pattern: 'A', writer: 'savings.set_target_goal' },
+  // P9: payments (pattern A); the worker's events have no actor. Sensitive reads: the platform team's lists
+  'payments.wallet_provisioned/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'payments.record_wallet_created',
+  },
+  'payments.money_received/success': { class: 'atomic', pattern: 'A', writer: 'payments.record_event' },
+  'payments.receipt_classified/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'payments.classify_receipt',
+  },
+  'payments.finding_recorded/success': { class: 'atomic', pattern: 'A', writer: 'payments.record_finding' },
+  'payments.unmatched_resolved/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'payments.resolve_unmatched',
+  },
+  'payments.finding_resolved/success': { class: 'atomic', pattern: 'A', writer: 'payments.resolve_finding' },
+  'payments.platform_wallet_requested/success': {
+    class: 'atomic',
+    pattern: 'A',
+    writer: 'payments.request_platform_wallet',
+  },
+  'platform.wallets_read/success': {
+    class: 'sensitive_read',
+    writer: 'payments.platform_list_wallets',
+  },
+  'platform.unmatched_read/success': {
+    class: 'sensitive_read',
+    writer: 'payments.platform_list_unmatched',
+  },
+  'platform.findings_read/success': {
+    class: 'sensitive_read',
+    writer: 'payments.platform_list_findings',
+  },
   ...Object.fromEntries(
     [
       ...[
@@ -309,6 +345,16 @@ const INVENTORY: Record<
         'money_moved',
         'target_goal_set',
       ].map((i) => `savings.${i}/denied`),
+      // P9: a payments command or platform read refused by the database
+      ...[
+        'payments.receipt_classified',
+        'payments.unmatched_resolved',
+        'payments.finding_resolved',
+        'payments.platform_wallet_requested',
+        'platform.wallets_read',
+        'platform.unmatched_read',
+        'platform.findings_read',
+      ].map((i) => `${i}/denied`),
       // P5.4: the policy middleware's refusal
       'authz.denied/denied',
     ].map((pair) => [pair, { class: 'best_effort' as const }]),

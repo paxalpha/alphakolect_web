@@ -42,6 +42,8 @@ const MERCHANT = [
   'merchant.roles.manage',
   'merchant.roles.read',
   'merchant.savings.read',
+  'merchant.wallet.classify',
+  'merchant.wallet.read',
   'merchant.withdrawals.create',
 ];
 const PLATFORM = [
@@ -49,7 +51,10 @@ const PLATFORM = [
   'platform.merchants.lifecycle',
   'platform.merchants.read',
   'platform.merchants.transfer_ownership',
+  'platform.payments.read',
+  'platform.payments.resolve',
   'platform.staff.manage',
+  'platform.wallet.create',
 ];
 const sorted = (xs: readonly string[]) => [...xs].sort();
 

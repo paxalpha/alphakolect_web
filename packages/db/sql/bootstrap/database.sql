@@ -9,7 +9,7 @@ BEGIN
   EXECUTE format('REVOKE ALL ON DATABASE %I FROM PUBLIC', current_database());
   -- The migrator creates the module schemas.
   EXECUTE format('GRANT CONNECT, CREATE, TEMPORARY ON DATABASE %I TO alphakolect_migrator', current_database());
-  EXECUTE format('GRANT CONNECT ON DATABASE %I TO alphakolect_app, alphakolect_readonly', current_database());
+  EXECUTE format('GRANT CONNECT ON DATABASE %I TO alphakolect_app, alphakolect_worker, alphakolect_readonly', current_database());
 END
 $$;
 

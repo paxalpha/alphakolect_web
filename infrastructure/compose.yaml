@@ -19,6 +19,7 @@ services:
       # Application roles (packages/db/sql/bootstrap/roles.sql).
       DB_MIGRATOR_PASSWORD: ${DB_MIGRATOR_PASSWORD:?Set DB_MIGRATOR_PASSWORD in infrastructure/.env}
       DB_APP_PASSWORD: ${DB_APP_PASSWORD:?Set DB_APP_PASSWORD in infrastructure/.env}
+      DB_WORKER_PASSWORD: ${DB_WORKER_PASSWORD:?Set DB_WORKER_PASSWORD in infrastructure/.env}
       DB_READONLY_PASSWORD: ${DB_READONLY_PASSWORD:?Set DB_READONLY_PASSWORD in infrastructure/.env}
     ports:
       - '127.0.0.1:5436:5432'

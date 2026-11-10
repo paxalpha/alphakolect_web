@@ -44,6 +44,7 @@ jobs:
       POSTGRES_PASSWORD: ci-only-superuser-password
       DB_MIGRATOR_PASSWORD: ci-only-migrator-password
       DB_APP_PASSWORD: ci-only-app-role-password
+      DB_WORKER_PASSWORD: ci-only-worker-role-password
       DB_READONLY_PASSWORD: ci-only-readonly-password
     steps:
       - uses: actions/checkout@v4

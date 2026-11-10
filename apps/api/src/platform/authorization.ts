@@ -89,6 +89,12 @@ const REFUSAL_MESSAGE: Record<Permission, string> = {
   'merchant.packages.manage': ASK_THE_OWNER,
   'merchant.remittances.approve': ASK_THE_OWNER,
   'merchant.withdrawals.create': ASK_THE_OWNER,
+  // P9: the Live wallet and payments (the owner's answers of 2026-10-26, Q8, Q6)
+  'merchant.wallet.read': ASK_THE_OWNER,
+  'merchant.wallet.classify': ASK_THE_OWNER,
+  'platform.payments.read': ASK_A_SUPER_ADMIN,
+  'platform.payments.resolve': ASK_A_SUPER_ADMIN,
+  'platform.wallet.create': SUPER_ADMIN_ONLY,
   'platform.merchants.read': ASK_A_SUPER_ADMIN,
   'platform.audit.read': ASK_A_SUPER_ADMIN,
   'platform.merchants.lifecycle': 'Only a platform super admin may change a merchant’s status',

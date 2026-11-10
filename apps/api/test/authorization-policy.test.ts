@@ -36,6 +36,7 @@ import { requiredQuery } from './support/required-query.js';
 import { ledgerBodies, ledgerResources, LEDGER_SNAPSHOT_SQL, requiredHeaders } from './support/ledger.js';
 import { customerBodies, customerOf, CUSTOMERS_SNAPSHOT_SQL } from './support/customers.js';
 import { savingsBodies, savingsResources, SAVINGS_SNAPSHOT_SQL } from './support/savings.js';
+import { paymentBodies, paymentResources, PAYMENTS_SNAPSHOT_SQL } from './support/payments.js';
 
 // The policy middleware (P5.4; TARGET_ARCHITECTURE ADR-16 §3.5; P5 plan §4 invariants 3–8, §7.6, §8.2a rule 6, §9.4):
 // the decision, unit-tested with synthetic branch resources; the middleware's behaviour, including failing closed;
@@ -310,6 +311,7 @@ async function setUp() {
     ledger: await ledgerResources(owner, b.merchantId),
     customerId: await customerOf(owner, b.merchantId, b.branchId),
     savings: await savingsResources(owner, b.merchantId, b.branchId, b.owner.sessionId),
+    payments: await paymentResources(owner, b.merchantId),
   };
 }
 
@@ -325,12 +327,16 @@ const PARAMS: Record<string, (w: World) => string> = {
   customerId: (w) => w.customerId,
   packageId: (w) => w.savings.packageId,
   collectionId: (w) => w.savings.collectionId,
+  receiptId: (w) => w.payments.receiptId,
+  transactionId: (w) => w.payments.transactionId,
+  findingId: (w) => w.payments.findingId,
 };
 const BODIES: Partial<Record<keyof typeof endpoints, (w: World) => object>> = {
   ...ledgerBodies,
   postJournalEntry: (w) => ledgerBodies.postJournalEntry(w.ledger),
   ...customerBodies,
   ...savingsBodies,
+  ...paymentBodies,
   updateMerchantProfile: () => ({ name: `Policy ${randomBytes(3).toString('hex')}` }),
   createBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
   updateBranch: () => ({ name: `Branch ${randomBytes(3).toString('hex')}` }),
@@ -374,7 +380,8 @@ const snapshot = async (merchantId: string) =>
          'invitations', (SELECT json_agg(i ORDER BY i.id) FROM tenancy.invitations i WHERE merchant_id = $1),
          ${LEDGER_SNAPSHOT_SQL},
          ${CUSTOMERS_SNAPSHOT_SQL},
-         ${SAVINGS_SNAPSHOT_SQL}
+         ${SAVINGS_SNAPSHOT_SQL},
+         ${PAYMENTS_SNAPSHOT_SQL}
        )::text AS s`,
       [merchantId],
     )

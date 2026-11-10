@@ -1,3 +1,4 @@
+import type { IncomingMessage } from 'node:http';
 import express, { type Express } from 'express';
 import { pinoHttp } from 'pino-http';
 import type { Logger } from 'pino';
@@ -10,6 +11,9 @@ import { CustomerService } from '../../modules/customers/service.js';
 import { customerHandlers } from '../../modules/customers/routes.js';
 import { SavingsService } from '../../modules/savings/service.js';
 import { savingsHandlers } from '../../modules/savings/routes.js';
+import { PaymentsService } from '../../modules/payments/service.js';
+import { paymentHandlers } from '../../modules/payments/routes.js';
+import type { PaymentProvider } from '../../integrations/payments/provider.js';
 import { RateLimiter } from '../../modules/identity/rate-limits.js';
 import { MfaService } from '../../modules/identity/mfa.js';
 import { PasswordService } from '../../modules/identity/password-flows.js';
@@ -49,9 +53,13 @@ import { errorHandler, notFoundHandler } from './error-handler.js';
 import { serverRequestId, type RequestIdSource } from './request-id.js';
 import { API_PREFIX, buildV1Router } from './routes.js';
 
+type RawBodyRequest = IncomingMessage & { rawBody?: string };
+
 export type AppDeps = {
   logger: Logger;
   db: Db;
+  /** The payment provider the webhook and the Platform Live wallet name (P9). */
+  paymentProvider: PaymentProvider;
   auth: AuthDeps;
   /** Session cookie Domain (production: .alphakolect.com); host-only when undefined (ADR-14 D7). */
   cookieDomain?: string | undefined;
@@ -73,6 +81,7 @@ export function createApp({
   logger,
   db,
   auth,
+  paymentProvider,
   cookieDomain,
   trustProxy = ['loopback'],
   email,
@@ -99,7 +108,15 @@ export function createApp({
       autoLogging: { ignore: (req) => req.url === '/v1/health' },
     }),
   );
-  app.use(express.json({ limit: '100kb' }));
+  app.use(
+    express.json({
+      limit: '100kb',
+      // A provider's notification is kept as it arrived (TA-8).
+      verify: (req, _res, buf) => {
+        if (req.url?.includes('/webhooks/')) (req as RawBodyRequest).rawBody = buf.toString('utf8');
+      },
+    }),
+  );
 
   const audit = new AuditLog(db, logger);
   const limiter = new RateLimiter(auth.identity);
@@ -141,6 +158,7 @@ export function createApp({
   const settings = new MerchantSettingsService({ db, audit });
   const customers = new CustomerService({ db, identity: auth.identity, audit, limiter, mailer, webAppUrl });
   const savings = new SavingsService({ db, audit });
+  const payments = new PaymentsService({ db, audit, limiter, provider: paymentProvider });
   const handlers = {
     ...healthHandlers,
     ...authHandlers({ sessions, cookies, webOrigins: auth.webOrigins }),
@@ -162,6 +180,7 @@ export function createApp({
     ...customerAuthHandlers({ identity: auth.identity, sessions, limiter }),
     ...customerHandlers({ customers }),
     ...savingsHandlers({ savings }),
+    ...paymentHandlers({ payments }),
     ...ledgerHandlers({ books: new LedgerService({ db, audit, idempotency: new IdempotencyStore(db) }) }),
   };
 

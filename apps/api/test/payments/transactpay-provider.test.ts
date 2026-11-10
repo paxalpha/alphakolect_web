@@ -155,10 +155,20 @@ describe('confirming a transaction', () => {
   it('without an account named, there is nothing to match it by (C5); only the sandbox’s own answer is NOT_FOUND', async () => {
     const { p } = provider(() => json({ status: true, data: { amount: 10, statusId: 5 } }));
     expect((await p.getTransaction('S')).toAccountNumber).toBeUndefined();
-    const { p: gone } = provider(() =>
-      json({ message: 'SessionId not found', code: null, status: false, data: null }),
-    );
-    await expect(gone.getTransaction('S')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    // As the sandbox sent it: no code. Absent or empty is the same answer.
+    for (const body of [
+      { message: 'SessionId not found', code: null, status: false, data: null },
+      { message: 'SessionId not found', code: '', status: false, data: null },
+      { message: 'SessionId not found', status: false },
+    ]) {
+      const { p: gone } = provider(() => json(body));
+      await expect(gone.getTransaction('S')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    }
+    // The same message with a code the sandbox never sent is not that answer (the re-check's R2 hardening).
+    for (const code of ['91', '04', 0]) {
+      const { p } = provider(() => json({ message: 'SessionId not found', code, status: false, data: null }));
+      await expect(p.getTransaction('S')).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
     // A real deposit's event must not end rejected because of an outage or our own expired key.
     for (const answer of [
       () => json({}, 500),

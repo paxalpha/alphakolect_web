@@ -183,7 +183,7 @@ export class TransactPayProvider implements PaymentProvider {
       this.config.publicKey,
     );
     // Not found rejects an event in the end: an outage of ours or theirs must not reject real money.
-    if (this.statesNotFound(status, body, null, /^sessionid not found$/i))
+    if (this.statesNotFound(status, body, 'none', /^sessionid not found$/i))
       throw new ProviderError('NOT_FOUND', 'Transaction not found');
     if (status >= 400 || !this.succeeded(body))
       throw new ProviderError('UNKNOWN_OUTCOME', `The transaction lookup did not answer (HTTP ${status})`);
@@ -242,12 +242,19 @@ export class TransactPayProvider implements PaymentProvider {
 
   // ── internals ─────────────────────────────────────────────────────────────────────
 
-  /** The not-found answers the sandbox gave: 200, status false, the message, and the code where it sends one. */
-  private statesNotFound(status: number, body: Json, code: string | null, message: RegExp): boolean {
+  /**
+   * The not-found answers the sandbox gave: 200, status false, the message, and the code it sent with it. 'none': the
+   * sandbox sent no code, so an answer with one is not that answer (the re-check's R2 hardening).
+   */
+  private statesNotFound(status: number, body: Json, code: string, message: RegExp): boolean {
+    const codeMatches =
+      code === 'none'
+        ? body.code === undefined || body.code === null || body.code === ''
+        : body.code === code;
     return (
       status === 200 &&
       body.status === false &&
-      (code === null || body.code === code) &&
+      codeMatches &&
       typeof body.message === 'string' &&
       message.test(body.message)
     );

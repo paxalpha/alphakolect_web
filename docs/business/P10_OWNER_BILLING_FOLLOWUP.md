@@ -8,7 +8,7 @@ charged, so they are yours to decide. Each has our suggestion.
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ______ **Date:** ______
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 11th of November, 2026
 
 ---
 
@@ -23,7 +23,7 @@ You may mark a business as not billed (Q11). Suppose it already owes one or more
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: what is owed is cancelled. Each cancelled month is kept in its records as "waived", with your reason, and the business regains access at once if it was suspended
 
 ## F2. When "not billed" is lifted
 
@@ -33,7 +33,7 @@ You may mark a business as not billed (Q11). Suppose it already owes one or more
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Thne business is billed again from its next billing date. Nothing is charged for the time it wasn't billed, and it isn't suspended by the lifting itself
 
 ## F3. A business with 21 or more agents, before you set its price
 
@@ -46,7 +46,7 @@ You chose: until you set its price, the business isn't charged (Q9). When you la
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: The words that passed without a price aren't charged. Billing starts at the first billing date after you set the price
 
 ## F4. Switching billing off again
 
@@ -62,7 +62,7 @@ switch it off.
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Every suspended business regains access at once. What businesses already owe stays owed and visible on their Subscription page, but nothing is taken until you switch billing on again. A payment already sent to TransactPay is finished and recorded, because it can't be called back
 
 ## F5. TransactPay's fee for moving the subscription
 
@@ -73,4 +73,4 @@ TransactPay may charge a fee for moving a business's subscription into AlphaKole
 - ☐ The business pays the fee on top of the price
 - ☐ Not sure
 
-> Answer:
+> Answer: AlphaKolect pays the fee. The business pays exactly the price in rule 10.1 and nothing more

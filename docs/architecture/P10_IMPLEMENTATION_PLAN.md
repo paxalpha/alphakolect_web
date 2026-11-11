@@ -1,20 +1,21 @@
 # P10 implementation plan — billing
 
-**Status: revision 5 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
+**Status: revision 6 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
 
 - **The reviews:**
   - revision 3 resolved the first plan review's 14 findings (§12);
   - revision 4 resolved the second review's 8 findings (§13);
-  - revision 5 resolves the third review's 6 blockers and its point on the owner's record (§14).
+  - revision 5 resolved the third review's 6 blockers and its point on the owner's record (§14);
+  - revision 6 resolves the fourth review's two release gaps, its status-table concern and the owner's record (§15).
 - **The owner's answers:**
   - `docs/business/P10_OWNER_BILLING.md`, answered 11 November 2026: every question (Q1–Q14) with the suggested option,
     and the permissions' wording approved as written;
   - `docs/business/P10_OWNER_BILLING_FOLLOWUP.md`, answered 11 November 2026: every question (F1–F5) with the suggested
     option. F2's and F3's answers were first saved with typing slips and later corrected in the form, not by the
     integration team. The form records both;
-  - `docs/business/P10_OWNER_BILLING_CONFIRMATION.md`, **awaiting the owner**: C1 confirms F2 and F3 as they now read;
-    F6 asks about a billing date on the day billing is switched on again. The plan follows the suggested options until
-    he answers, and §9 condition 8 is not met until he does.
+  - `docs/business/P10_OWNER_BILLING_CONFIRMATION.md`, answered 11 November 2026 (`3869154`): C1, yes, F2 and F3 as
+    they now read are his answers; F6, a business whose billing date is the day billing is switched on again is
+    charged that day, as in Q12 (the suggested option).
 - **The build starts once** the reviewer approves this plan and the project lead agrees.
 
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
@@ -124,6 +125,8 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 | `exempt` | a date whose decision moment came before the exemption is processed after it (§3.4) | `exempt` | the invoice is issued `waived`, with the exemption's reason: the outcome it would have had if processed on time and then waived (F1) |
 | `exempt` | a `waiver_pending` invoice's charge succeeds | `exempt` | `paid`: the money moved, as F4 records for any payment already sent |
 | `exempt` | a `waiver_pending` invoice's charge fails or is resolved failed | `exempt` | `waived` |
+| `current` or `suspended` | a `paid` invoice's charge is reversed by the provider within its reversal window (§3.5) | unchanged | back to `open`, both postings reversed; retried by the schedule. A reversal isn't a refusal for lack of money, so it never suspends by itself |
+| `exempt` | a `paid` invoice's charge is reversed within its window | `exempt` | `waived`, both postings reversed |
 | `exempt` | the exemption is lifted | `trial` if `trial_ends_on` hasn't passed, otherwise `current` | none for the exempt time; billing restarts at the next billing date after today (F2). Lifting never suspends |
 | `suspended` | billing is switched off | `current` | stay `open` and visible; nothing is taken while off (F4) |
 
@@ -195,8 +198,7 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 Each date D has one **decision moment**, m(D): the first moment of day D at which billing is on.
 - It is D 00:00 if billing was on when the day began.
 - If billing is switched on during D, m(D) is that moment. This is how a first billing date on the switch-on day is
-  charged (Q12). Every later switch-on is treated the same way (F6, the suggested option, awaiting the owner's
-  confirmation).
+  charged (Q12). Every later switch-on is treated the same way (F6, the owner's answer).
 - If billing was off for the whole of D, D has no decision moment.
 
 D is invoiced only if, at m(D):
@@ -343,13 +345,25 @@ the "lack of money" outcome: the attempt is recorded as `insufficient`, and §3.
 **An order the provider never received (P10-24).** The claim commits before the send. A worker that stops between the
 two leaves an order `unknown` that TransactPay never saw. P9's resolution reads "not found" as `unknown` and leaves it so
 for ever, which would keep the invoice from a new attempt and keep its reservation. P10 changes P9's resolution:
-- **The adapter declares `capabilities.notFoundFinalAfter`,** a duration, only if TransactPay guarantees that a reference
-  not found that long after our request will never be processed (their answer to §2.5).
-- **"Not found" after that long is final.** A lookup that finds nothing for an order claimed longer ago than that
-  duration resolves it `failed`, with the reason `not_submitted`. That releases the reservation, and the schedule above
-  allows a new attempt. It counts as a non-money failure, so a worker that keeps crashing reaches a hold.
-- **"Not found" sooner, or without the capability,** stays `unknown`, as in P9. The invoice gets no new attempt, and the
-  order is listed for the platform team.
+- **The clock starts when the claim's lease ends.** P9's worker starts a call with an effect only if the call's timeout
+  ends inside the lease (P9-R3). So no request for that order can leave our side after the lease ends. That moment, not
+  the claim, is the earliest from which "not found" can mean "never sent".
+- **The guarantee must cover a late request.** "Not found" may be final only if no request with that reference can be
+  paid out after we mark the order failed and release its reservation. TransactPay's public documentation gives no such
+  guarantee, so §2.5 asks for one of two forms. The adapter declares `capabilities.notFoundFinal` only with one of them,
+  and records which:
+  - **`blocksReference`:** once the requery has answered "not found", any later request with that reference is refused.
+    Then the first "not found" after the lease ends is final;
+  - **`visibleWithin(L)`:** every request that reaches their API is refused, or visible to the requery within L of
+    arriving. Then a "not found" at least L after the lease ends is final.
+- **A final "not found"** resolves the order `failed`, with the reason `not_submitted`. That releases the reservation,
+  and the schedule above allows a new attempt with a new reference. It counts as a non-money failure, so a worker that
+  keeps crashing reaches a hold.
+- **"Not found" before then, or without the capability,** stays `unknown`, as in P9. The invoice gets no new attempt,
+  and the order is listed for the platform team.
+- **If the old reference later succeeds despite the guarantee,** it is handled as a final failure that later succeeds
+  (above): P9's contradiction path lists it, nothing is posted automatically, and a resulting second debit is listed as
+  owed back to the business (§6).
 - **The capability is part of the release guard** (§9 condition 2). Without it, billing can't charge.
 - **The rule applies to every outbound order,** since the guarantee is the provider's. In P10 there are no others (P9
   Q2).
@@ -372,6 +386,49 @@ for ever, which would keep the invoice from a new attempt and keep its reservati
 - A confirmation whose fee model isn't the one the adapter declared is not posted. It goes to P9's contradiction path.
 - The invoice becomes `paid` in the same transaction. Each posting is keyed by the provider transaction, so each is made
   once.
+
+**A success later reversed (P10-27).** TransactPay's published status table has 9, "Reversed": "Payout was reversed
+after processing". So a charge reported successful may be undone, and P10 defines what follows.
+- **Finality.** The adapter declares `capabilities.reversalWindow`: how long after success TransactPay says a payout can
+  be reversed, zero if never, and how a reversal is reported (§2.6.4). Without the declaration, billing can't charge
+  (§9 condition 2).
+- **Watching.** A succeeded subscription order is not finished for billing until its reversal window ends. Within the
+  window, the worker looks it up again: 1 hour after success, 24 hours after, and when the window ends. A reversal
+  reported by webhook is confirmed through the same lookup, as P9 confirms every event.
+- **A confirmed reversal**, in one transaction:
+  - the order moves from `succeeded` to `reversed`, a state P10 adds to P9's orders;
+  - each posting is reversed by its own template, keyed by the provider transaction: the business's Dr 1100 / Cr 5100,
+    and the platform's mirror of its success posting by the declared fee model. Whether the fee comes back is posted as
+    the provider reports it, never computed;
+  - the invoice returns from `paid` to `open` (or, if the business is exempt, becomes `waived`); the attempt is recorded
+    `reversed`, and counts as a non-money failure for the schedule;
+  - the business's billing state doesn't change. A reversal isn't a refusal for lack of money, so it doesn't suspend;
+    the next attempt does, if the wallet can't cover it (BR-10.4). A business that this charge had restored stays
+    `current` until then.
+- **After the window ends,** a reversal is not expected. If one is seen, by the lookup or the reconciler, it goes to P9's
+  contradiction path and is listed for the platform team; nothing is posted automatically.
+- **A reversal while billing is off:** the invoice is open and owed, and nothing is taken until billing is on (F4).
+
+**The status table (P10-28).** The adapter maps the payout statuses TransactPay publishes now ("Possible Status IDs and
+their statuses", updated 14 October 2026), not the table P9's adapter was written from:
+
+| ID | TransactPay's name | Mapped to |
+|---|---|---|
+| 5 | Successful | `successful` |
+| 4 | Failed ("failed permanently") | `failed`; final only with `finalFailureIsFinal` |
+| 8 | Rejected | `failed`; final only with `finalFailureIsFinal` |
+| 9 | Reversed | `reversed` (above) |
+| 1, 2, 3, 6, 7, 10 | Initiated, Pending, Processing, Awaiting Approval, Awaiting Verification, Awaiting Second Level Approval Verification | `pending` |
+| 11, 12 | Failed (pending confirmation), Failed (retriggered) | `pending`: neither is final |
+| anything else | — | an unclear answer (`UNKNOWN_OUTCOME`): the order stays `unknown` |
+
+- The requery's sample answer gives a status name, not an ID. The adapter maps by name too, and §2.6.1 asks TransactPay
+  to confirm the names are the table's. A name it doesn't know is an unclear answer.
+- Each ID and each name has its own adapter test. If TransactPay's answers to §2.6 differ from this table, the table
+  changes with them, before the capabilities can be declared.
+- **P9's adapter predates this table.** It maps 1–7 only, and reads 6 as "Reversed", where TransactPay now publishes 6 as
+  Awaiting Approval and 9 as Reversed. P9 makes no payouts (P9 Q2), but its deposit lookups use the same mapping. That is
+  passed to P9, which is still open (§6).
 
 **The lock order.** `billing` is lock category 19, after payments (18). Every footprint ascends:
 - `create_order`, for a subscription: the source wallet's projection (14, no key update), the new order (18), then the
@@ -446,9 +503,9 @@ returns `suspended` when the session's business is suspended and the permission 
 1. `billing.settings.enabled` is true;
 2. the business isn't `exempt`;
 3. the worker's environment allows charges (`BILLING_CHARGES=on`, off by default);
-4. the provider declares `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal` and
-   `capabilities.notFoundFinalAfter`. TransactPay's adapter declares them only in the release that implements and
-   proves §9 conditions 1–5.
+4. the provider declares `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
+   `capabilities.notFoundFinal` and `capabilities.reversalWindow`. TransactPay's adapter declares them only in the
+   release that implements and proves §9 conditions 1–5.
 
 **Where each condition is checked:**
 
@@ -471,7 +528,7 @@ reason when it is closed.
 - P15 runs one billing worker process at a time (§6), so two processes' rows never interleave. If two ever overlap, a
   closed row from the newer process stands, since the older one writes again only if its own state changes.
 
-**Production configuration** refuses `BILLING_CHARGES=on` while the configured provider lacks any of the three
+**Production configuration** refuses `BILLING_CHARGES=on` while the configured provider lacks any of the four
 capabilities. So a stale setting, a direct database update, or a switch turned on early still sends nothing. Tests set
 `enabled` directly in the database, with the environment off or a capability false, and see no invoice, order or send.
 
@@ -590,9 +647,24 @@ point of no return finish through P9's machinery. A success is posted and pays i
 
 **An order the provider never received**
 - The claim commits, and the worker stops before sending. The FakeProvider never received the reference.
-- A lookup before `notFoundFinalAfter` has passed: still `unknown`. After it: `failed`, `not_submitted`, the reservation
-  released, and attempt 2 by the schedule.
+- With `visibleWithin(L)`: "not found" before the lease ends plus L stays `unknown`; after it, `failed`,
+  `not_submitted`, the reservation released, and attempt 2 by the schedule.
+- With `blocksReference`: the first "not found" after the lease ends is final; one before it is not.
+- A send that started inside the lease and reaches the FakeProvider late: with either form, it is refused or seen, and
+  never paid out after the order is marked failed. If the FakeProvider is made to break the guarantee, the late success
+  goes to the contradiction path and is listed as owed back.
 - Without the capability: `unknown` for good, listed, and no new attempt.
+
+**A success later reversed**
+- Reversed within the window: the order `reversed`, both postings reversed once each, the invoice `open`, the business's
+  state unchanged, and a new attempt by the schedule. An exempt business's invoice becomes `waived`.
+- A reversal replayed, by lookup and webhook both: posted once.
+- Reversed after the window: nothing posted, the contradiction listed.
+- The lookups at 1 hour, 24 hours and the window's end; with a window of zero, none.
+
+**The status table**
+- Each ID 1–12 and each name maps as §3.5's table says; 11 and 12 never resolve an order; an unknown ID or name is an
+  unclear answer.
 
 **Orders and the gate**, as races:
 - `create_order` against a switch-off: either the order commits first and its claim cancels it, or creation is refused.
@@ -648,6 +720,10 @@ point of no return finish through P9's machinery. A success is posted and pays i
 
 ## 6. Obligations passed on
 
+- **P9 (still open), for the project lead:** P9's TransactPay adapter maps statuses 1–7 from an older table and reads 6
+  as "Reversed". TransactPay's current table (14 October 2026) has 6 as Awaiting Approval and 9 as Reversed. It isn't yet
+  known whether deposit lookups use the same table. Recorded here; not changed by P10's plan, since P9's code is P9's to
+  close (P10-14).
 - **The phase that builds customer sign-in:** BR-10.4 for customers (view-only; `423 MERCHANT_SUSPENDED`, "Please
   contact the company."), its declaration on each customer endpoint, and its test (P10-16).
 - **Any phase that deletes sessions, memberships or collections:** it must first keep billing's evidence of activity
@@ -677,7 +753,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | P10-11 | Not enough money | decided by the reservation in `create_order` before any order exists, and by the provider's answer after |
 | P10-12 | Billing's lock category | 19, after payments |
 | P10-13 | Businesses billing leaves alone | deactivated and unconfirmed ones, and `exempt` ones |
-| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes three things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), and the resolution of an order not found (P10-24). P10 does not close before P9 does |
+| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes four things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), the resolution of an order not found (P10-24), and the `reversed` state with its postings (P10-27). P10 does not close before P9 does |
 | P10-15 | Gate | this plan's review now; one review of the build at the end |
 | P10-16 | The customer audience | out of P10's exit criteria by an explicit amendment, as P2's was; RESTRUCTURING_MAP's P10 row is amended when this plan is approved. Building customer sign-in here would be a phase of its own |
 | P10-17 | Concurrent spending | every outbound order reserves its amount against the source wallet's locked 1100 projection |
@@ -687,9 +763,11 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | P10-21 | Bounded retries | after a non-money failure, retries 1 h, 6 h and 24 h later; failure 4 holds the invoice (a retry field, not a state): then one attempt per billing date or request to pay, never suspending |
 | P10-22 | The point of no return, and cancelling | the claim's commit, made only with billing on and the business not exempt, under a share lock that switch-off and exemption must wait for. A claim that finds the gate closed cancels the order instead, so no `created` order is stranded |
 | P10-23 | One row per billing date | a single `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint and immutable outcomes; not two tables, whose uniqueness no constraint could span |
-| P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only after the provider's guaranteed duration (`notFoundFinalAfter`); without that guarantee billing can't charge |
+| P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only under a provider guarantee that covers a late request (`notFoundFinal`: the reference blocked, or every request visible within L), counted from the end of the claim's lease; without it billing can't charge |
+| P10-27 | A success later reversed | the reversal window declared by the provider (`reversalWindow`); succeeded orders looked up again within it; a reversal reverses both postings, reopens the invoice and is retried, without suspending; outside the window, the contradiction path |
+| P10-28 | The status table | the adapter maps TransactPay's current table (IDs 1–12, 14 October 2026), by ID and by name, 11 and 12 not final, with a test for each; P9's older mapping is passed to P9 |
 | P10-25 | Conditions that are judgments | recorded as release approvals, with their evidence, before the switch can be turned on; called approvals, not system checks |
-| P10-26 | The decision moment | the first moment of the date's day at which billing is on: midnight if it was on, the switch-on moment if it was switched on that day (Q12; F6 pending) |
+| P10-26 | The decision moment | the first moment of the date's day at which billing is on: midnight if it was on, the switch-on moment if it was switched on that day (Q12, F6) |
 
 ## 8. Questions out
 
@@ -697,7 +775,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 |---|---|---|
 | The owner | `docs/business/P10_OWNER_BILLING.md` | answered 11 November 2026: every question with the suggested option; the wording approved |
 | The owner | `docs/business/P10_OWNER_BILLING_FOLLOWUP.md` | answered 11 November 2026: F1–F5, each with the suggested option. F2 and F3 were first saved with typing slips ("Thne", "words that passed", `e5a7b83`) and later corrected in the form, not by the integration team (`f30d107`). The form records both |
-| The owner | `docs/business/P10_OWNER_BILLING_CONFIRMATION.md` | **awaiting his answers:** C1 confirms F2 and F3 as they now read; F6, a billing date on the day billing is switched on again |
+| The owner | `docs/business/P10_OWNER_BILLING_CONFIRMATION.md` | answered 11 November 2026 (`3869154`): C1, F2 and F3 confirmed as they now read; F6, charged that day, as in Q12 (the suggested option) |
 | TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, whether a failure can later succeed, and when "not found" is final (§2.5); §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
 
 ## 9. Before billing can charge
@@ -711,13 +789,13 @@ Each condition is one of two kinds:
 | # | Condition | Kind | Proven by | Enforced by |
 |---|---|---|---|---|
 | 1 | TransactPay documents a transfer between two of our virtual accounts, debiting the source account, with the destination's required fields (`accountName` included) | system | their answer (§1); a sandbox test moves money between two sandbox virtual accounts and sees both balances change | `walletTransfer` declared only by the adapter release that implements it; production refuses `BILLING_CHARGES=on` without it, and the guard (§3.8) is closed |
-| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final; **guarantees that a final failure never later succeeds**; and **states after how long "not found" is final** | system | their answer (§2, including §2.5); sandbox tests of a duplicate reference, a lookup after a timeout, a reference never sent, and pending to final where the sandbox allows (§4) | `finalFailureIsFinal` and `notFoundFinalAfter`, each declared only with its guarantee; without both, production refuses `BILLING_CHARGES=on` |
-| 3 | TransactPay states its insufficient-funds answer | system | their answer (§3); the adapter maps it to `insufficient`; a sandbox test | part of the adapter release behind `walletTransfer` |
+| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final; **guarantees that a final failure never later succeeds**; **guarantees that "not found" is final, in one of §2.5's two forms**; and **states whether and within how long a success can be reversed, and how it is reported** | system | their answer (§2, including §2.5 and §2.6); sandbox tests of a duplicate reference, a lookup after a timeout, a reference never sent, and pending to final where the sandbox allows (§4) | `finalFailureIsFinal`, `notFoundFinal` and `reversalWindow`, each declared only with its statement; without all three, production refuses `BILLING_CHARGES=on` |
+| 3 | TransactPay states its insufficient-funds answer, and the adapter maps their **current** status table | system | their answer (§3, §2.6); the adapter maps it to `insufficient`; a test per status ID (P10-28); a sandbox test | part of the adapter release behind `walletTransfer` |
 | 4 | The fee model is confirmed, and is one §3.5 supports, AlphaKolect bearing the fee (F5) | system | their answer (§5); its posting tested; the reconciler finds no difference after a sandbox transfer | the adapter declares one fee model, and the capability only if it is supported. A confirmation with another model isn't posted |
 | 5 | Pooled or per-account balances (P9 follow-up §2) | system | their answer | the capability is declared only for per-account balances. If pooled, P10-10 and the reconciler return to the reviewer and the owner |
 | 6 | P9's conditions for live money (P9 plan §10, conditions 1–10: a real deposit, the balance enquiry, the worker's isolation in production, and the rest) | **approval** | the reviewer's closure of P9's live-money gate | a release approval for condition 6, citing that closure, must be recorded before billing can be switched on (§3.8). P10's migrations also come after P9's, but that orders the schema; it proves none of P9's conditions |
 | 7 | The accountant confirms in writing how subscription income is accounted for VAT (Q10) | **approval**, and a system check | a written sign-off | a release approval for condition 7, citing the letter, and the recorded treatment: the switch can't be turned on without both. If VAT is inside the price, the platform posting splits it (§3.5) |
-| 8 | The owner's answers | **approval** | Q1–Q14 and F1–F5, answered 11 November 2026; C1 and F6 (`P10_OWNER_BILLING_CONFIRMATION.md`) | **not met:** awaiting C1 and F6. Checked by the plan review and the project lead, not by the system |
+| 8 | The owner's answers | **approval** | Q1–Q14, F1–F5, C1 and F6, all answered 11 November 2026 | met. Checked by the plan review and the project lead, not by the system. Any answer TransactPay's replies make necessary goes to the owner in a new form |
 | 9 | The owner switches billing on, as Super Admin, from the platform admin | system | BR-1.3 | `enabled` false by default; only the non-grantable `platform.billing.switch` changes it |
 
 ## 10. The build, once approved
@@ -725,16 +803,17 @@ Each condition is one of two kinds:
 - **Migrations:**
   1. `billing_core`: schema, tables (the periods, the switch, exemption and guard histories, the release approvals,
      attempts), RLS, the price seed, the permission flag, the platform's VAT-payable account, the order's platform
-     posting and `cancelled` state, `create_order`'s reservation and billing gate;
+     posting, its `cancelled` and `reversed` states and the reversal templates, `create_order`'s reservation and billing
+     gate;
   2. `billing_functions`: the run and its decision moment, the charge task, the claim's guard and cancellation, attempts
-     and holds, the `not_submitted` resolution, restore, the switch, approvals and exemptions, the reads,
+     and holds, the `not_submitted` resolution, the reversal watch, restore, the switch, approvals and exemptions, the reads,
      `assert_authority`'s suspended outcome.
 - **Contracts:** `whileSuspended` on the registry and every existing operation; the new endpoints.
 - **Provider:**
   - the port gains `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
-    `capabilities.notFoundFinalAfter`, a declared fee model, and the transfer;
+    `capabilities.notFoundFinal`, `capabilities.reversalWindow`, a declared fee model, and the transfer;
   - the FakeProvider covers every fee model and outcome, including a reference it never received;
-  - the TransactPay adapter declares none of the three capabilities.
+  - the TransactPay adapter declares none of the four capabilities, and maps the current status table (§3.5).
 - **API and worker:** `modules/billing`, the worker's three tasks, the release guard and its history, `BILLING_CHARGES`,
   the 402 and 403 envelopes.
 - **Tests:** as in §5, in the db and API suites.
@@ -768,6 +847,7 @@ code, since none exists yet:
 
 | Rev | Date | Change |
 |---|---|---|
+| 6 | 2026-11-11 | The fourth review resolved (§15): "not found" final only under a guarantee covering a late request, counted from the lease's end; a reversed success (`reversed`, both postings reversed, the invoice reopened); the current status table; the owner's confirmation (C1, F6) recorded |
 | 5 | 2026-11-11 | The third review's 6 blockers and the owner's record resolved (§14): the decision moment and the guard's history; one periods table; the gate in `create_order` and cancellation by the claim; holds as retry fields, with the schedule stated attempt by attempt; "not found" final after the provider's stated time; release approvals for the conditions that are judgments; the owner's confirmation form |
 | 4 | 2026-11-11 | The second review's 8 findings resolved (§13): the follow-up's answers recorded; suspended businesses accrue invoices; chargeable dates by recorded history; `waiver_pending`; the point of no return at the claim; retries only with the provider's guarantee; every release condition enforced, the request to pay making no order; bounded retries and holds |
 | 3 | 2026-11-11 | The plan review's 14 findings resolved (§12): every state transition, dates and windows, the upcoming charge, attempts, the reservation, the charge gate, the fee postings, exemptions and switch-off, the customer amendment, the VAT condition; the owner's follow-up (F1–F5) and TransactPay's questions extended |
@@ -822,9 +902,24 @@ below.
 | 2 | "One invoice or unbilled row per date" spanned two tables, which no unique constraint can do | §3.1 and P10-23: one `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint tying each outcome to its columns, and a trigger that keeps outcomes immutable. The run holds the business's row for update |
 | 3 | An order created after switch-off's cancellation scan, or before a configuration change, could stay `created` and keep its reservation | §3.5 and P10-22: `create_order` checks billing and the exemption under share lock, atomically with the insert; the claim, under the same locks and with the worker's runtime guard, cancels instead of sending when the gate is closed. Switch-off and exemption no longer scan orders. Race tests for each |
 | 4 | `held` was used as a state but not listed, and the retry count was ambiguous | §3.5 and P10-21: holding is a retry field, and the invoice stays `open`. The schedule is stated attempt by attempt: retries 1 h, 6 h and 24 h after failures 1–3, held at failure 4, with each outcome's effect on the count |
-| 5 | A worker that stops after the claim and before the send leaves an order `unknown` for ever | §3.5 and P10-24: with the provider's guaranteed duration (`notFoundFinalAfter`, TransactPay §2.5), "not found" after that long resolves `failed`, `not_submitted`, releasing the reservation. Without it, billing can't charge (§9 condition 2). A crash-before-send test |
+| 5 | A worker that stops after the claim and before the send leaves an order `unknown` for ever | §3.5 and P10-24: with the provider's guaranteed duration (`notFoundFinalAfter`, TransactPay §2.5; made precise in revision 6, §15), "not found" after that long resolves `failed`, `not_submitted`, releasing the reservation. Without it, billing can't charge (§9 condition 2). A crash-before-send test |
 | 6 | P9's live-money conditions were called system-enforced, but migration order proves none of them | §9: each condition is marked system or approval. P9's conditions and the accountant's sign-off are release approvals (P10-25), recorded with their evidence before the switch can be turned on; the plan no longer claims the system checks them |
 | 7 | The follow-up's note said F2 and F3 kept their slips, but the form had been corrected | The correction, which the integration team did not make, is committed as found (`f30d107`). The note now records both versions (`5a8ca3b`). The owner confirms the answers as they read (`P10_OWNER_BILLING_CONFIRMATION.md`, C1), and §9 condition 8 is not met until he does |
 
 The reviewer also advised not to push or present revision 4 as approved. Nothing has been pushed since revision 1, and
 PR #12 stays open and unmerged, for review only, not as an approved plan.
+
+## 15. The fourth plan review (2026-11-11)
+
+The reviewer did not approve revision 5: the six changes of §14 are reflected, but two release gaps remained, with a
+concern about the status table and the owner's record. The reviewer also read TransactPay's public developer
+documentation; the status table was checked again against it for this revision.
+
+| # | Finding | Resolved in |
+|---|---|---|
+| 1 | "Not found" was final after a duration from the claim, and the guarantee didn't cover a request arriving late | §3.5 and P10-24: the clock starts when the claim's lease ends, the last moment a send can leave (P9-R3). The capability `notFoundFinal` needs one of two guarantees that cover a late request: the requery blocks the reference, or every request is refused or visible within L. TransactPay §2.5 asks for them; their public documentation gives neither. Tests for each form and for a late send |
+| 2 | Nothing said what happens if a paid charge is later reversed; TransactPay publishes status 9, "Reversed" | §3.5 and P10-27: `reversalWindow` declared only with TransactPay's statement (§2.6.4), required by §9 condition 2. Succeeded orders are looked up again within it; a reversal reverses both postings, reopens the invoice and is retried without suspending; after the window, the contradiction path. §3.1 gains the reversal rows |
+| 3 | P9's status mapping reads 6 as "Reversed"; the current table has 6 as Awaiting Approval and 9 as Reversed | §3.5 and P10-28: the adapter maps the current table (IDs 1–12, updated 14 October 2026) by ID and by name, with 11 and 12 not final, and a test for each; §9 condition 3. TransactPay §2.6 asks them to confirm it. P9's older mapping is passed to P9, which is still open (§6) |
+| 4 | The confirmation form held the owner's answers, but the plan still called them awaited | The owner answered on 11 November 2026: C1, yes; F6, charged that day, as in Q12 (`3869154`). Status, §3.4, P10-26, §8 and §9 condition 8 updated: met |
+
+Nothing has been pushed since revision 1. PR #12 stays open and unmerged, for review only.

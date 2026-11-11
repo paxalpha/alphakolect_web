@@ -8,7 +8,7 @@ our suggestion.
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ______ **Date:** ______
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 11th of November, 2026
 
 ---
 
@@ -25,7 +25,7 @@ passed without a price…". The form was then corrected, and now reads:
 - ☐ **Yes, these are my answers**
 - ☐ No. My answer to F2 or F3 is: ______
 
-> Answer:
+> Answer: Yes, these are  my answers
 
 ## F6. Switching billing on again
 
@@ -40,4 +40,4 @@ Consider a business whose regular billing date is the very day you switch billin
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: It is charged that day, as in Q12

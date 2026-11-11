@@ -38,10 +38,24 @@ things clarified before we do this with real money, and would like to test each 
 3. Please list every status a transfer can have, which of them are final, and which mean the money has left the source
    account. How long can a transfer stay unfinished?
 4. Can a transfer that you reported as failed later succeed, or one reported as successful later be reversed?
-5. Our system may record a transfer as started and then stop before the request reaches you. When the requery says a
-   `clientReference` is not found, is there a time after our request (for example, an hour) beyond which "not found" is
-   final: a request with that reference that reaches you later is refused and never processed? If so, how long is it? If
-   not, how should we tell a transfer you never received from one still on its way?
+5. Our system may record a transfer as started and then stop before the request reaches you. We then need to know for
+   certain that a `clientReference` the requery reports as not found will never be paid out. Do you guarantee either of
+   these, and in what terms?
+   - **a.** Once the requery has answered "not found" for a `clientReference`, any later request with that reference is
+     refused and never processed.
+   - **b.** Every payout request that reaches your API is either refused, or visible to the requery within a stated time
+     of arriving. How long is that time? Is it the same in the sandbox and in production?
+
+   If neither holds, how should we tell a transfer you never received from one still on its way?
+6. Your status page ("Possible Status IDs and their statuses", updated 14 October 2026) lists IDs 1–12.
+   1. Does the same table apply to the status returned by `GET /payout/requery`? The sample response there has a
+      `status` text and no ID. Is that text always one of the table's names?
+   2. Which statuses are final? Can a payout reported as 4 (Failed) or 8 (Rejected) ever become 12 (Failed,
+      retriggered), or later succeed?
+   3. When a payout is 11 (Failed, pending confirmation) or 12 (Failed, retriggered), what can it become next, and how
+      long can it stay so?
+   4. Status 9 (Reversed) is "reversed after processing". Can a payout reported as 5 (Successful) later become 9? If so,
+      within how long, for what reasons, and how are we told: the requery, a webhook, or both? Is the fee returned too?
 
 ## 3. Not enough money
 

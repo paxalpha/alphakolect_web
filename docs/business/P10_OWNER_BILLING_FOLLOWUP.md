@@ -77,13 +77,14 @@ TransactPay may charge a fee for moving a business's subscription into AlphaKole
 
 ---
 
-## How the answers are read
+## How F2 and F3 were recorded
 
-*Recorded 11 November 2026 by the integration team; the answers above are left exactly as written.*
+*Recorded 11 November 2026 by the integration team.*
 
-Every answer repeats the text of the suggested option. Two have typing slips, and are read as that option:
+Every answer repeats the text of the suggested option.
 
-- **F2:** "Thne business is billed again…" is read as "The business is billed again from its next billing date…".
-- **F3:** "The words that passed without a price…" is read as "The months that passed without a price aren't charged…".
-
-If either reading is wrong, please say so; the plan follows these readings until then.
+- **When the answers were first saved** (commit `e5a7b83`), two had typing slips: F2 began "Thne business is billed
+  again…", and F3 began "The words that passed without a price…".
+- **Afterwards, both were corrected** in this form to the suggested option's exact wording, as they read above (commit
+  `f30d107`). The integration team did not make that correction.
+- **The plan follows the answers as they now read.** Please confirm them in `P10_OWNER_BILLING_CONFIRMATION.md` (C1).

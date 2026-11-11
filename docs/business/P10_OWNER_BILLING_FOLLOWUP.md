@@ -33,7 +33,7 @@ You may mark a business as not billed (Q11). Suppose it already owes one or more
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer: Thne business is billed again from its next billing date. Nothing is charged for the time it wasn't billed, and it isn't suspended by the lifting itself
+> Answer: The business is billed again from its next billing date. Nothing is charged for the time it wasn't billed, and it isn't suspended by the lifting itself
 
 ## F3. A business with 21 or more agents, before you set its price
 
@@ -46,7 +46,7 @@ You chose: until you set its price, the business isn't charged (Q9). When you la
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer: The words that passed without a price aren't charged. Billing starts at the first billing date after you set the price
+> Answer: The months that passed without a price aren't charged. Billing starts at the first billing date after you set the price
 
 ## F4. Switching billing off again
 

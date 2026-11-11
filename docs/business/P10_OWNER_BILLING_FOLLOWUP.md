@@ -74,3 +74,16 @@ TransactPay may charge a fee for moving a business's subscription into AlphaKole
 - ☐ Not sure
 
 > Answer: AlphaKolect pays the fee. The business pays exactly the price in rule 10.1 and nothing more
+
+---
+
+## How the answers are read
+
+*Recorded 11 November 2026 by the integration team; the answers above are left exactly as written.*
+
+Every answer repeats the text of the suggested option. Two have typing slips, and are read as that option:
+
+- **F2:** "Thne business is billed again…" is read as "The business is billed again from its next billing date…".
+- **F3:** "The words that passed without a price…" is read as "The months that passed without a price aren't charged…".
+
+If either reading is wrong, please say so; the plan follows these readings until then.

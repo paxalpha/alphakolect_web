@@ -38,6 +38,10 @@ things clarified before we do this with real money, and would like to test each 
 3. Please list every status a transfer can have, which of them are final, and which mean the money has left the source
    account. How long can a transfer stay unfinished?
 4. Can a transfer that you reported as failed later succeed, or one reported as successful later be reversed?
+5. Our system may record a transfer as started and then stop before the request reaches you. When the requery says a
+   `clientReference` is not found, is there a time after our request (for example, an hour) beyond which "not found" is
+   final: a request with that reference that reaches you later is refused and never processed? If so, how long is it? If
+   not, how should we tell a transfer you never received from one still on its way?
 
 ## 3. Not enough money
 

@@ -38,13 +38,17 @@ things clarified before we do this with real money, and would like to test each 
 3. Please list every status a transfer can have, which of them are final, and which mean the money has left the source
    account. How long can a transfer stay unfinished?
 4. Can a transfer that you reported as failed later succeed, or one reported as successful later be reversed?
-5. Our system may record a transfer as started and then stop before the request reaches you. We then need to know for
-   certain that a `clientReference` the requery reports as not found will never be paid out. Do you guarantee either of
-   these, and in what terms?
-   - **a.** Once the requery has answered "not found" for a `clientReference`, any later request with that reference is
-     refused and never processed.
-   - **b.** Every payout request that reaches your API is either refused, or visible to the requery within a stated time
-     of arriving. How long is that time? Is it the same in the sandbox and in production?
+5. Our system may record a transfer as started and then stop before the request reaches you, or a request we sent may
+   be delayed on its way to you. We need to know for certain that a `clientReference` the requery reports as not found
+   will never be paid out, even if a request with it reaches you afterwards. Do you guarantee either of these, and in
+   what terms?
+   - **a.** Once the requery has answered "not found" for a `clientReference`, no request with that reference is ever
+     processed: neither one that reaches you afterwards (including one we sent earlier that was delayed on its way),
+     nor one that had already reached you but wasn't yet visible to the requery.
+   - **b.** A payout request can carry a time after which you refuse it, or you refuse any request that takes longer
+     than a stated time to reach you; **and** every request you accept is visible to the requery within a stated time
+     of reaching you. What are the two times, and how is the first one set? Are they the same in the sandbox and in
+     production?
 
    If neither holds, how should we tell a transfer you never received from one still on its way?
 6. Your status page ("Possible Status IDs and their statuses", updated 14 October 2026) lists IDs 1–12.
@@ -55,7 +59,11 @@ things clarified before we do this with real money, and would like to test each 
    3. When a payout is 11 (Failed, pending confirmation) or 12 (Failed, retriggered), what can it become next, and how
       long can it stay so?
    4. Status 9 (Reversed) is "reversed after processing". Can a payout reported as 5 (Successful) later become 9? If so,
-      within how long, for what reasons, and how are we told: the requery, a webhook, or both? Is the fee returned too?
+      within how long of its success, for what reasons, and how are we told: the requery, a webhook, or both? Is the
+      fee returned too?
+   5. Does the requery's answer give the time a payout succeeded and, if it was reversed, the time of the reversal? The
+      sample response shows neither. We need both to tell when a reversal happened, not only when we learned of it.
+   6. Once a payout is final, how long can it still be found with the requery?
 
 ## 3. Not enough money
 

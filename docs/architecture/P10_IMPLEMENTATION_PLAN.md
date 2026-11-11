@@ -1,12 +1,13 @@
 # P10 implementation plan — billing
 
-**Status: revision 6 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
+**Status: revision 7 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
 
 - **The reviews:**
   - revision 3 resolved the first plan review's 14 findings (§12);
   - revision 4 resolved the second review's 8 findings (§13);
   - revision 5 resolved the third review's 6 blockers and its point on the owner's record (§14);
-  - revision 6 resolves the fourth review's two release gaps, its status-table concern and the owner's record (§15).
+  - revision 6 resolved the fourth review's two release gaps, its status-table concern and the owner's record (§15);
+  - revision 7 resolves the fifth review's three items, and the gaps found in a full self-review of revision 6 (§16).
 - **The owner's answers:**
   - `docs/business/P10_OWNER_BILLING.md`, answered 11 November 2026: every question (Q1–Q14) with the suggested option,
     and the permissions' wording approved as written;
@@ -15,7 +16,13 @@
     integration team. The form records both;
   - `docs/business/P10_OWNER_BILLING_CONFIRMATION.md`, answered 11 November 2026 (`3869154`): C1, yes, F2 and F3 as
     they now read are his answers; F6, a business whose billing date is the day billing is switched on again is
-    charged that day, as in Q12 (the suggested option).
+    charged that day, as in Q12 (the suggested option);
+  - `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md`, **awaiting the owner**: G1, a deactivated business's debts
+    and dates; G2, restoring access while a month is held for a failure that isn't the business's;
+  - `docs/business/P10_OWNER_RULE_NOTES.md`, **awaiting the owner**: dated notes under BR-2.5 (the trial starts at
+    email confirmation, Q1) and BR-10.6 (what "activity" means, Q2), as rule 11.2's note was added (D9).
+  - The plan follows the suggested options of G1 and G2 until he answers. §9 condition 8 is not met until G1, G2 and
+    the rule notes are answered.
 - **The build starts once** the reviewer approves this plan and the project lead agrees.
 
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
@@ -40,7 +47,7 @@ judgment says, and §9 doesn't claim it does.
 - **Prices:** versioned, editable, with a future start date (BR-10.1, 10.2, 12.2), and a custom price for 21 or more
   agents.
 - **Each business's billing state,** with every transition defined (§3.1), kept apart from the merchant lifecycle.
-- **The 90-day trial** (BR-2.5, Q1).
+- **The 90-day trial,** from email confirmation (Q1, which supersedes BR-2.5's "from sign-up"; §2).
 - **Billing dates:** in WAT, each decided at a defined moment from recorded history (§3.4).
 - **The billable-agent count** (BR-10.6a, Q2).
 - **Billing periods:** one row per business per billing date, either an invoice or an unbilled date with its reason
@@ -75,11 +82,13 @@ judgment says, and §9 doesn't claim it does.
 
 | Finding | Settled by |
 |---|---|
-| TA-12: billing restore and suspension need failure rules | Restore only on a charge TransactPay has confirmed. A deposit alone never restores (§3.7). A charge in `unknown` changes no state until it is resolved. Requests that have passed the check complete, and the next request sees the new state (§3.6). "Email confirmed, wallet being set up" is a valid state: such a business is in trial, so there is nothing to charge. Several unpaid months: everything owed must be paid (Q5) |
+| TA-12: billing restore and suspension need failure rules | Restore only on a charge TransactPay has confirmed. A deposit alone never restores (§3.7). A charge in `unknown` changes no state until it is resolved. Requests that have passed the check complete, and the next request sees the new state (§3.6). "Email confirmed, wallet being set up" is a valid state: such a business is in trial, so there is nothing to charge. Several unpaid months: everything owed must be paid (Q5), except a month held for a failure that isn't the business's (G2) |
 | TA-25: a separate subscription gate | No separate gate. Every endpoint declares its behaviour while suspended in the route registry, and an endpoint with no declaration is blocked. The database enforces the same rule through the permission it already checks (§3.6, P10-3) |
 | TA-1: platform ledger | Settled in P6: the ledger has `owner_kind`. The platform chart has 1100 Platform wallet, 4100 Subscription income and 5100 Provider charges, and the templates `subscription.paid` (business: Dr 5100 / Cr 1100) and `platform.subscription_received` (platform: Dr 1100 / Cr 4100) exist |
 | The P9 plan §6: the subscription on P9's payment orders | An order posts to one ledger today. A subscription posts to two, the business's and the platform's, in one transaction (§3.5, P10-8) |
 | The P9 plan §10 condition 5: VA-to-VA transfers, payout idempotency, `accountName` | Asked of TransactPay (`P10_TRANSACTPAY_QUESTIONS.md` §1–§5, `accountName` included). Billing can't charge until their answers are implemented and proven in the sandbox (§9) |
+| OPEN-10: does the trial start at sign-up or at email verification? | The owner's Q1: at email confirmation. **BR-2.5 still says "from sign-up".** The owner's answer is the decision for P10, recorded as a traceable exception here and in §9 condition 8. The signed rule is brought up to date by a dated note, word for word as the owner approves it (`P10_OWNER_RULE_NOTES.md`, N1), as rule 11.2's was (D9). BR-2.5's original wording stays, and the note says what replaces it |
+| OPEN-11: what counts as agent activity (BR-10.6a, "still to define")? | The owner's Q2: a sign-in to the mobile app or a recorded collection, in the 15 days before the billing date (§3.3). Added under BR-10.6 by a dated note as he approves it (N2) |
 
 ## 3. Design
 
@@ -93,7 +102,17 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
   - `anchor_day` and `next_billing_on` (§3.4);
   - the exemption's reason and author.
 - **Kept apart from the merchant lifecycle** (`tenancy.merchants.status`: `pending_verification`, `active`,
-  `deactivated`). A suspended business is still `active`. Billing leaves deactivated and unconfirmed businesses alone.
+  `deactivated`). A suspended business is still `active`. Unconfirmed businesses have no billing row.
+- **A deactivated business (G1, the suggested option until the owner answers; P10-13).** The platform team can
+  deactivate a business and reactivate it later (P4's lifecycle function), and `tenancy.merchants` keeps only the latest
+  deactivation. So:
+  - P10 changes the lifecycle function to append each deactivation and reactivation to `billing.lifecycle_history`, in
+    the same transaction, holding the business's `merchant_billing` row for update (a P4 change, like §3.6's P5 change);
+  - a date whose decision moment falls while the business is deactivated is unbilled, `deactivated` (§3.4), so a
+    reactivated business is never billed for that time;
+  - what it owes stays owed, and nothing is taken while it is deactivated: `create_order` refuses, and a claim cancels
+    (§3.5). Its billing state doesn't change. Once reactivated, it is billed from its next date, and what it owes is
+    taken as usual.
 - **`billing.periods`:** one row per business and billing date, with the primary key `(merchant_id, billing_on)` (P10-23).
   Its `outcome` is `invoiced` or `unbilled`:
   - an invoiced row is the invoice. It holds the version, band, price and agents counted, and its state: `open`, `paid`,
@@ -116,17 +135,18 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 | `current` | a billing date is decided invoiced | `current` | a new invoice, `open`. Any earlier `open` one stays owed |
 | `suspended` | a billing date is decided invoiced | `suspended` | a new invoice, `open`, added to what is owed. The owner chose "everything owed must be paid" (Q5) over "a suspended business isn't billed for further months" |
 | `current` | a charge attempt is refused for lack of money, by the reservation (§3.5) or by the provider | `suspended` | the invoice stays `open` |
+| `suspended` | a charge attempt is refused for lack of money | `suspended` | the invoice stays `open` |
 | `current` or `suspended` | a charge attempt fails finally for any other reason | unchanged | stays `open`; retried on the bounded schedule of §3.5. A failure that isn't for lack of money never suspends |
-| `current` or `suspended` | a charge attempt's outcome is `unknown` | unchanged | stays `open`; no new attempt until P9's lookup resolves it |
+| `current` or `suspended` | a charge attempt's outcome is `unknown` | unchanged | stays `open`; no new attempt until the lookup resolves it (§3.5) |
 | `current` | a charge succeeds | `current` | `paid` |
-| `suspended` | a charge succeeds and no other invoice is `open` (Q5) | `current` | `paid` |
-| `suspended` | a charge succeeds while other invoices are still `open` | `suspended` | that one `paid`; the next is attempted |
+| `suspended` | a charge succeeds and every other `open` invoice is held (§3.5), or there is none (Q5, G2) | `current` | `paid`. A held invoice stays owed, and never suspends the business again by itself |
+| `suspended` | a charge succeeds while another `open` invoice isn't held | `suspended` | that one `paid`; the next is attempted |
 | any but `exempt` | exempted by the Super Admin (Q11) | `exempt` | `open` invoices with no attempt past the point of no return become `waived`, with the reason. Those with one become `waiver_pending` (F1, §3.8). An order of theirs still `created` is cancelled by its claim (§3.5) |
 | `exempt` | a date whose decision moment came before the exemption is processed after it (§3.4) | `exempt` | the invoice is issued `waived`, with the exemption's reason: the outcome it would have had if processed on time and then waived (F1) |
-| `exempt` | a `waiver_pending` invoice's charge succeeds | `exempt` | `paid`: the money moved, as F4 records for any payment already sent |
-| `exempt` | a `waiver_pending` invoice's charge fails or is resolved failed | `exempt` | `waived` |
-| `current` or `suspended` | a `paid` invoice's charge is reversed by the provider within its reversal window (§3.5) | unchanged | back to `open`, both postings reversed; retried by the schedule. A reversal isn't a refusal for lack of money, so it never suspends by itself |
-| `exempt` | a `paid` invoice's charge is reversed within its window | `exempt` | `waived`, both postings reversed |
+| any | a `waiver_pending` invoice's charge succeeds | unchanged | `paid`: the money moved, as F4 records for any payment already sent. This holds after the exemption is lifted too |
+| any | a `waiver_pending` invoice's charge fails, or is resolved failed | unchanged | `waived`, as the exemption decided. This holds after the exemption is lifted too |
+| `current` or `suspended` | a `paid` invoice's charge is found reversed, the reversal falling within the reversal window (§3.5) | unchanged | back to `open`, both postings reversed; retried by the schedule. A reversal isn't a refusal for lack of money, so it never suspends by itself |
+| `exempt` | a `paid` invoice's charge is found reversed within its window | `exempt` | `waived`, both postings reversed |
 | `exempt` | the exemption is lifted | `trial` if `trial_ends_on` hasn't passed, otherwise `current` | none for the exempt time; billing restarts at the next billing date after today (F2). Lifting never suspends |
 | `suspended` | billing is switched off | `current` | stay `open` and visible; nothing is taken while off (F4) |
 
@@ -152,6 +172,8 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
   - the date is recorded unbilled with the reason `awaiting_price`, and the business is listed for the platform team
     (Q9);
   - billing starts at the first billing date after the price is set (F3).
+- **A custom price applies only on a date with 21 or more agents.** On a date with 20 or fewer, the business pays its
+  band, whatever custom price it has.
 - **An invoice records the version, band, price and agents it used,** so a later price change never alters it.
 
 ### 3.3 Billable agents (BR-10.6a; Q2, Q4; P10-7)
@@ -184,7 +206,10 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 
 **Dates**
 - **No date exists before billing is first switched on.** `next_billing_on` is empty until then. Switching on for the
-  first time sets each business's first billing date to the later of `trial_ends_on` and the switch-on day (Q12).
+  first time sets each business's first billing date to the later of `trial_ends_on` and the switch-on day (Q12). That
+  includes exempt and deactivated businesses, whose dates are then unbilled while that lasts.
+- **A business confirmed after the first switch-on** gets `trial_ends_on` as its first billing date, when its billing
+  row is created.
 - **Later dates come from the anchor.** The first date's day of the month becomes `anchor_day`. Each later date is the
   anchor day of the following month, or that month's last day if it is shorter (Q3).
   - Every date is computed from `anchor_day`, never from the previous date, so the day never drifts. Anchor 31 gives 31
@@ -202,15 +227,17 @@ Each date D has one **decision moment**, m(D): the first moment of day D at whic
 - If billing was off for the whole of D, D has no decision moment.
 
 D is invoiced only if, at m(D):
-1. the business isn't exempt, by `billing.exemption_history`;
-2. the release guard is open, by `billing.guard_history` (§3.8);
-3. a price exists. With 21 or more agents, that means a custom price set before m(D) (§3.2, F3).
+1. the business isn't deactivated, by `billing.lifecycle_history` (§3.1, G1);
+2. the business isn't exempt, by `billing.exemption_history`;
+3. the release guard is open, by `billing.guard_history` (§3.8);
+4. a price exists. With 21 or more agents, that means a custom price set before m(D) (§3.2, F3).
 
-Otherwise D is unbilled, with the first reason that applies: `billing_off` (no decision moment), `exempt`,
-`charges_held`, or `awaiting_price`.
+Otherwise D is unbilled, with the first reason that applies: `billing_off` (no decision moment), `deactivated`,
+`exempt`, `charges_held`, or `awaiting_price`.
 
-**Every input is recorded history.** `billing.switch_history`, `billing.exemption_history`, `billing.guard_history` and
-the custom-price versions each record every change with its time. Each row is written in the same transaction as the
+**Every input is recorded history.** `billing.switch_history`, `billing.lifecycle_history`,
+`billing.exemption_history`, `billing.guard_history` and the custom-price versions each record every change with its
+time. Each row is written in the same transaction as the
 change itself; the guard's rows are written by the worker (§3.8). So D's outcome depends only on what was true at m(D),
 never on when the worker happens to process D. The same history processed at different times gives the same rows (a
 test).
@@ -221,8 +248,9 @@ with billing off waits, since it may still be switched on that day.
 This settles the cases the reviews raised:
 - **a delayed worker:** D is decided from the history at m(D). If the business wasn't exempt and the guard was open
   then, D is invoiced late, for its own window and version. That is debt the owner's switch allowed;
-- **an intentional pause:** with billing off all day, or the business exempt at m(D), D is never invoiced. That holds
-  even if billing is on again, or the exemption lifted, before the worker gets to D (Q12, F2, F4);
+- **an intentional pause:** with billing off all day, or the business deactivated or exempt at m(D), D is never
+  invoiced. That holds even if billing is on again, the business reactivated, or the exemption lifted, before the
+  worker gets to D (Q12, F2, F4, G1);
 - **charges held:** with the guard closed at m(D), D is never invoiced. That holds even if the guard reopened before
   the worker processed D, including when the worker was stopped in between;
 - **a change after m(D):** a switch-off leaves D's invoice owed (F4). An exemption waives it (F1), and if D is processed
@@ -252,7 +280,8 @@ computed by the run's own function, with:
 - `walletShort`: whether the wallet's balance, less the reservations (§3.5), is below what is owed plus the upcoming
   amount.
 
-It isn't shown while billing is off or the business is exempt, since that date won't be charged.
+It isn't shown while billing is off or the business is exempt, since that date won't be charged unless that changes
+first. Charges held by the guard don't hide it: the guard may reopen before the date.
 
 ### 3.5 The charge (BR-10.3; P10-8, P10-10, P10-11, P10-17, P10-20, P10-21)
 
@@ -262,18 +291,19 @@ invoices as requested, and the task picks them up on its next pass.
 
 **The gate at creation.** `create_order` enforces the database's part of the gate atomically with the insert.
 - For a subscription order, it takes `FOR SHARE` on `billing.settings` and on the business's `merchant_billing` row.
-- It refuses unless billing is on, the business isn't exempt, and the invoice is `open` with an attempt due (below).
-- Switching off and exempting take those rows for update. So an order is created either before a switch-off or exemption
-  commits, or not at all (a race test).
+- It refuses unless billing is on, the business is neither exempt nor deactivated, and the invoice is `open` with an
+  attempt due (below).
+- Switching off, exempting and deactivating take those rows for update. So an order is created either before one of
+  them commits, or not at all (a race test).
 
 **A `created` order is never stranded (P10-22).** The charge task sweeps every `created` subscription order and claims
 it. The claim takes the same share locks, and also receives whether the worker's runtime guard is open.
-- If billing is on, the business isn't exempt, and the runtime guard is open, the claim moves the order to `unknown`, and
-  the worker sends it.
+- If billing is on, the business is neither exempt nor deactivated, and the runtime guard is open, the claim moves the
+  order to `unknown`, and the worker sends it.
 - Otherwise the claim moves it to `cancelled`, in the same transaction, which releases its reservation. The attempt is
   recorded as cancelled.
-- So an order created just before a switch-off, an exemption, or a change of the worker's configuration is cancelled by
-  its claim, never sent. Switching off and exempting don't cancel orders themselves. In revision 4 they did, and an order
+- So an order created just before a switch-off, an exemption, a deactivation, or a change of the worker's configuration
+  is cancelled by its claim, never sent. Switching off and exempting don't cancel orders themselves. In revision 4 they did, and an order
   inserted after their scan could be left `created`, holding its reservation (the third review).
 - While the worker is stopped, a `created` order keeps its reservation. Nothing else spends from a Live wallet in P10
   (P9 Q2). The platform status lists any `created` order older than one pass.
@@ -285,14 +315,35 @@ it. The claim takes the same share locks, and also receives whether the worker's
 - Open invoices are attempted oldest first.
 
 **When a new attempt is made (P10-20).**
-- Only after the previous attempt is final: failed (including `not_submitted`, below), `insufficient` or cancelled. Never
-  after `unknown`, and never while one is unfinished.
+- Only after the previous attempt is final: failed (including `not_submitted`, below), `insufficient`, cancelled or
+  `reversed`. Never after `unknown`, and never while one is unfinished.
 - Only when the provider guarantees that a final failure never later succeeds (`capabilities.finalFailureIsFinal`, from
-  TransactPay's answer to §2.4). It is part of the release guard (§9 condition 2): without it, billing can't charge at
-  all, and the plan returns to the reviewer and the owner.
-- If a final failure later succeeds despite the guarantee, P9's contradiction path lists it. Nothing is posted
+  TransactPay's answers to §2.4 and §2.6.2). It is part of the release guard (§9 condition 2): without it, billing can't
+  charge at all, and the plan returns to the reviewer and the owner.
+- If a final failure later succeeds despite the guarantee, it is an order finding (below). Nothing is posted
   automatically. A second debit that results is owed back to the business, and is listed as a refund for the platform
   team (§6).
+
+**Taking nothing unless everything owed is covered (Q5, Q6; P10-11).** Q6 chose "take nothing" when the wallet holds
+less than what is owed, and Q5 "everything owed must be paid". Read together, with several invoices open:
+- an attempt is made only when the business's Live wallet, less its reservations, covers **everything it owes** (every
+  `open` invoice, held ones included). Then the invoices are attempted oldest first;
+- otherwise, a due attempt is recorded `insufficient` without making an order, exactly as if the reservation had
+  refused it (§3.1's lack-of-money rows);
+- `create_order`'s reservation stays the last check, per order. Nothing else spends from a Live wallet in P10, and P9
+  never debits a deposit automatically (a contradicted deposit goes to the platform team, E1). So a wallet that covered
+  everything a moment earlier still does between orders; if it somehow didn't, the reservation refuses, and nothing is
+  half taken.
+
+**When an attempt is due.** An invoice without an unfinished attempt is due:
+- when it is issued (attempt 1);
+- after a non-money failure, at `next_attempt_at` (the schedule below);
+- after `insufficient`, when the worker's sweep finds the wallet covers everything owed, after P9 posted a confirmed
+  deposit (§3.7);
+- after `cancelled`, once the gate is open again;
+- on a request to pay (§3.7): every `open` invoice without an unfinished attempt becomes due at once, a held one by
+  `held_attempt_due`. At most one request is acted on per business an hour; a repeat within the hour is answered with
+  the attempts already made.
 
 **The retry schedule and holds (P10-21).** A hold is not an invoice state. An invoice stays `open` while held, and its
 retry fields record the schedule:
@@ -301,8 +352,8 @@ retry fields record the schedule:
 - `held`: true once `failures` reaches 4;
 - `held_attempt_due`: whether a held invoice has its one allowed attempt waiting.
 
-After an `insufficient` attempt, the next one is made when the wallet covers the amount (§3.7). After a non-money
-failure, the schedule is:
+After an `insufficient` attempt, the next one is made when the wallet covers everything owed (above, §3.7). After a
+non-money failure, the schedule is:
 
 | Attempt | Made |
 |---|---|
@@ -313,7 +364,9 @@ failure, the schedule is:
 | — | after failure 4 (the first attempt and its three retries), the invoice is held |
 
 - **A held invoice is attempted only when `held_attempt_due` is set.** The run sets it at each later billing date of the
-  business, and a request to pay sets it, at most once an hour. Each such attempt clears it.
+  business, and a request to pay sets it (at most one request an hour, above). Each such attempt clears it.
+- **A held invoice doesn't keep a business suspended** (G2, the suggested option until the owner answers): access
+  returns once every other open invoice is paid (§3.1, §3.7). The held invoice stays owed.
 - **Each outcome:**
   - success: the invoice is `paid`, and any hold ends;
   - `insufficient`: `failures` returns to 0 and any hold ends; §3.1's lack-of-money row applies;
@@ -330,7 +383,8 @@ failure, the schedule is:
 
 Two orders against the same money are serialized by the lock, and only one is made (test). Nothing else spends from a
 Live wallet in P10 (P9 Q2), and any later payout path goes through the same function. A refusal by the reservation is
-the "lack of money" outcome: the attempt is recorded as `insufficient`, and §3.1 applies. Nothing is half taken (Q6).
+the "lack of money" outcome: the attempt is recorded as `insufficient`, with no order, and §3.1 applies. Nothing is half
+taken (Q6).
 
 **The point of no return (P10-22).** An order is "sent" from the moment its claim commits it to `unknown`.
 - The claim moves it from `created` to `unknown` (P9's design: a claimed order may already have been sent). It does so
@@ -345,25 +399,43 @@ the "lack of money" outcome: the attempt is recorded as `insufficient`, and §3.
 **An order the provider never received (P10-24).** The claim commits before the send. A worker that stops between the
 two leaves an order `unknown` that TransactPay never saw. P9's resolution reads "not found" as `unknown` and leaves it so
 for ever, which would keep the invoice from a new attempt and keep its reservation. P10 changes P9's resolution:
-- **The clock starts when the claim's lease ends.** P9's worker starts a call with an effect only if the call's timeout
-  ends inside the lease (P9-R3). So no request for that order can leave our side after the lease ends. That moment, not
-  the claim, is the earliest from which "not found" can mean "never sent".
-- **The guarantee must cover a late request.** "Not found" may be final only if no request with that reference can be
-  paid out after we mark the order failed and release its reservation. TransactPay's public documentation gives no such
-  guarantee, so §2.5 asks for one of two forms. The adapter declares `capabilities.notFoundFinal` only with one of them,
-  and records which:
-  - **`blocksReference`:** once the requery has answered "not found", any later request with that reference is refused.
-    Then the first "not found" after the lease ends is final;
-  - **`visibleWithin(L)`:** every request that reaches their API is refused, or visible to the requery within L of
-    arriving. Then a "not found" at least L after the lease ends is final.
+- **The last moment a request can leave our side is the end of the claim's lease** (`lease_until`, set by the
+  database). P9's worker starts a call with an effect only if the call's timeout ends inside the lease (P9-R3). It
+  measures the lease on its own monotonic clock from just before it asks for the claim, and keeps 10% in hand, so every
+  send has ended before `lease_until`. The finality times below count from `lease_until`.
+- **Leaving our side isn't reaching TransactPay.** A request sent just before the lease ends can be delayed on its way,
+  and reach them after we have looked it up and found nothing. So "not found" may be final only under a guarantee that
+  holds for such a request, measured from when we send, not from when it arrives. TransactPay's public documentation
+  gives none, so §2.5 asks for one of two forms. The adapter declares `capabilities.notFoundFinal` only with one of
+  them, and records which:
+  - **`blocksReference`:** once the requery has answered "not found" for a reference, no request with it is ever
+    processed: neither one that arrives afterwards, including one we sent earlier that was delayed, nor one that had
+    already arrived but wasn't yet visible. Then the first "not found" obtained after the lease ends is final;
+  - **`refusedAfter(A)` with `visibleWithin(L)`:** every request we send carries, or is bound by, a limit A: TransactPay
+    refuses any request reaching them more than A after we sent it (an expiry in the request, or a bound they state and
+    enforce). And every request they accept is visible to the requery within L of reaching them. Then a "not found"
+    obtained at or after **the lease's end + A + L** is final: any request we sent either reached them by the lease's
+    end + A, and is visible by the lease's end + A + L, or is refused.
+  - A visibility time L alone, with no bound on arrival, is **not** enough, and the capability isn't declared on it.
 - **A final "not found"** resolves the order `failed`, with the reason `not_submitted`. That releases the reservation,
   and the schedule above allows a new attempt with a new reference. It counts as a non-money failure, so a worker that
   keeps crashing reaches a hold.
-- **"Not found" before then, or without the capability,** stays `unknown`, as in P9. The invoice gets no new attempt,
-  and the order is listed for the platform team.
-- **If the old reference later succeeds despite the guarantee,** it is handled as a final failure that later succeeds
-  (above): P9's contradiction path lists it, nothing is posted automatically, and a resulting second debit is listed as
-  owed back to the business (§6).
+- **"Not found" before then, or without the capability,** stays `unknown`, as in P9. Its reservation stays held, the
+  invoice gets no new attempt, and the order is listed for the platform team.
+- **A confirming lookup.** Every order resolved `failed`, `not_submitted` included, is looked up once more 24 hours
+  later. Any answer other than "not found" or a failure is an order finding (below).
+- **If the old reference is paid out despite the guarantee,** it is an order finding: listed, nothing posted
+  automatically, and a resulting second debit is listed as owed back to the business (§6). The debit is never
+  unrecorded: the confirming lookup or the reconciler (below) records it.
+
+**Order findings (P10-29).** P9's contradiction path covers provider events (deposits): `record_order` refuses any order
+already final, so an answer that contradicts a final order had nowhere to go. P10 adds `payments.order_findings`, a P9
+change:
+- each records the order, what was recorded, what the provider now answers (status, amount, transaction, times), and
+  when it was seen. A finding seen again updates `last_seen_at`, as P9's reconciliation findings do;
+- it is shown to the platform team with the reconciliation findings, and resolved by a person with a note, as P9's are.
+  Nothing is posted or changed automatically;
+- written only by the worker's functions, and read through the platform's findings view.
 - **The capability is part of the release guard** (§9 condition 2). Without it, billing can't charge.
 - **The rule applies to every outbound order,** since the guarantee is the provider's. In P10 there are no others (P9
   Q2).
@@ -383,19 +455,52 @@ for ever, which would keep the invoice from a new attempt and keep its reservati
 
 - If VAT is inside the price (§9 condition 7), the platform's posting splits 4100 and a VAT-payable account by the
   recorded rate.
-- A confirmation whose fee model isn't the one the adapter declared is not posted. It goes to P9's contradiction path.
+- A confirmation whose fee model isn't the one the adapter declared is not posted. The order stays `unknown`, with its
+  reservation held so the money isn't spent twice, and an order finding is recorded. The invoice gets no new attempt.
 - The invoice becomes `paid` in the same transaction. Each posting is keyed by the provider transaction, so each is made
   once.
 
 **A success later reversed (P10-27).** TransactPay's published status table has 9, "Reversed": "Payout was reversed
 after processing". So a charge reported successful may be undone, and P10 defines what follows.
-- **Finality.** The adapter declares `capabilities.reversalWindow`: how long after success TransactPay says a payout can
-  be reversed, zero if never, and how a reversal is reported (§2.6.4). Without the declaration, billing can't charge
-  (§9 condition 2).
-- **Watching.** A succeeded subscription order is not finished for billing until its reversal window ends. Within the
-  window, the worker looks it up again: 1 hour after success, 24 hours after, and when the window ends. A reversal
-  reported by webhook is confirmed through the same lookup, as P9 confirms every event.
-- **A confirmed reversal**, in one transaction:
+- **What the provider must state.** The adapter declares `capabilities.reversalWindow` only with all of these from
+  TransactPay (§2.6.4–§2.6.6):
+  - the window W: how long after a payout's success it can be reversed, zero if never;
+  - that the requery's answer gives the time the payout succeeded and, once reversed, the time of the reversal, both
+    on TransactPay's clock;
+  - that a final payout can still be looked up for at least W plus a day.
+
+  Without the declaration, billing can't charge (§9 condition 2).
+- **When a reversal happened, not when we learned of it.** The window runs from TransactPay's success time, and a
+  reversal is classified by TransactPay's reversal time: both times come from the same clock. When we found out doesn't
+  matter.
+- **The watch (P10-27).** A succeeded subscription order carries a watch until it completes. The watch has three
+  scheduled checks: 1 hour after success, 24 hours after, and W plus 1 hour after (the hour allows for the two clocks).
+  - **A check is complete only on a conclusive answer:** "successful", or "reversed" with its time.
+  - **Anything else is inconclusive:** an error, a timeout, an unclear answer, "not found", or any other status. The check
+    is retried 5 minutes later, then at doubling intervals up to an hour, for as long as it takes. A failed lookup never
+    completes a check, and later checks don't replace an earlier one that is still open.
+  - **The watch completes** only when its last check gets "successful" at or after W plus 1 hour. Until then the order
+    isn't settled. A watch whose last check is a day overdue is listed for the platform team, and keeps retrying.
+  - **"Not found", or a status other than successful or reversed,** for an order recorded as succeeded, is also an order
+    finding. The watch keeps retrying.
+  - P10 doesn't rely on a payout webhook: P9's webhook handles deposits, and whether TransactPay sends one for payouts is
+    asked in §2.6.4. If one is added later, it may only bring a check forward. The lookup stays the authority.
+- **Classifying a reversal**, whenever it is found, by a check, a retry or the reconciler's lead:
+  - **its reversal time is within W of the success time:** the normal reversal below, even if it is found after the
+    window has ended;
+  - **its reversal time is after that:** a provider contradiction. An order finding is recorded and escalated to the
+    platform team, and nothing is posted automatically;
+  - **no reversal time, despite the capability:** if found before the success time plus W, by our clock less the hour
+    in hand, it can only have happened within the window, and is the normal reversal. Otherwise it can't be classified,
+    and is an order finding, escalated, with nothing posted automatically.
+- **Duplicate reports.** The reversal is posted once: its postings are keyed by the provider transaction and
+  "reversal", and the order moves to `reversed` once. The same answer again changes nothing; a different one is an order
+  finding.
+- **An order whose first conclusive answer is "reversed"** (the success was never seen, for instance while the order
+  was `unknown`): the money left and came back, so neither success nor reversal is posted. A fee the provider reports as
+  kept is posted to the platform's 5100. The order becomes `reversed`, the attempt `reversed` (a non-money failure), and
+  the invoice stays `open`.
+- **A normal reversal**, in one transaction:
   - the order moves from `succeeded` to `reversed`, a state P10 adds to P9's orders;
   - each posting is reversed by its own template, keyed by the provider transaction: the business's Dr 1100 / Cr 5100,
     and the platform's mirror of its success posting by the declared fee model. Whether the fee comes back is posted as
@@ -405,9 +510,21 @@ after processing". So a charge reported successful may be undone, and P10 define
   - the business's billing state doesn't change. A reversal isn't a refusal for lack of money, so it doesn't suspend;
     the next attempt does, if the wallet can't cover it (BR-10.4). A business that this charge had restored stays
     `current` until then.
-- **After the window ends,** a reversal is not expected. If one is seen, by the lookup or the reconciler, it goes to P9's
-  contradiction path and is listed for the platform team; nothing is posted automatically.
 - **A reversal while billing is off:** the invoice is open and owed, and nothing is taken until billing is on (F4).
+  While the business is deactivated, the same (G1).
+
+**The reconciler and charges in flight (P10-30).** P9's reconciler compares each Live wallet's provider balance with
+its 1100 (§3.6 of the P9 plan). P9 had no outbound orders. With charges, a wallet's balance and its books differ
+legitimately while an order is unfinished: the provider may have moved the money before we record it. P10 changes the
+comparison:
+- **Source wallet:** a provider balance below the books by no more than the sum of its `unknown` and `submitted`
+  outbound orders is "in flight", not a finding;
+- **Platform wallet:** a provider balance above the books by no more than the sum of its incoming unfinished orders is
+  likewise in flight;
+- an in-flight difference is checked again on the next pass. Once the orders are final, any difference that remains is
+  a finding, as in P9;
+- a reversal not yet found by the watch shows as a difference until it is. It is recorded as a finding, as P9 records
+  any difference, and the watch's lookups find which order it was.
 
 **The status table (P10-28).** The adapter maps the payout statuses TransactPay publishes now ("Possible Status IDs and
 their statuses", updated 14 October 2026), not the table P9's adapter was written from:
@@ -437,7 +554,11 @@ their statuses", updated 14 October 2026), not the table P9's adapter was writte
 - the success path: the projections (14), the order (18), then the attempt, the period and the billing state (19);
 - switching off and exempting: the settings or the billing state (19, for update), then the periods (19). They read the
   orders without locking them, after their own lock, so they see every claim that committed before them;
-- the run: the billing state (19, for update), then the period (19).
+- deactivating and reactivating: P4's lifecycle footprint as it is (the merchant, 2), then the billing state (19, for
+  update) and the lifecycle history (19);
+- the run: the billing state (19, for update), then the period (19);
+- a normal reversal: the projections (14), the order (18), then the attempt, the period and the billing state (19);
+- an order finding: the order (18) and the finding (18), nothing in billing.
 
 Each footprint is pinned in the lock-order guard.
 
@@ -473,17 +594,19 @@ returns `suspended` when the session's business is suspended and the permission 
 
 ### 3.7 Restore (BR-10.5; TA-12; P10-5)
 
-- **Access returns only when the charge is confirmed.** In the same transaction that marks the last open invoice paid,
-  the state goes from `suspended` to `current` (Q5). A deposit alone never restores.
+- **Access returns only when the charge is confirmed.** In the same transaction that pays the last open invoice that
+  isn't held, the state goes from `suspended` to `current` (Q5, G2). A deposit alone never restores.
 - **A charge is retried in two ways:**
-  - the worker's sweep picks up a suspended business whose wallet now covers the amount owed, after P9 posted a
-    confirmed deposit;
+  - the worker's sweep picks up a suspended business whose wallet, less its reservations, now covers everything it owes
+    (§3.5), after P9 posted a confirmed deposit;
   - the owner, or staff with `merchant.subscription.pay`, asks for one.
 - **The request to pay:**
   - it carries an `Idempotency-Key`, and a repeat returns the first answer;
-  - it makes no order itself (§3.5): it marks the open invoices as requested, and answers with their attempts. A held
-    invoice gets its one allowed attempt, at most once an hour (§3.5);
-  - with charges held or billing off, it records nothing and says so.
+  - it makes no order itself (§3.5): it makes the open invoices due, a held one by its one allowed attempt, and answers
+    with their attempts. At most one request is acted on per business an hour (§3.5);
+  - with billing off, or charges held by the guard's latest recorded state (§3.8), it records nothing and says so;
+  - if the wallet doesn't cover everything owed, the attempts are recorded `insufficient` and the answer gives the
+    amount short (Q6).
 - **Sessions aren't revoked or reissued.** The state is read on each call, so the next request after the restore
   succeeds.
 
@@ -501,7 +624,7 @@ returns `suspended` when the session's business is suspended and the permission 
 **The release guard** is open only when all four of these hold. Conditions 1 and 2 are database state; conditions 3 and
 4 are the worker's runtime:
 1. `billing.settings.enabled` is true;
-2. the business isn't `exempt`;
+2. the business is neither `exempt` nor deactivated (§3.1);
 3. the worker's environment allows charges (`BILLING_CHARGES=on`, off by default);
 4. the provider declares `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
    `capabilities.notFoundFinal` and `capabilities.reversalWindow`. TransactPay's adapter declares them only in the
@@ -566,7 +689,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | `GET /v1/merchant/subscription` | `merchant.subscription.read` | allowed | the state, trial end, band, price, next billing date, the coming price (Q8), the amount owed, `upcoming` (§3.4), and the Live wallet's details for loading it |
 | `GET /v1/merchant/subscription/invoices` | `merchant.subscription.read` | allowed | the invoices, with the agents counted and their attempts |
 | `POST /v1/merchant/subscription/payment` | `merchant.subscription.pay` | allowed | asks for a charge of what is owed (`Idempotency-Key`; §3.7) |
-| `GET /v1/platform/billing/businesses` · `…/{merchantId}/invoices` · `/v1/platform/billing/preview` · `/v1/platform/billing/status` | `platform.billing.read` | — | every business's billing state and amount owed; a business's periods (invoices, unbilled dates and held invoices); what a run would charge; the guard's state and history, the release approvals, and any `created` order older than one pass (§3.8) |
+| `GET /v1/platform/billing/businesses` · `…/{merchantId}/invoices` · `/v1/platform/billing/preview` · `/v1/platform/billing/status` | `platform.billing.read` | — | every business's billing state and amount owed; a business's periods (invoices, unbilled dates and held invoices); what a run would charge; the guard's state and history, the release approvals, any `created` order older than one pass, order findings, and overdue reversal watches (§3.5, §3.8) |
 | `GET` · `POST /v1/platform/billing/prices` · `POST …/prices/{id}/withdrawal` | `platform.billing.read` / `platform.billing.prices` | — | the versions; a new version with its start date; withdrawing one not yet started |
 | `PUT /v1/platform/billing/businesses/{merchantId}/custom-price` | `platform.billing.custom_price` | — | the price for 21 or more agents (Q9, F3) |
 | `PUT /v1/platform/billing/settings` · `POST /v1/platform/billing/release-approvals` · `POST` · `DELETE …/businesses/{merchantId}/exemption` | `platform.billing.switch` (Super Admin; not grantable) | — | switching billing on or off, and recording the VAT treatment; recording a release approval with its evidence (§3.8); an exemption and lifting it |
@@ -574,8 +697,9 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - **Activity events** (atomic; identifiers and amounts only):
   - `billing.invoice_issued`, `billing.date_unbilled`, `billing.release_approved`;
   - `billing.charge_requested`, `billing.charge_cancelled`, `billing.charge_held`;
-  - `billing.invoice_paid`, `billing.invoice_waived`;
+  - `billing.invoice_paid`, `billing.invoice_waived`, `billing.charge_reversed`;
   - `billing.suspended`, `billing.restored`;
+  - `payments.order_finding_recorded` (the platform's record, as P9's `payments.finding_recorded`);
   - `billing.prices_set`, `billing.prices_withdrawn`, `billing.custom_price_set`;
   - `billing.switched`, `billing.exempted`, `billing.exemption_lifted`.
 - **Sensitive reads** are recorded once per page, as in P9.
@@ -586,7 +710,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 **BR-1.3 and the release guard**
 - Before billing is first switched on, no date exists and nothing is written.
 - `enabled` set directly in the database, with `BILLING_CHARGES` off or a capability false: no invoice, order or send.
-- Production configuration refuses `BILLING_CHARGES=on` without both capabilities.
+- Production configuration refuses `BILLING_CHARGES=on` without any one of the four capabilities.
 - Turning billing on without a recorded VAT treatment, or without either release approval, is refused.
 - The request to pay, with charges held, creates no order and no reservation.
 
@@ -608,6 +732,9 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - The guard closed at m(D), reopened before processing, with the worker stopped in between: `charges_held`.
 - The guard open at m(D) and closed at processing: invoiced, with no attempt until it reopens.
 - No guard row before m(D): `charges_held`.
+- Deactivated at m(D), reactivated before processing: `deactivated`. Reactivated: billed from the next date, and what
+  was owed is taken as usual (G1).
+- A business confirmed after the first switch-on: its first date is its trial end.
 - One history, processed at several different times, gives the same rows.
 - A lifted exemption bills from the next date (F2).
 
@@ -615,6 +742,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - The price at each band's edge: 0, 1, 3, 4, 6, 7, 10, 11, 20 and 21 agents.
 - 21 or more without a price: the date is unbilled. A price set before the next date is invoiced on it; one set after
   leaves that date unbilled too (F3).
+- A business with a custom price and 20 or fewer agents on a date pays its band.
 
 **BR-10.2, 12.2**
 - A new version applies from its start date and not before, and the 30-day notice is enforced.
@@ -630,7 +758,13 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - One order per attempt, from the business's wallet to the platform's.
 - On confirmation both ledgers post once, in one transaction, for each fee model. The business's posting is always
   exactly the price.
-- A confirmation with an undeclared fee model isn't posted. A replayed confirmation posts nothing more.
+- A confirmation with an undeclared fee model isn't posted: the order stays `unknown`, its reservation held, and an
+  order finding is recorded. A replayed confirmation posts nothing more.
+
+**Everything owed (Q5, Q6)**
+- Two invoices open, the wallet covering one: nothing is taken, both attempts are `insufficient`, and the request to
+  pay answers with the amount short. Covering both: both taken, oldest first.
+- The sweep attempts only once the wallet, less reservations, covers everything owed.
 
 **Attempts, retries and holds**
 - `insufficient`, then a deposit: attempt 2, with a new reference.
@@ -643,24 +777,50 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - `unknown`: nothing until resolved. Resolved failed gives a new attempt by the schedule; resolved successful gives
   nothing, and the invoice is paid.
 - With `finalFailureIsFinal` false, no second attempt is ever made.
-- A repeated `Idempotency-Key` returns the first answer.
+- A repeated `Idempotency-Key` returns the first answer. A second request within the hour makes no new attempt.
+- A `reversed` attempt allows a new one by the schedule.
 
-**An order the provider never received**
+**An order the provider never received** (the FakeProvider can delay a request's arrival, and hide an arrived request
+from its lookup for a set time)
 - The claim commits, and the worker stops before sending. The FakeProvider never received the reference.
-- With `visibleWithin(L)`: "not found" before the lease ends plus L stays `unknown`; after it, `failed`,
-  `not_submitted`, the reservation released, and attempt 2 by the schedule.
-- With `blocksReference`: the first "not found" after the lease ends is final; one before it is not.
-- A send that started inside the lease and reaches the FakeProvider late: with either form, it is refused or seen, and
-  never paid out after the order is marked failed. If the FakeProvider is made to break the guarantee, the late success
-  goes to the contradiction path and is listed as owed back.
-- Without the capability: `unknown` for good, listed, and no new attempt.
+- With `refusedAfter(A)` and `visibleWithin(L)`: "not found" before `lease_until` + A + L stays `unknown`; at or after
+  it, `failed`, `not_submitted`, the reservation released, and attempt 2 by the schedule.
+- With `blocksReference`: the first "not found" after `lease_until` is final; one before it is not.
+- **The late request** (the fifth review's case): a request leaves before `lease_until` and arrives after the first
+  "not found".
+  - With `blocksReference`, it is refused.
+  - With `refusedAfter(A)`, if it arrives within A it is visible before any final "not found", and the order resolves
+    by its real outcome; if it arrives later, it is refused.
+  - In neither case is it paid out after the order is marked failed and its reservation released.
+- **An arrived request not yet visible:** with `blocksReference`, a "not found" given while it is hidden blocks it, and
+  it is never processed.
+- **The FakeProvider made to break the guarantee:** the late request is paid out. The confirming lookup records an order
+  finding, the reconciler records the difference, and nothing is posted automatically. The debit is recorded, never
+  silent.
+- A visibility time L alone, with no bound on arrival: the capability can't be declared (a configuration test).
+- Without the capability: `unknown` for good, the reservation held, listed, and no new attempt.
 
-**A success later reversed**
-- Reversed within the window: the order `reversed`, both postings reversed once each, the invoice `open`, the business's
-  state unchanged, and a new attempt by the schedule. An exempt business's invoice becomes `waived`.
-- A reversal replayed, by lookup and webhook both: posted once.
-- Reversed after the window: nothing posted, the contradiction listed.
-- The lookups at 1 hour, 24 hours and the window's end; with a window of zero, none.
+**A success later reversed** (the FakeProvider gives success and reversal times on its own clock)
+- Reversed within the window, found by a scheduled check: the order `reversed`, both postings reversed once each, the
+  invoice `open`, the business's state unchanged, and a new attempt by the schedule. An exempt business's invoice
+  becomes `waived`.
+- **Failed lookups:** the 24-hour and the final checks fail or are inconclusive (error, timeout, "not found"). The checks
+  stay open and are retried; the watch doesn't complete. A reversal within the window, found by a retry after the
+  window has ended, is a normal reversal.
+- **Late discovery:** a reversal whose time is after the window, found by any check: an order finding, escalated,
+  nothing posted.
+- **No reversal time:** found before the window ends, a normal reversal; found after, an order finding.
+- **Duplicate reports:** the same reversal answered by two checks, or twice by one: posted once. A different answer
+  afterwards: an order finding.
+- **First answer "reversed":** an `unknown` order whose first conclusive answer is reversed posts nothing but a fee the
+  provider kept, and the invoice stays `open`.
+- The checks at 1 hour, 24 hours and W plus 1 hour; with W zero, none. A watch a day overdue is listed.
+
+**Order findings and the reconciler**
+- A final failure answered "successful" by the confirming lookup: an order finding, nothing posted.
+- An order finding seen again updates it; it is resolved by a person with a note.
+- An outbound order `unknown` while the provider has already moved the money: the difference is "in flight", not a
+  finding. Once the order is final, a remaining difference is a finding.
 
 **The status table**
 - Each ID 1–12 and each name maps as §3.5's table says; 11 and 12 never resolve an order; an unknown ID or name is an
@@ -669,7 +829,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 **Orders and the gate**, as races:
 - `create_order` against a switch-off: either the order commits first and its claim cancels it, or creation is refused.
   No `created` order survives a claim after a switch-off.
-- The same for exempting.
+- The same for exempting, and for deactivating.
 - The worker's runtime guard closing after an order is created: the claim cancels it and the reservation is released.
 - The worker stopped: the `created` order keeps its reservation and is listed.
 
@@ -682,7 +842,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
   commits first and no claim commits after it. Never a send after a committed switch-off;
 - the same for exempting;
 - exempting while a charge is past the point of no return: `waiver_pending`, then `paid` on success, `waived` on
-  failure.
+  failure, including when the exemption is lifted before the charge is resolved.
 
 **BR-10.4**
 - Not enough money suspends, from `trial`'s first invoice as from `current`.
@@ -693,7 +853,8 @@ point of no return finish through P9's machinery. A success is posted and pays i
 **BR-10.5**
 - A confirmed charge restores, and the next request succeeds. A deposit alone does not restore.
 - An `unknown` charge changes no state.
-- With several invoices open, access returns only when all are paid (Q5).
+- With several invoices open, access returns only when all are paid (Q5), except one that is held (G2): a suspended
+  business whose other invoices are paid is restored, and the held one stays owed.
 
 **BR-10.6a, 10.6b**
 - A deactivated agent can't sign in, and is counted by activity alone.
@@ -712,7 +873,7 @@ point of no return finish through P9's machinery. A success is posted and pays i
 **Isolation and guards**
 - A business sees only its own subscription. A run and a charge touch only the business they claim (TA-11).
 - Lock order (category 19, the claim's and `create_order`'s share locks, `create_order`'s new 14:NKU, switch-off and
-  exemption taking no order lock).
+  exemption taking no order lock, the lifecycle function's new 19, the reversal path, order findings).
 - Grants: only the worker's role writes `billing.guard_history`; only the switch function writes
   `billing.release_approvals`.
 - Grants: the worker's functions are executable by `alphakolect_worker` alone.
@@ -728,7 +889,8 @@ point of no return finish through P9's machinery. A success is posted and pays i
   contact the company."), its declaration on each customer endpoint, and its test (P10-16).
 - **Any phase that deletes sessions, memberships or collections:** it must first keep billing's evidence of activity
   (§3.3).
-- **OPEN-7 (payouts):** refunding a charge listed as owed back (§3.5).
+- **OPEN-7 (payouts):** refunding a charge listed as owed back (§3.5), and settling order findings that leave money
+  owed back.
 - **P12:** billing emails (the warning before the billing date, the suspension, the restore, a held invoice); invoice
   PDFs.
 - **P13:** the Subscription page and the redirect while suspended (`middleware.ts`).
@@ -744,16 +906,16 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | P10-2 | Where suspension lives | its own billing state, with every transition defined (§3.1), not a merchant lifecycle status: suspension and deactivation have different causes, people and ways back |
 | P10-3 | The subscription gate (TA-25) | a required per-endpoint declaration in the registry plus a per-permission flag checked in `assert_authority`; no separate middleware |
 | P10-4 | Reading the state for suspension | without a row lock, so the check adds nothing to any request's lock footprint; TA-12 accepts that a request already admitted completes |
-| P10-5 | What triggers a restore | a confirmed charge only; retried by the worker's sweep once the wallet covers the amount, or at the business's request |
+| P10-5 | What triggers a restore | a confirmed charge only; retried by the worker's sweep once the wallet covers everything owed, or at the business's request. A held invoice doesn't keep a business suspended (G2) |
 | P10-6 | Price changes | versions with a start date at least 30 days away (Q8), never edits; invoices keep their version |
 | P10-7 | Agent activity | from existing sessions and collections, in a defined window, with a guard test that keeps that evidence; no `tenancy.agent_activity` table and nothing added to the hot paths |
 | P10-8 | Posting a subscription | P9's order gains the platform's posting, by the declared fee model, AlphaKolect bearing the fee (F5); both ledgers post in the order's success transaction |
 | P10-9 | Billing off | nothing invoiced or charged; dates that pass are recorded unbilled; a read-only preview for the platform team |
 | P10-10 | How money moves | a provider transfer from the business's virtual account to the platform's, through the port. Recording it in the books alone, if TransactPay's balances turn out to be pooled, is **not** chosen: it would change what the ledgers' 1100s mirror, and goes to the reviewer and the owner once TransactPay answers |
-| P10-11 | Not enough money | decided by the reservation in `create_order` before any order exists, and by the provider's answer after |
+| P10-11 | Not enough money | an attempt only when the wallet, less reservations, covers everything owed (Q5 with Q6); the reservation in `create_order` as the last check per order; the provider's answer after |
 | P10-12 | Billing's lock category | 19, after payments |
-| P10-13 | Businesses billing leaves alone | deactivated and unconfirmed ones, and `exempt` ones |
-| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes four things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), the resolution of an order not found (P10-24), and the `reversed` state with its postings (P10-27). P10 does not close before P9 does |
+| P10-13 | Businesses billing leaves alone | unconfirmed ones (no billing row); `exempt` ones (F1); deactivated ones by their own recorded history: no date charged while deactivated, debts kept, nothing taken until reactivated (G1, pending the owner) |
+| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes six things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), the resolution of an order not found (P10-24), the `reversed` state with its postings and the watch (P10-27), order findings (P10-29), and the reconciler's in-flight rule (P10-30). It also changes P4's lifecycle function (P10-13) and P5's `assert_authority` (P10-3). P10 does not close before P9 does |
 | P10-15 | Gate | this plan's review now; one review of the build at the end |
 | P10-16 | The customer audience | out of P10's exit criteria by an explicit amendment, as P2's was; RESTRUCTURING_MAP's P10 row is amended when this plan is approved. Building customer sign-in here would be a phase of its own |
 | P10-17 | Concurrent spending | every outbound order reserves its amount against the source wallet's locked 1100 projection |
@@ -761,13 +923,15 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | P10-19 | Deciding a date | from recorded history alone (the switch, exemptions, the guard, custom prices) at the date's decision moment, so the worker's timing never changes an outcome; every date is recorded, invoiced or unbilled with its reason |
 | P10-20 | Retrying a failed charge | only with the provider's guarantee that a final failure is final; without it, billing can't charge |
 | P10-21 | Bounded retries | after a non-money failure, retries 1 h, 6 h and 24 h later; failure 4 holds the invoice (a retry field, not a state): then one attempt per billing date or request to pay, never suspending |
-| P10-22 | The point of no return, and cancelling | the claim's commit, made only with billing on and the business not exempt, under a share lock that switch-off and exemption must wait for. A claim that finds the gate closed cancels the order instead, so no `created` order is stranded |
+| P10-22 | The point of no return, and cancelling | the claim's commit, made only with billing on and the business neither exempt nor deactivated, under a share lock that switch-off, exemption and deactivation must wait for. A claim that finds the gate closed cancels the order instead, so no `created` order is stranded |
 | P10-23 | One row per billing date | a single `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint and immutable outcomes; not two tables, whose uniqueness no constraint could span |
-| P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only under a provider guarantee that covers a late request (`notFoundFinal`: the reference blocked, or every request visible within L), counted from the end of the claim's lease; without it billing can't charge |
-| P10-27 | A success later reversed | the reversal window declared by the provider (`reversalWindow`); succeeded orders looked up again within it; a reversal reverses both postings, reopens the invoice and is retried, without suspending; outside the window, the contradiction path |
-| P10-28 | The status table | the adapter maps TransactPay's current table (IDs 1–12, 14 October 2026), by ID and by name, 11 and 12 not final, with a test for each; P9's older mapping is passed to P9 |
+| P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only under a provider guarantee that covers a request delayed on its way: the reference blocked by the first "not found", or a refusal bound A on arrival with a visibility time L, final from `lease_until` + A + L. L alone isn't enough. A confirming lookup 24 hours later. Without the guarantee, the order stays `unknown`, its reservation held, and billing can't charge |
 | P10-25 | Conditions that are judgments | recorded as release approvals, with their evidence, before the switch can be turned on; called approvals, not system checks |
 | P10-26 | The decision moment | the first moment of the date's day at which billing is on: midnight if it was on, the switch-on moment if it was switched on that day (Q12, F6) |
+| P10-27 | A success later reversed | the window W and the provider's success and reversal times required (`reversalWindow`); a watch of three checks, each complete only on a conclusive answer and retried until it gets one; a reversal classified by its own time, not when it is found: within W, both postings reversed, the invoice reopened and retried without suspending; after W or unclassifiable, an order finding, escalated, nothing posted |
+| P10-28 | The status table | the adapter maps TransactPay's current table (IDs 1–12, 14 October 2026), by ID and by name, 11 and 12 not final, with a test for each; P9's older mapping is passed to P9 |
+| P10-29 | Contradictions on orders | `payments.order_findings`, since P9's contradiction path covers deposits only and `record_order` refuses a final order; recorded, shown and resolved by a person; nothing posted automatically |
+| P10-30 | The reconciler with charges in flight | a difference within the wallet's unfinished outbound (or, for the platform, incoming) orders is in flight and checked again; anything else, or anything left once they are final, is a finding |
 
 ## 8. Questions out
 
@@ -776,7 +940,9 @@ point of no return finish through P9's machinery. A success is posted and pays i
 | The owner | `docs/business/P10_OWNER_BILLING.md` | answered 11 November 2026: every question with the suggested option; the wording approved |
 | The owner | `docs/business/P10_OWNER_BILLING_FOLLOWUP.md` | answered 11 November 2026: F1–F5, each with the suggested option. F2 and F3 were first saved with typing slips ("Thne", "words that passed", `e5a7b83`) and later corrected in the form, not by the integration team (`f30d107`). The form records both |
 | The owner | `docs/business/P10_OWNER_BILLING_CONFIRMATION.md` | answered 11 November 2026 (`3869154`): C1, F2 and F3 confirmed as they now read; F6, charged that day, as in Q12 (the suggested option) |
-| TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, whether a failure can later succeed, and when "not found" is final (§2.5); §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
+| The owner | `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md` | **awaiting his answers:** G1, a deactivated business's debts and dates; G2, restoring access while a month is held |
+| The owner | `docs/business/P10_OWNER_RULE_NOTES.md` | **awaiting his answers:** N1, a dated note under BR-2.5 (the trial from email confirmation); N2, under BR-10.6 (what "activity" means). Once approved, the notes are added to `BUSINESS_RULES.md` word for word, as rule 11.2's was |
+| TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, whether a failure can later succeed, the guarantee that makes "not found" final for a delayed request (§2.5), and the status table, reversals and their times (§2.6); §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
 
 ## 9. Before billing can charge
 
@@ -789,13 +955,13 @@ Each condition is one of two kinds:
 | # | Condition | Kind | Proven by | Enforced by |
 |---|---|---|---|---|
 | 1 | TransactPay documents a transfer between two of our virtual accounts, debiting the source account, with the destination's required fields (`accountName` included) | system | their answer (§1); a sandbox test moves money between two sandbox virtual accounts and sees both balances change | `walletTransfer` declared only by the adapter release that implements it; production refuses `BILLING_CHARGES=on` without it, and the guard (§3.8) is closed |
-| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final; **guarantees that a final failure never later succeeds**; **guarantees that "not found" is final, in one of §2.5's two forms**; and **states whether and within how long a success can be reversed, and how it is reported** | system | their answer (§2, including §2.5 and §2.6); sandbox tests of a duplicate reference, a lookup after a timeout, a reference never sent, and pending to final where the sandbox allows (§4) | `finalFailureIsFinal`, `notFoundFinal` and `reversalWindow`, each declared only with its statement; without all three, production refuses `BILLING_CHARGES=on` |
+| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final; **guarantees that a final failure never later succeeds**; **guarantees that "not found" is final even for a request delayed on its way, in one of §2.5's two forms**; and **states whether and within how long a success can be reversed, how it is reported, and the times of success and reversal in the requery's answer** | system | their answer (§2, including §2.5 and §2.6); sandbox tests of a duplicate reference, a lookup after a timeout, a reference never sent, a delayed request where the sandbox allows, and pending to final (§4) | `finalFailureIsFinal`, `notFoundFinal` and `reversalWindow`, each declared only with its statement; without all three, production refuses `BILLING_CHARGES=on` |
 | 3 | TransactPay states its insufficient-funds answer, and the adapter maps their **current** status table | system | their answer (§3, §2.6); the adapter maps it to `insufficient`; a test per status ID (P10-28); a sandbox test | part of the adapter release behind `walletTransfer` |
-| 4 | The fee model is confirmed, and is one §3.5 supports, AlphaKolect bearing the fee (F5) | system | their answer (§5); its posting tested; the reconciler finds no difference after a sandbox transfer | the adapter declares one fee model, and the capability only if it is supported. A confirmation with another model isn't posted |
+| 4 | The fee model is confirmed, and is one §3.5 supports, AlphaKolect bearing the fee (F5) | system | their answer (§5); its posting tested; the reconciler finds no difference after a sandbox transfer | the adapter declares one fee model, and the capability only if it is supported. A confirmation with another model isn't posted: an order finding, the order kept `unknown` |
 | 5 | Pooled or per-account balances (P9 follow-up §2) | system | their answer | the capability is declared only for per-account balances. If pooled, P10-10 and the reconciler return to the reviewer and the owner |
 | 6 | P9's conditions for live money (P9 plan §10, conditions 1–10: a real deposit, the balance enquiry, the worker's isolation in production, and the rest) | **approval** | the reviewer's closure of P9's live-money gate | a release approval for condition 6, citing that closure, must be recorded before billing can be switched on (§3.8). P10's migrations also come after P9's, but that orders the schema; it proves none of P9's conditions |
 | 7 | The accountant confirms in writing how subscription income is accounted for VAT (Q10) | **approval**, and a system check | a written sign-off | a release approval for condition 7, citing the letter, and the recorded treatment: the switch can't be turned on without both. If VAT is inside the price, the platform posting splits it (§3.5) |
-| 8 | The owner's answers | **approval** | Q1–Q14, F1–F5, C1 and F6, all answered 11 November 2026 | met. Checked by the plan review and the project lead, not by the system. Any answer TransactPay's replies make necessary goes to the owner in a new form |
+| 8 | The owner's answers, and the signed rules agreeing with them | **approval** | Q1–Q14, F1–F5, C1 and F6, answered 11 November 2026; G1 and G2; the notes under BR-2.5 and BR-10.6 (N1, N2), added to `BUSINESS_RULES.md` as approved | **not met:** awaiting G1, G2, N1 and N2. Until N1 is approved and added, Q1 is a recorded exception to BR-2.5 (§2). Checked by the plan review and the project lead, not by the system. Any answer TransactPay's replies make necessary goes to the owner in a new form |
 | 9 | The owner switches billing on, as Super Admin, from the platform admin | system | BR-1.3 | `enabled` false by default; only the non-grantable `platform.billing.switch` changes it |
 
 ## 10. The build, once approved
@@ -804,18 +970,21 @@ Each condition is one of two kinds:
   1. `billing_core`: schema, tables (the periods, the switch, exemption and guard histories, the release approvals,
      attempts), RLS, the price seed, the permission flag, the platform's VAT-payable account, the order's platform
      posting, its `cancelled` and `reversed` states and the reversal templates, `create_order`'s reservation and billing
-     gate;
+     gate, `billing.lifecycle_history`, `payments.order_findings`;
   2. `billing_functions`: the run and its decision moment, the charge task, the claim's guard and cancellation, attempts
-     and holds, the `not_submitted` resolution, the reversal watch, restore, the switch, approvals and exemptions, the reads,
-     `assert_authority`'s suspended outcome.
+     and holds, the `not_submitted` resolution and the confirming lookup, the reversal watch and its classification,
+     order findings, the reconciler's in-flight rule, restore, the switch, approvals and exemptions, the lifecycle
+     function's history, the reads, `assert_authority`'s suspended outcome.
 - **Contracts:** `whileSuspended` on the registry and every existing operation; the new endpoints.
 - **Provider:**
   - the port gains `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
     `capabilities.notFoundFinal`, `capabilities.reversalWindow`, a declared fee model, and the transfer;
-  - the FakeProvider covers every fee model and outcome, including a reference it never received;
+  - the FakeProvider covers every fee model and outcome, including a reference it never received, a request delayed
+    on its way, an arrived request hidden from its lookup for a while, and reversals with their times;
   - the TransactPay adapter declares none of the four capabilities, and maps the current status table (§3.5).
-- **API and worker:** `modules/billing`, the worker's three tasks, the release guard and its history, `BILLING_CHARGES`,
-  the 402 and 403 envelopes.
+- **API and worker:** `modules/billing`; the worker's tasks (the run, the charge task, the resolution of unknown orders
+  with the confirming lookup, the reversal watch); the release guard and its history; `BILLING_CHARGES`; the 402 and
+  403 envelopes.
 - **Tests:** as in §5, in the db and API suites.
 - **The gate:**
   - every step exit 0 on a clean tree at a named commit: `format:check`, `lint`, `typecheck`, `build`, `openapi:check`,
@@ -847,6 +1016,7 @@ code, since none exists yet:
 
 | Rev | Date | Change |
 |---|---|---|
+| 7 | 2026-11-11 | The fifth review's three items and a full self-review resolved (§16): "not found" final only with a bound on a request's arrival, or the reference blocked; the reversal watch retried until conclusive, a reversal classified by its own time; BR-2.5 and BR-10.6 notes put to the owner; order findings; the reconciler with charges in flight; deactivation; everything owed before taking anything; restore with a held month; the owner's second follow-up (G1, G2) |
 | 6 | 2026-11-11 | The fourth review resolved (§15): "not found" final only under a guarantee covering a late request, counted from the lease's end; a reversed success (`reversed`, both postings reversed, the invoice reopened); the current status table; the owner's confirmation (C1, F6) recorded |
 | 5 | 2026-11-11 | The third review's 6 blockers and the owner's record resolved (§14): the decision moment and the guard's history; one periods table; the gate in `create_order` and cancellation by the claim; holds as retry fields, with the schedule stated attempt by attempt; "not found" final after the provider's stated time; release approvals for the conditions that are judgments; the owner's confirmation form |
 | 4 | 2026-11-11 | The second review's 8 findings resolved (§13): the follow-up's answers recorded; suspended businesses accrue invoices; chargeable dates by recorded history; `waiver_pending`; the point of no return at the claim; retries only with the provider's guarantee; every release condition enforced, the request to pay making no order; bounded retries and holds |
@@ -918,8 +1088,40 @@ documentation; the status table was checked again against it for this revision.
 | # | Finding | Resolved in |
 |---|---|---|
 | 1 | "Not found" was final after a duration from the claim, and the guarantee didn't cover a request arriving late | §3.5 and P10-24: the clock starts when the claim's lease ends, the last moment a send can leave (P9-R3). The capability `notFoundFinal` needs one of two guarantees that cover a late request: the requery blocks the reference, or every request is refused or visible within L. TransactPay §2.5 asks for them; their public documentation gives neither. Tests for each form and for a late send |
-| 2 | Nothing said what happens if a paid charge is later reversed; TransactPay publishes status 9, "Reversed" | §3.5 and P10-27: `reversalWindow` declared only with TransactPay's statement (§2.6.4), required by §9 condition 2. Succeeded orders are looked up again within it; a reversal reverses both postings, reopens the invoice and is retried without suspending; after the window, the contradiction path. §3.1 gains the reversal rows |
+| 2 | Nothing said what happens if a paid charge is later reversed; TransactPay publishes status 9, "Reversed" | §3.5 and P10-27: `reversalWindow` declared only with TransactPay's statement (§2.6.4), required by §9 condition 2. Succeeded orders are looked up again within it; a reversal reverses both postings, reopens the invoice and is retried without suspending; after the window, the contradiction path (corrected in revision 7, §16: order findings). §3.1 gains the reversal rows |
 | 3 | P9's status mapping reads 6 as "Reversed"; the current table has 6 as Awaiting Approval and 9 as Reversed | §3.5 and P10-28: the adapter maps the current table (IDs 1–12, updated 14 October 2026) by ID and by name, with 11 and 12 not final, and a test for each; §9 condition 3. TransactPay §2.6 asks them to confirm it. P9's older mapping is passed to P9, which is still open (§6) |
 | 4 | The confirmation form held the owner's answers, but the plan still called them awaited | The owner answered on 11 November 2026: C1, yes; F6, charged that day, as in Q12 (`3869154`). Status, §3.4, P10-26, §8 and §9 condition 8 updated: met |
 
 Nothing has been pushed since revision 1. PR #12 stays open and unmerged, for review only.
+
+## 16. The fifth plan review, and a self-review (2026-11-11)
+
+The reviewer did not approve revision 6: three items remained (the review of `11ea6b4`). Revision 7 resolves them. Before
+sending it, the whole plan was read again against the code it changes, and the gaps found are resolved here too, so that
+the review doesn't have to find them.
+
+**The review's items**
+
+| # | Finding | Resolved in |
+|---|---|---|
+| 1 | `visibleWithin(L)` counted from a request's arrival, so a request sent before `lease_until` and delayed on its way could arrive, and be paid out, after a final "not found" | §3.5 and P10-24: the guarantee must hold for a delayed request, measured from when we send. Either `blocksReference` (no request with the reference is ever processed after a "not found", whether it arrives later or had arrived unseen), or `refusedAfter(A)` with `visibleWithin(L)`, final from `lease_until` + A + L. L alone isn't enough. Without either, the order stays `unknown` and its reservation held, and billing can't charge. TransactPay §2.5 asks for these terms (`f91cc93`). §5: the late-request test, an arrived-but-hidden request, and the guarantee broken (an order finding and a reconciler finding: never silent) |
+| 2 | The reversal watch had no rule for failed lookups, and classified a reversal by when it was found | §3.5 and P10-27: each check is complete only on a conclusive answer, and is retried until it gets one; the watch completes only on "successful" at or after W plus an hour; an overdue watch is listed. A reversal is classified by TransactPay's reversal time against its success time, so one within the window is normal even if found late; one after it, or one that can't be classified, is an order finding, escalated. The capability needs those times (TransactPay §2.6.5) and lookups lasting W plus a day (§2.6.6). §5: delayed discovery, failed lookups, late discovery, no time, duplicates |
+| 3 | BR-2.5 says the trial starts at sign-up; the owner's Q1 says at email confirmation | §2: Q1 is a recorded, traceable exception to BR-2.5 for P10. Following rule 11.2's precedent (D9), the owner is asked to approve a dated note under BR-2.5, word for word, keeping the original wording (`P10_OWNER_RULE_NOTES.md`, N1, `16d751f`); BR-10.6's "still to define" gets the same (N2). §9 condition 8 is not met until he approves them and they are added |
+| — | PR #12 not a draft, its description out of date | marked as a draft, and its description brought up to date with revision 7 |
+
+**Found in the self-review**
+
+| # | Gap in revision 6 | Resolved in |
+|---|---|---|
+| S1 | Several places sent an order's contradiction to "P9's contradiction path". For orders there is none: it covers deposit events, and `record_order` refuses any order already final | §3.5 and P10-29: `payments.order_findings`, recorded by the worker, shown and resolved by a person, nothing posted automatically. A confirming lookup 24 hours after every failed order. Every place that relied on the missing path now uses it |
+| S2 | The reconciler would have reported a finding for every charge in flight, since the provider can move the money before we record it | §3.5 and P10-30: a difference within the wallet's unfinished outbound (or, for the platform, incoming) orders is in flight and checked again |
+| S3 | A deactivated business, once reactivated, would have been invoiced for every date it missed, since the run decides from history that didn't include deactivation; and nothing stopped its charges | §3.1, §3.4 and P10-13: `billing.lifecycle_history`, written by P4's lifecycle function; `deactivated` as an unbilled reason; `create_order` and the claim refuse and cancel; the lock order. Whether its debts stay owed is the owner's (G1, `ac6220a`) |
+| S4 | Q5 with Q6 didn't say whether "the whole amount" meant one invoice or everything owed | §3.5 and P10-11: an attempt only when the wallet, less reservations, covers everything owed, the two answers read together; otherwise `insufficient`, with the amount short in the request to pay's answer |
+| S5 | A month held for a provider failure would have kept a business suspended after it paid everything else, though a hold "never suspends" | §3.1 and §3.7: restore once every other open invoice is paid, the held one staying owed, as the owner's suggested option (G2) |
+| S6 | A `waiver_pending` invoice had no rule once the exemption was lifted | §3.1: its rule holds whatever the state: `paid` on success, `waived` on failure |
+| S7 | `reversed` wasn't among the final outcomes after which a new attempt is made; an order whose first answer was "reversed" had no rule; the watch relied on a payout webhook that P9 doesn't handle | §3.5: `reversed` is final; the first-answer case posts only a fee kept; the lookup is the authority, a webhook only brings a check forward |
+| S8 | The request to pay's effect on invoices between retries wasn't defined, nor its rate | §3.5 "When an attempt is due" and §3.7: every open invoice becomes due, at most one request an hour per business |
+| S9 | A business confirmed after the first switch-on had no first billing date; a custom price's effect below 21 agents wasn't stated; a stated lease clock was wrong (the worker measures its lease on its own monotonic clock, with 10% in hand) | §3.4, §3.2, §3.5 |
+| S10 | Smaller: a "both capabilities" test from revision 5; the decisions table out of order; a missing `suspended` lack-of-money row; the upcoming charge hidden while charges are held | §5, §7 (P10-24 to P10-30 in order), §3.1, §3.4 |
+
+Nothing has been pushed since revision 1. PR #12 stays open, unmerged and a draft, for review only.

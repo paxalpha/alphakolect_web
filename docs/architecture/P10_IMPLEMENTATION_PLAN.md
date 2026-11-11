@@ -1,16 +1,20 @@
 # P10 implementation plan — billing
 
-**Status: revision 4 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
+**Status: revision 5 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
 
 - **The reviews:**
   - revision 3 resolved the first plan review's 14 findings (§12);
-  - revision 4 resolves the second review's 8 findings (§13).
+  - revision 4 resolved the second review's 8 findings (§13);
+  - revision 5 resolves the third review's 6 blockers and its point on the owner's record (§14).
 - **The owner's answers:**
   - `docs/business/P10_OWNER_BILLING.md`, answered 11 November 2026: every question (Q1–Q14) with the suggested option,
     and the permissions' wording approved as written;
   - `docs/business/P10_OWNER_BILLING_FOLLOWUP.md`, answered 11 November 2026: every question (F1–F5) with the suggested
-    option. F2's and F3's answers repeat the suggested option's text with two typing slips. The form records how they
-    are read, for the owner to confirm (§8).
+    option. F2's and F3's answers were first saved with typing slips and later corrected in the form, not by the
+    integration team. The form records both;
+  - `docs/business/P10_OWNER_BILLING_CONFIRMATION.md`, **awaiting the owner**: C1 confirms F2 and F3 as they now read;
+    F6 asks about a billing date on the day billing is switched on again. The plan follows the suggested options until
+    he answers, and §9 condition 8 is not met until he does.
 - **The build starts once** the reviewer approves this plan and the project lead agrees.
 
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
@@ -18,7 +22,9 @@ Decisions that would go to the project lead take the recommended option (his sta
 does (P10-14).
 
 **Billing stays paused (BR-1.3), and no real money moves in P10.** Billing can charge only once every condition in §9
-holds. Each condition is enforced by the system (§9), not by a person's memory.
+holds. §9 says how each is enforced: by the system refusing to charge without it, or, where it is a person's judgment, by
+the system refusing to switch billing on until that judgment is recorded. The system can't check what a recorded
+judgment says, and §9 doesn't claim it does.
 
 | | |
 |---|---|
@@ -34,9 +40,10 @@ holds. Each condition is enforced by the system (§9), not by a person's memory.
   agents.
 - **Each business's billing state,** with every transition defined (§3.1), kept apart from the merchant lifecycle.
 - **The 90-day trial** (BR-2.5, Q1).
-- **Billing dates:** in WAT, chargeable by a recorded history (§3.4).
+- **Billing dates:** in WAT, each decided at a defined moment from recorded history (§3.4).
 - **The billable-agent count** (BR-10.6a, Q2).
-- **Invoices,** one per business per chargeable billing date.
+- **Billing periods:** one row per business per billing date, either an invoice or an unbilled date with its reason
+  (§3.1).
 - **The upcoming charge,** shown from 7 days before the billing date (Q7).
 - **The charge:**
   - a payment order from the business's Live wallet to the Platform Live wallet;
@@ -47,7 +54,7 @@ holds. Each condition is enforced by the system (§9), not by a person's memory.
 - **Suspension:** for insufficient funds, enforced for each audience in both layers (BR-10.4, TA-25).
 - **Restore:** automatic, on a confirmed charge only (BR-10.5, TA-12).
 - **The billing switch and exemptions,** with in-flight charges handled (BR-1.3, Q11, F1, F2, F4).
-- **The release guard,** which enforces every condition of §9 (§3.8).
+- **The release guard and the release approvals,** which together enforce §9 (§3.8).
 - **A preview** of what billing would charge, while it is off.
 
 **Not in P10:**
@@ -86,26 +93,35 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
   - the exemption's reason and author.
 - **Kept apart from the merchant lifecycle** (`tenancy.merchants.status`: `pending_verification`, `active`,
   `deactivated`). A suspended business is still `active`. Billing leaves deactivated and unconfirmed businesses alone.
-- **`billing.invoices`:** one per business and chargeable billing date. Each is `open`, `paid`, `waived`, or
-  `waiver_pending` (an exemption waiting on a charge already past the point of no return, §3.8). The amount owed is the
-  sum of the `open` invoices.
+- **`billing.periods`:** one row per business and billing date, with the primary key `(merchant_id, billing_on)` (P10-23).
+  Its `outcome` is `invoiced` or `unbilled`:
+  - an invoiced row is the invoice. It holds the version, band, price and agents counted, and its state: `open`, `paid`,
+    `waived`, or `waiver_pending` (an exemption waiting on a charge already past the point of no return, §3.8). It also
+    holds its retry fields (§3.5), which are not states;
+  - an unbilled row holds its reason (§3.4) and nothing else;
+  - a check constraint ties each outcome to its columns, and the key allows one row per date, so a date can't be both
+    invoiced and unbilled. A trigger refuses any change to a row's outcome, reason, amounts or decision moment once
+    written. Only an invoice's state and retry fields change.
+- **"Invoice" means an invoiced period.** `billing.invoices` is a view over them. The amount owed is the sum of the
+  `open` invoices.
 - **Every state change** is made by a billing function, in the same transaction as its cause, and recorded in the
   activity record. The full set of transitions:
 
 | From | Event | To | Invoices |
 |---|---|---|---|
 | — | the business's email is confirmed | `trial` | none; `trial_ends_on` = the confirmation day + 90 days (Q1) |
-| `trial` | its first chargeable billing date is processed (§3.4) | `current` | the first invoice is issued, `open`. The trial ends here, whatever the charge then does |
-| `trial` | its first billing date is processed but isn't chargeable (§3.4) | `trial` | none; the date is recorded as unbilled, and the next date follows |
-| `current` | a chargeable billing date is processed | `current` | a new invoice, `open`. Any earlier `open` one stays owed |
-| `suspended` | a chargeable billing date is processed | `suspended` | a new invoice, `open`, added to what is owed. The owner chose "everything owed must be paid" (Q5) over "a suspended business isn't billed for further months" |
+| `trial` | its first billing date is decided invoiced (§3.4) | `current` | the first invoice is issued, `open`. The trial ends here, whatever the charge then does |
+| `trial` | its first billing date is decided unbilled (§3.4) | `trial` | none; the date is recorded as unbilled, and the next date follows |
+| `current` | a billing date is decided invoiced | `current` | a new invoice, `open`. Any earlier `open` one stays owed |
+| `suspended` | a billing date is decided invoiced | `suspended` | a new invoice, `open`, added to what is owed. The owner chose "everything owed must be paid" (Q5) over "a suspended business isn't billed for further months" |
 | `current` | a charge attempt is refused for lack of money, by the reservation (§3.5) or by the provider | `suspended` | the invoice stays `open` |
 | `current` or `suspended` | a charge attempt fails finally for any other reason | unchanged | stays `open`; retried on the bounded schedule of §3.5. A failure that isn't for lack of money never suspends |
 | `current` or `suspended` | a charge attempt's outcome is `unknown` | unchanged | stays `open`; no new attempt until P9's lookup resolves it |
 | `current` | a charge succeeds | `current` | `paid` |
 | `suspended` | a charge succeeds and no other invoice is `open` (Q5) | `current` | `paid` |
 | `suspended` | a charge succeeds while other invoices are still `open` | `suspended` | that one `paid`; the next is attempted |
-| any but `exempt` | exempted by the Super Admin (Q11) | `exempt` | `open` invoices with no attempt past the point of no return become `waived`, with the reason. Those with one become `waiver_pending` (F1, §3.8) |
+| any but `exempt` | exempted by the Super Admin (Q11) | `exempt` | `open` invoices with no attempt past the point of no return become `waived`, with the reason. Those with one become `waiver_pending` (F1, §3.8). An order of theirs still `created` is cancelled by its claim (§3.5) |
+| `exempt` | a date whose decision moment came before the exemption is processed after it (§3.4) | `exempt` | the invoice is issued `waived`, with the exemption's reason: the outcome it would have had if processed on time and then waived (F1) |
 | `exempt` | a `waiver_pending` invoice's charge succeeds | `exempt` | `paid`: the money moved, as F4 records for any payment already sent |
 | `exempt` | a `waiver_pending` invoice's charge fails or is resolved failed | `exempt` | `waived` |
 | `exempt` | the exemption is lifted | `trial` if `trial_ends_on` hasn't passed, otherwise `current` | none for the exempt time; billing restarts at the next billing date after today (F2). Lifting never suspends |
@@ -171,37 +187,57 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
   - Every date is computed from `anchor_day`, never from the previous date, so the day never drifts. Anchor 31 gives 31
     Jan, 28 or 29 Feb, 31 Mar.
   - The anchor is kept through exemptions and switch-offs.
-- **The period key is the billing date.** `(merchant_id, billing_on)` is unique across invoices and unbilled dates
-  together.
+- **The period key is the billing date.** `billing.periods` holds one row per business and date, by its primary key
+  (§3.1).
 
-**Whether a date is chargeable**
+**When a date is decided (P10-19, P10-26)**
 
-The run processes every date that has come, and never skips one silently. A date D becomes an invoice only if all three
-of these hold:
-1. billing was switched on at D 00:00, by `billing.switch_history`, which records every change of the switch with its
-   time;
-2. the business was not exempt at D 00:00, by `billing.exemption_history`;
-3. the release guard (§3.8) is open when the date is processed.
+Each date D has one **decision moment**, m(D): the first moment of day D at which billing is on.
+- It is D 00:00 if billing was on when the day began.
+- If billing is switched on during D, m(D) is that moment. This is how a first billing date on the switch-on day is
+  charged (Q12). Every later switch-on is treated the same way (F6, the suggested option, awaiting the owner's
+  confirmation).
+- If billing was off for the whole of D, D has no decision moment.
 
-Otherwise D is recorded in `billing.unbilled_dates` with the first reason that failed: `billing_off`, `exempt`,
-`charges_held`, or `awaiting_price` (§3.2).
+D is invoiced only if, at m(D):
+1. the business isn't exempt, by `billing.exemption_history`;
+2. the release guard is open, by `billing.guard_history` (§3.8);
+3. a price exists. With 21 or more agents, that means a custom price set before m(D) (§3.2, F3).
 
-This separates the three cases the review asked about:
-- **a delayed worker:** a date missed while the switch was on and the guard open is invoiced late, for D's window and
-  version. That is debt the owner's switch allowed;
-- **an intentional pause:** a date that passed while billing was off, or while the business was exempt, is never
-  invoiced. Nothing is backdated (Q12, F2, F4);
-- **charges held:** a date processed while the release guard is closed is never invoiced, even once it reopens.
+Otherwise D is unbilled, with the first reason that applies: `billing_off` (no decision moment), `exempt`,
+`charges_held`, or `awaiting_price`.
+
+**Every input is recorded history.** `billing.switch_history`, `billing.exemption_history`, `billing.guard_history` and
+the custom-price versions each record every change with its time. Each row is written in the same transaction as the
+change itself; the guard's rows are written by the worker (§3.8). So D's outcome depends only on what was true at m(D),
+never on when the worker happens to process D. The same history processed at different times gives the same rows (a
+test).
+
+**The run decides D only once m(D) has come,** or once D has ended with billing off. A date on a day still in progress
+with billing off waits, since it may still be switched on that day.
+
+This settles the cases the reviews raised:
+- **a delayed worker:** D is decided from the history at m(D). If the business wasn't exempt and the guard was open
+  then, D is invoiced late, for its own window and version. That is debt the owner's switch allowed;
+- **an intentional pause:** with billing off all day, or the business exempt at m(D), D is never invoiced. That holds
+  even if billing is on again, or the exemption lifted, before the worker gets to D (Q12, F2, F4);
+- **charges held:** with the guard closed at m(D), D is never invoiced. That holds even if the guard reopened before
+  the worker processed D, including when the worker was stopped in between;
+- **a change after m(D):** a switch-off leaves D's invoice owed (F4). An exemption waives it (F1), and if D is processed
+  after the exemption, the invoice is issued already `waived` (§3.1). Either way, the result is the one that processing
+  on time would have given.
 
 **The run**
-- A worker task sweeps the businesses whose `next_billing_on` is today or earlier. It claims each with a lease, one at a
-  time, as P9's claims do. Per business and date, in one transaction:
-  1. decide whether the date is chargeable (above);
-  2. if so, count the agents for D's window, never for "now", and choose the band and the version in force on D;
-  3. write the invoice, or the unbilled date;
+- A worker task sweeps the businesses with a date ready to decide. It claims each with a lease, one at a time, as P9's
+  claims do. Per business and date, in one transaction that holds the business's `merchant_billing` row for update:
+  1. decide the date (above);
+  2. if it is invoiced, count the agents for D's window, never for "now", and choose the band and the version in force
+     on D;
+  3. insert the period row, invoiced or unbilled;
   4. move `next_billing_on` to the next date.
-- A run repeated, or two at once, produce one row per business and date (test). A business several dates behind gets one
-  row per date. More than one late invoice at once is listed for the platform team.
+- The row lock serializes runs for a business, and the primary key refuses a second row for a date. A run repeated, or
+  two at once, produce one row per business and date (test). A business several dates behind gets one row per date. More
+  than one late invoice at once is listed for the platform team.
 - The run writes nothing for a business with no billing date yet (billing never switched on). The platform team's
   preview computes the figures without writing them.
 
@@ -218,11 +254,27 @@ It isn't shown while billing is off or the business is exempt, since that date w
 
 ### 3.5 The charge (BR-10.3; P10-8, P10-10, P10-11, P10-17, P10-20, P10-21)
 
-**Who makes orders.** Only the worker's charge task makes a subscription order. It does so only while the release guard
-(§3.8) is open, and the guard is checked again at the claim.
-- The request to pay (§3.7) makes no order. It marks the business's open invoices as requested, and the task picks them
-  up on its next pass.
-- So no order and no reservation can exist while charges are held (test).
+**Who makes orders (P10-18).** Only the worker's charge task makes a subscription order, and only while the worker's
+runtime guard is open (§3.8 conditions 3 and 4). The request to pay (§3.7) makes no order. It marks the business's open
+invoices as requested, and the task picks them up on its next pass.
+
+**The gate at creation.** `create_order` enforces the database's part of the gate atomically with the insert.
+- For a subscription order, it takes `FOR SHARE` on `billing.settings` and on the business's `merchant_billing` row.
+- It refuses unless billing is on, the business isn't exempt, and the invoice is `open` with an attempt due (below).
+- Switching off and exempting take those rows for update. So an order is created either before a switch-off or exemption
+  commits, or not at all (a race test).
+
+**A `created` order is never stranded (P10-22).** The charge task sweeps every `created` subscription order and claims
+it. The claim takes the same share locks, and also receives whether the worker's runtime guard is open.
+- If billing is on, the business isn't exempt, and the runtime guard is open, the claim moves the order to `unknown`, and
+  the worker sends it.
+- Otherwise the claim moves it to `cancelled`, in the same transaction, which releases its reservation. The attempt is
+  recorded as cancelled.
+- So an order created just before a switch-off, an exemption, or a change of the worker's configuration is cancelled by
+  its claim, never sent. Switching off and exempting don't cancel orders themselves. In revision 4 they did, and an order
+  inserted after their scan could be left `created`, holding its reservation (the third review).
+- While the worker is stopped, a `created` order keeps its reservation. Nothing else spends from a Live wallet in P10
+  (P9 Q2). The platform status lists any `created` order older than one pass.
 
 **Attempts.** `billing.charge_attempts` records each attempt: invoice, attempt number, payment order, outcome.
 - The order's reference is `sub-<invoice id>-<attempt number>`. A new attempt has a new reference, and an old reference
@@ -231,8 +283,8 @@ It isn't shown while billing is off or the business is exempt, since that date w
 - Open invoices are attempted oldest first.
 
 **When a new attempt is made (P10-20).**
-- Only after the previous attempt is final: failed, `insufficient` or cancelled. Never after `unknown`, and never while
-  one is unfinished.
+- Only after the previous attempt is final: failed (including `not_submitted`, below), `insufficient` or cancelled. Never
+  after `unknown`, and never while one is unfinished.
 - Only when the provider guarantees that a final failure never later succeeds (`capabilities.finalFailureIsFinal`, from
   TransactPay's answer to §2.4). It is part of the release guard (§9 condition 2): without it, billing can't charge at
   all, and the plan returns to the reviewer and the owner.
@@ -240,15 +292,34 @@ It isn't shown while billing is off or the business is exempt, since that date w
   automatically. A second debit that results is owed back to the business, and is listed as a refund for the platform
   team (§6).
 
-**The retry schedule (P10-21).** After an `insufficient` attempt, the next one is made when the wallet covers the amount
-(§3.7). After any other final failure:
-- the next attempts come 1 hour, 6 hours and 24 hours after the last failure;
-- after 3 such failures in a row, the invoice is `held`, and no attempt is made automatically. It is listed for the
-  platform team with each failure's provider answer;
-- a held invoice gets one attempt at the business's next billing date, and one on each request to pay (at most one an
-  hour). If that attempt succeeds, the hold ends;
-- the platform team's part is to fix the cause (configuration, the provider). No release command is needed;
-- a held invoice never suspends the business: the failure isn't the business's.
+**The retry schedule and holds (P10-21).** A hold is not an invoice state. An invoice stays `open` while held, and its
+retry fields record the schedule:
+- `failures`: the count of consecutive non-money failures;
+- `next_attempt_at`: when the next automatic attempt is due;
+- `held`: true once `failures` reaches 4;
+- `held_attempt_due`: whether a held invoice has its one allowed attempt waiting.
+
+After an `insufficient` attempt, the next one is made when the wallet covers the amount (§3.7). After a non-money
+failure, the schedule is:
+
+| Attempt | Made |
+|---|---|
+| 1 | when the date is invoiced |
+| 2 | 1 hour after failure 1 |
+| 3 | 6 hours after failure 2 |
+| 4 | 24 hours after failure 3 |
+| — | after failure 4 (the first attempt and its three retries), the invoice is held |
+
+- **A held invoice is attempted only when `held_attempt_due` is set.** The run sets it at each later billing date of the
+  business, and a request to pay sets it, at most once an hour. Each such attempt clears it.
+- **Each outcome:**
+  - success: the invoice is `paid`, and any hold ends;
+  - `insufficient`: `failures` returns to 0 and any hold ends; §3.1's lack-of-money row applies;
+  - another non-money failure: `failures` goes up by 1, and the schedule above applies (a held invoice stays held);
+  - cancelled: `failures` and the schedule don't change. The attempt is made again once the gate reopens.
+- **The platform team** sees each held invoice with every failure's provider answer. Their part is to fix the cause
+  (configuration, the provider). No release command is needed.
+- **A held invoice never suspends the business:** the failure isn't the business's.
 
 **The reservation (P10-17).** P9's `create_order`, the only way an order is made, is changed for every purpose:
 1. it locks the source wallet's 1100 projection (`FOR NO KEY UPDATE`, category 14);
@@ -259,17 +330,29 @@ Two orders against the same money are serialized by the lock, and only one is ma
 Live wallet in P10 (P9 Q2), and any later payout path goes through the same function. A refusal by the reservation is
 the "lack of money" outcome: the attempt is recorded as `insufficient`, and §3.1 applies. Nothing is half taken (Q6).
 
-**The point of no return (P10-22).** An order is "sent" from the moment its claim commits.
-- The claim moves it from `created` to `unknown` (P9's design: a claimed order may already have been sent). In the same
-  transaction, the claim takes `FOR SHARE` on `billing.settings` and on the business's `merchant_billing` row, and claims
-  only if billing is on and the business isn't exempt.
+**The point of no return (P10-22).** An order is "sent" from the moment its claim commits it to `unknown`.
+- The claim moves it from `created` to `unknown` (P9's design: a claimed order may already have been sent). It does so
+  only under the share locks above, with billing on and the business not exempt.
 - Switching off and exempting take those rows for update, so a claim and a switch-off are serialized:
-  - if the switch-off commits first, no claim commits afterwards;
+  - if the switch-off commits first, every later claim cancels;
   - if the claim commits first, the order is past the point of no return, and is finished and recorded, as F4 records.
-- After its claim, the worker does nothing but check its lease and send. A lapsed lease leaves the order `unknown`, for
-  P9's lookup.
-- An order still `created` when billing is switched off or the business is exempted is `cancelled`, in that same
-  transaction (a state P10 adds to P9's orders, reachable only from `created`).
+- After its claim, the worker does nothing but check its lease and runtime guard, and send. A lapsed lease leaves the
+  order `unknown`, for the lookup (below).
+- `cancelled` is a state P10 adds to P9's orders, reachable only from `created`, and only by a claim.
+
+**An order the provider never received (P10-24).** The claim commits before the send. A worker that stops between the
+two leaves an order `unknown` that TransactPay never saw. P9's resolution reads "not found" as `unknown` and leaves it so
+for ever, which would keep the invoice from a new attempt and keep its reservation. P10 changes P9's resolution:
+- **The adapter declares `capabilities.notFoundFinalAfter`,** a duration, only if TransactPay guarantees that a reference
+  not found that long after our request will never be processed (their answer to §2.5).
+- **"Not found" after that long is final.** A lookup that finds nothing for an order claimed longer ago than that
+  duration resolves it `failed`, with the reason `not_submitted`. That releases the reservation, and the schedule above
+  allows a new attempt. It counts as a non-money failure, so a worker that keeps crashing reaches a hold.
+- **"Not found" sooner, or without the capability,** stays `unknown`, as in P9. The invoice gets no new attempt, and the
+  order is listed for the platform team.
+- **The capability is part of the release guard** (§9 condition 2). Without it, billing can't charge.
+- **The rule applies to every outbound order,** since the guarantee is the provider's. In P10 there are no others (P9
+  Q2).
 
 **Success: two ledgers, and AlphaKolect's fee (F5).** On success, `record_order` posts in one transaction:
 - `subscription.paid` to the business's ledger: Dr 5100 / Cr 1100, for the price. The business pays exactly the price
@@ -290,10 +373,14 @@ the "lack of money" outcome: the attempt is recorded as `insufficient`, and §3.
 - The invoice becomes `paid` in the same transaction. Each posting is keyed by the provider transaction, so each is made
   once.
 
-**The lock order.** `billing` is lock category 19, after payments (18).
-- The success path takes the projections (14), the order (18), then the attempt, the invoice and the billing state (19).
-- The claim takes the order (18, skip locked), then the settings and the billing state (19, share).
-- Switching off and exempting take the `created` orders (18), then the settings or the billing state (19).
+**The lock order.** `billing` is lock category 19, after payments (18). Every footprint ascends:
+- `create_order`, for a subscription: the source wallet's projection (14, no key update), the new order (18), then the
+  settings and the billing state (19, share);
+- the claim: the order (18, skip locked), then the settings and the billing state (19, share);
+- the success path: the projections (14), the order (18), then the attempt, the period and the billing state (19);
+- switching off and exempting: the settings or the billing state (19, for update), then the periods (19). They read the
+  orders without locking them, after their own lock, so they see every claim that committed before them;
+- the run: the billing state (19, for update), then the period (19).
 
 Each footprint is pinned in the lock-order guard.
 
@@ -337,7 +424,8 @@ returns `suspended` when the session's business is suspended and the permission 
   - the owner, or staff with `merchant.subscription.pay`, asks for one.
 - **The request to pay:**
   - it carries an `Idempotency-Key`, and a repeat returns the first answer;
-  - it makes no order itself (§3.5): it marks the open invoices as requested, and answers with their attempts;
+  - it makes no order itself (§3.5): it marks the open invoices as requested, and answers with their attempts. A held
+    invoice gets its one allowed attempt, at most once an hour (§3.5);
   - with charges held or billing off, it records nothing and says so.
 - **Sessions aren't revoked or reissued.** The state is read on each call, so the next request after the restore
   succeeds.
@@ -350,35 +438,66 @@ returns `suspended` when the session's business is suspended and the permission 
     reserved actions.
   - The application role has no privilege on the table. Only the switch function writes it.
   - Every change is appended to `billing.switch_history`.
-- **Turning it on** is refused unless the VAT treatment is recorded. That is a database check: `enabled` implies a
-  treatment.
+- **Turning it on** is refused unless the VAT treatment and both release approvals (below) are recorded. Those are
+  database checks in the switch function: `enabled` implies a treatment, and the function refuses without the approvals.
 
-**The release guard** is open only when all four of these hold. It is checked by the run, by the charge task before it
-makes an order, by the claim, and by the worker again before each send:
-1. `billing.settings.enabled` is true (checked in the database at the claim, under share lock, §3.5);
-2. the business isn't `exempt` (likewise);
+**The release guard** is open only when all four of these hold. Conditions 1 and 2 are database state; conditions 3 and
+4 are the worker's runtime:
+1. `billing.settings.enabled` is true;
+2. the business isn't `exempt`;
 3. the worker's environment allows charges (`BILLING_CHARGES=on`, off by default);
-4. the provider declares `capabilities.walletTransfer` and `capabilities.finalFailureIsFinal`. TransactPay's adapter
-   declares them only in the release that implements and proves §9 conditions 1–5.
+4. the provider declares `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal` and
+   `capabilities.notFoundFinalAfter`. TransactPay's adapter declares them only in the release that implements and
+   proves §9 conditions 1–5.
 
-**Production configuration** refuses `BILLING_CHARGES=on` while the configured provider lacks either capability. So a
-stale setting, a direct database update, or a switch turned on early still sends nothing. Tests set `enabled` directly in
-the database, with the environment off or a capability false, and see no invoice, order or send.
+**Where each condition is checked:**
 
-**Visibility.** The worker records whether the guard is open in each pass's status, and the platform view shows it.
+| Check | Conditions | How |
+|---|---|---|
+| The run, deciding a date | all four | at m(D), from recorded history (§3.4) |
+| The charge task, before making an order | 3, 4 | live |
+| `create_order` | 1, 2 | in the database, under share lock (§3.5) |
+| The claim | 1, 2; 3 and 4 as the worker passes them | in the database, under share lock. Closed means the order is cancelled (§3.5) |
+| The worker, before each send | 3, 4 | live |
+
+**The guard's history.** `billing.guard_history` records the worker's runtime guard (conditions 3 and 4), with the
+reason when it is closed.
+- The worker writes a row when it starts, before it processes anything, and whenever its state changes. Only the
+  worker's role can write the table.
+- The guard's state at any moment is the latest row at or before it. With no row, it is closed.
+- Conditions 3 and 4 change only when a worker starts: the environment is read at start, and the capabilities are code.
+  So the row written at start is the moment a new configuration took effect, and a stopped worker's last state stands
+  until then.
+- P15 runs one billing worker process at a time (§6), so two processes' rows never interleave. If two ever overlap, a
+  closed row from the newer process stands, since the older one writes again only if its own state changes.
+
+**Production configuration** refuses `BILLING_CHARGES=on` while the configured provider lacks any of the three
+capabilities. So a stale setting, a direct database update, or a switch turned on early still sends nothing. Tests set
+`enabled` directly in the database, with the environment off or a capability false, and see no invoice, order or send.
+
+**Release approvals (P10-25).** Two of §9's conditions are judgments the system can't check: P9's conditions for live
+money (§9 condition 6) and the accountant's VAT sign-off (condition 7).
+- `billing.release_approvals` records each: the condition, who recorded it, when, and a reference to the written
+  evidence. For condition 6 that is the reviewer's closure of P9's live-money gate; for condition 7, the accountant's
+  letter.
+- Only the Super Admin's switch function writes it, under `platform.billing.switch`.
+- Turning billing on is refused unless both are recorded.
+- The system enforces that an approval is recorded before billing can be switched on. It can't check what the approval
+  says, and §9 marks these conditions as approvals, not as system checks.
+
+**Visibility.** The platform view shows the guard's state and history, the approvals, and whether billing is on.
 "Billing switched on, charges held" is visible, not silent.
 
-**Switching off (F4).** In one transaction:
-- the `created` orders are `cancelled`;
+**Switching off (F4).** In one transaction, holding `billing.settings` for update:
 - every `suspended` business becomes `current`;
 - open invoices stay open.
 
-Orders already past the point of no return (§3.5) finish through P9's machinery. A success is posted and pays its
-invoice, because the money moved.
+A `created` order is cancelled by its next claim (§3.5), which can no longer find billing on. Orders already past the
+point of no return finish through P9's machinery. A success is posted and pays its invoice, because the money moved.
 
-**Exempting a business (F1).** In one transaction:
-- its `created` orders are cancelled;
-- its open invoices are waived, or `waiver_pending` if a charge is past the point of no return (§3.1);
+**Exempting a business (F1).** In one transaction, holding its `merchant_billing` row for update:
+- its open invoices are waived, or `waiver_pending` if a charge is past the point of no return (§3.1). An invoice whose
+  order is still `created` is waived, since that order's claim will cancel it;
 - while it is exempt, its dates are unbilled (§3.4).
 
 **Lifting an exemption (F2)** follows §3.1.
@@ -390,13 +509,13 @@ invoice, because the money moved.
 | `GET /v1/merchant/subscription` | `merchant.subscription.read` | allowed | the state, trial end, band, price, next billing date, the coming price (Q8), the amount owed, `upcoming` (§3.4), and the Live wallet's details for loading it |
 | `GET /v1/merchant/subscription/invoices` | `merchant.subscription.read` | allowed | the invoices, with the agents counted and their attempts |
 | `POST /v1/merchant/subscription/payment` | `merchant.subscription.pay` | allowed | asks for a charge of what is owed (`Idempotency-Key`; §3.7) |
-| `GET /v1/platform/billing/businesses` · `…/{merchantId}/invoices` · `/v1/platform/billing/preview` · `/v1/platform/billing/status` | `platform.billing.read` | — | every business's billing state and amount owed; a business's invoices, unbilled dates and held invoices; what a run would charge; whether the release guard is open (§3.8) |
+| `GET /v1/platform/billing/businesses` · `…/{merchantId}/invoices` · `/v1/platform/billing/preview` · `/v1/platform/billing/status` | `platform.billing.read` | — | every business's billing state and amount owed; a business's periods (invoices, unbilled dates and held invoices); what a run would charge; the guard's state and history, the release approvals, and any `created` order older than one pass (§3.8) |
 | `GET` · `POST /v1/platform/billing/prices` · `POST …/prices/{id}/withdrawal` | `platform.billing.read` / `platform.billing.prices` | — | the versions; a new version with its start date; withdrawing one not yet started |
 | `PUT /v1/platform/billing/businesses/{merchantId}/custom-price` | `platform.billing.custom_price` | — | the price for 21 or more agents (Q9, F3) |
-| `PUT /v1/platform/billing/settings` · `POST` · `DELETE …/businesses/{merchantId}/exemption` | `platform.billing.switch` (Super Admin; not grantable) | — | switching billing on or off, and recording the VAT treatment; an exemption and lifting it |
+| `PUT /v1/platform/billing/settings` · `POST /v1/platform/billing/release-approvals` · `POST` · `DELETE …/businesses/{merchantId}/exemption` | `platform.billing.switch` (Super Admin; not grantable) | — | switching billing on or off, and recording the VAT treatment; recording a release approval with its evidence (§3.8); an exemption and lifting it |
 
 - **Activity events** (atomic; identifiers and amounts only):
-  - `billing.invoice_issued`, `billing.date_unbilled`;
+  - `billing.invoice_issued`, `billing.date_unbilled`, `billing.release_approved`;
   - `billing.charge_requested`, `billing.charge_cancelled`, `billing.charge_held`;
   - `billing.invoice_paid`, `billing.invoice_waived`;
   - `billing.suspended`, `billing.restored`;
@@ -411,17 +530,29 @@ invoice, because the money moved.
 - Before billing is first switched on, no date exists and nothing is written.
 - `enabled` set directly in the database, with `BILLING_CHARGES` off or a capability false: no invoice, order or send.
 - Production configuration refuses `BILLING_CHARGES=on` without both capabilities.
-- Turning billing on without a recorded VAT treatment is refused.
+- Turning billing on without a recorded VAT treatment, or without either release approval, is refused.
 - The request to pay, with charges held, creates no order and no reservation.
 
 **State transitions**
 - Every row of §3.1's table, each by its own test, including a suspended business accruing a second invoice.
 
-**Chargeable dates**
-- A date missed by a stopped worker while billing was on is invoiced late, for its own window.
-- A date that passed while billing was off, while exempt, or while charges were held stays unbilled after everything
-  reopens.
-- A lifted exemption bills from the next date.
+**One row per date**
+- A second row for the same business and date is refused by the key, whatever its outcome.
+- The check constraint refuses an invoiced row without its amounts, and an unbilled row with them.
+- The trigger refuses a change to a written row's outcome, reason, amounts or decision moment.
+
+**Decided dates**
+- Billing switched on at 14:00 on a business's first billing date: invoiced (Q12). The same on a later switch-on (F6).
+- Billing off for the whole of D: `billing_off`, even if it is switched on the next day. D with billing off and the day
+  in progress: not decided yet.
+- A date missed by a stopped worker, with everything open at m(D): invoiced late, for its own window.
+- Exempt at m(D), lifted before the worker processes D: `exempt`. Exempted after m(D), before processing: issued
+  `waived`.
+- The guard closed at m(D), reopened before processing, with the worker stopped in between: `charges_held`.
+- The guard open at m(D) and closed at processing: invoiced, with no attempt until it reopens.
+- No guard row before m(D): `charges_held`.
+- One history, processed at several different times, gives the same rows.
+- A lifted exemption bills from the next date (F2).
 
 **BR-10.1 and prices**
 - The price at each band's edge: 0, 1, 3, 4, 6, 7, 10, 11, 20 and 21 agents.
@@ -446,13 +577,29 @@ invoice, because the money moved.
 
 **Attempts, retries and holds**
 - `insufficient`, then a deposit: attempt 2, with a new reference.
-- `failed`: attempts at 1 h, 6 h and 24 h. The third failure holds the invoice, and it gets no automatic attempt until
-  the next billing date or a request to pay.
-- `cancelled`: a new attempt once the guard reopens.
-- `unknown`: nothing until resolved. Resolved failed gives attempt 2; resolved successful gives nothing, and the invoice
-  is paid.
-- With `finalFailureIsFinal` false, no attempt 2 is ever made.
+- Non-money failures: attempts 2, 3 and 4 at 1 h, 6 h and 24 h after each failure. Failure 4 holds the invoice, which
+  stays `open`.
+- A held invoice: no automatic attempt; one at its next billing date, and one per request to pay, at most one an hour.
+  Success ends the hold; another failure keeps it.
+- `insufficient` resets the count and ends a hold.
+- `cancelled` leaves the count and schedule as they were, and the attempt is made again once the gate reopens.
+- `unknown`: nothing until resolved. Resolved failed gives a new attempt by the schedule; resolved successful gives
+  nothing, and the invoice is paid.
+- With `finalFailureIsFinal` false, no second attempt is ever made.
 - A repeated `Idempotency-Key` returns the first answer.
+
+**An order the provider never received**
+- The claim commits, and the worker stops before sending. The FakeProvider never received the reference.
+- A lookup before `notFoundFinalAfter` has passed: still `unknown`. After it: `failed`, `not_submitted`, the reservation
+  released, and attempt 2 by the schedule.
+- Without the capability: `unknown` for good, listed, and no new attempt.
+
+**Orders and the gate**, as races:
+- `create_order` against a switch-off: either the order commits first and its claim cancels it, or creation is refused.
+  No `created` order survives a claim after a switch-off.
+- The same for exempting.
+- The worker's runtime guard closing after an order is created: the claim cancels it and the reservation is released.
+- The worker stopped: the `created` order keeps its reservation and is listed.
 
 **The reservation**
 - Two orders at once against a wallet that can pay for one: exactly one is made.
@@ -481,7 +628,7 @@ invoice, because the money moved.
 - The guard test of §3.3: no deletions, and only the agent sign-in creates agent sessions.
 
 **The switch and exemptions** (F1, F2, F4)
-- Switching off cancels the `created` orders and restores the suspended businesses.
+- Switching off restores the suspended businesses. A `created` order is cancelled by its next claim.
 - Exempting waives the open invoices.
 - Lifting resumes at the next date without suspending.
 
@@ -492,7 +639,10 @@ invoice, because the money moved.
 
 **Isolation and guards**
 - A business sees only its own subscription. A run and a charge touch only the business they claim (TA-11).
-- Lock order (category 19, the claim's share locks, `create_order`'s new 14:NKU).
+- Lock order (category 19, the claim's and `create_order`'s share locks, `create_order`'s new 14:NKU, switch-off and
+  exemption taking no order lock).
+- Grants: only the worker's role writes `billing.guard_history`; only the switch function writes
+  `billing.release_approvals`.
 - Grants: the worker's functions are executable by `alphakolect_worker` alone.
 - Transaction classes, the matrices, the coverage and writer guards, and `x-while-suspended` on every operation.
 
@@ -506,7 +656,9 @@ invoice, because the money moved.
 - **P12:** billing emails (the warning before the billing date, the suspension, the restore, a held invoice); invoice
   PDFs.
 - **P13:** the Subscription page and the redirect while suspended (`middleware.ts`).
-- **P15:** the worker's billing tasks in production, its `BILLING_CHARGES` setting, and §9's conditions.
+- **P15:** the worker's billing tasks in production, its `BILLING_CHARGES` setting, and §9's conditions. One billing
+  worker process at a time: a deployment stops the old worker before the new one starts, so the guard's history (§3.8)
+  never interleaves two processes.
 
 ## 7. Decisions (recommended options, the project lead's standing instruction)
 
@@ -525,56 +677,66 @@ invoice, because the money moved.
 | P10-11 | Not enough money | decided by the reservation in `create_order` before any order exists, and by the provider's answer after |
 | P10-12 | Billing's lock category | 19, after payments |
 | P10-13 | Businesses billing leaves alone | deactivated and unconfirmed ones, and `exempt` ones |
-| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes two P9 functions (`create_order`'s reservation, the `cancelled` state); P10 does not close before P9 does |
+| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes three things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), and the resolution of an order not found (P10-24). P10 does not close before P9 does |
 | P10-15 | Gate | this plan's review now; one review of the build at the end |
 | P10-16 | The customer audience | out of P10's exit criteria by an explicit amendment, as P2's was; RESTRUCTURING_MAP's P10 row is amended when this plan is approved. Building customer sign-in here would be a phase of its own |
 | P10-17 | Concurrent spending | every outbound order reserves its amount against the source wallet's locked 1100 projection |
-| P10-18 | The release guard | four conditions, checked at the run, at order creation, at the claim (in the database) and before each send (in the worker); configuration alone is not trusted |
-| P10-19 | Chargeable dates | decided by the switch's and exemptions' recorded history at the date, and by the guard when processed; every date is recorded, invoiced or unbilled with its reason |
+| P10-18 | The release guard | four conditions, checked by the run (from history), before an order is made and before each send (in the worker), and in `create_order` and the claim (in the database, under share lock); configuration alone is not trusted |
+| P10-19 | Deciding a date | from recorded history alone (the switch, exemptions, the guard, custom prices) at the date's decision moment, so the worker's timing never changes an outcome; every date is recorded, invoiced or unbilled with its reason |
 | P10-20 | Retrying a failed charge | only with the provider's guarantee that a final failure is final; without it, billing can't charge |
-| P10-21 | Bounded retries | 1 h, 6 h and 24 h after a non-money failure, then held: one attempt per billing date or request to pay, never suspending |
-| P10-22 | The point of no return | the claim's commit, made only with billing on and the business not exempt under a share lock that switch-off and exemption must wait for |
+| P10-21 | Bounded retries | after a non-money failure, retries 1 h, 6 h and 24 h later; failure 4 holds the invoice (a retry field, not a state): then one attempt per billing date or request to pay, never suspending |
+| P10-22 | The point of no return, and cancelling | the claim's commit, made only with billing on and the business not exempt, under a share lock that switch-off and exemption must wait for. A claim that finds the gate closed cancels the order instead, so no `created` order is stranded |
+| P10-23 | One row per billing date | a single `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint and immutable outcomes; not two tables, whose uniqueness no constraint could span |
+| P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only after the provider's guaranteed duration (`notFoundFinalAfter`); without that guarantee billing can't charge |
+| P10-25 | Conditions that are judgments | recorded as release approvals, with their evidence, before the switch can be turned on; called approvals, not system checks |
+| P10-26 | The decision moment | the first moment of the date's day at which billing is on: midnight if it was on, the switch-on moment if it was switched on that day (Q12; F6 pending) |
 
 ## 8. Questions out
 
 | To | Document | State |
 |---|---|---|
 | The owner | `docs/business/P10_OWNER_BILLING.md` | answered 11 November 2026: every question with the suggested option; the wording approved |
-| The owner | `docs/business/P10_OWNER_BILLING_FOLLOWUP.md` | answered 11 November 2026: F1–F5, each with the suggested option. F2 ("Thne") and F3 ("words that passed") repeat the suggested option's text with typing slips, and are read as that option. The form notes this, for the owner to confirm or correct |
-| TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, and whether a failure can later succeed; §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
+| The owner | `docs/business/P10_OWNER_BILLING_FOLLOWUP.md` | answered 11 November 2026: F1–F5, each with the suggested option. F2 and F3 were first saved with typing slips ("Thne", "words that passed", `e5a7b83`) and later corrected in the form, not by the integration team (`f30d107`). The form records both |
+| The owner | `docs/business/P10_OWNER_BILLING_CONFIRMATION.md` | **awaiting his answers:** C1 confirms F2 and F3 as they now read; F6, a billing date on the day billing is switched on again |
+| TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, whether a failure can later succeed, and when "not found" is final (§2.5); §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
 
 ## 9. Before billing can charge
 
-Each condition is enforced by the system. None depends on someone remembering it.
+Each condition is one of two kinds:
+- **System:** the code refuses to charge without it. Capabilities are declared in the adapter's code, so whether a
+  declaration is true is reviewed in the release that adds it. Once declared, nothing charges without it.
+- **Approval:** a person's judgment, which the system can't check. The system refuses to switch billing on until the
+  approval is recorded with its evidence (§3.8). It enforces that the record exists, not what it says.
 
-| # | Condition | Proven by | Enforced by |
-|---|---|---|---|
-| 1 | TransactPay documents a transfer between two of our virtual accounts, debiting the source account, with the destination's required fields (`accountName` included) | their answer (§1); a sandbox test moves money between two sandbox virtual accounts and sees both balances change | `walletTransfer` declared only by the adapter release that implements it; production refuses `BILLING_CHARGES=on` without it |
-| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final, and **guarantees that a final failure never later succeeds** | their answer (§2); sandbox tests of a duplicate reference, a lookup after a timeout, and pending to final where the sandbox allows (§4) | `finalFailureIsFinal` declared only with that guarantee; without it, production refuses `BILLING_CHARGES=on` |
-| 3 | TransactPay states its insufficient-funds answer | their answer (§3); the adapter maps it to `insufficient`; a sandbox test | part of the adapter release behind `walletTransfer` |
-| 4 | The fee model is confirmed, and is one §3.5 supports, AlphaKolect bearing the fee (F5) | their answer (§5); its posting tested; the reconciler finds no difference after a sandbox transfer | the adapter declares one fee model, and the capability only if it is supported. A confirmation with another model isn't posted |
-| 5 | Pooled or per-account balances (P9 follow-up §2) | their answer | the capability is declared only for per-account balances. If pooled, P10-10 and the reconciler return to the reviewer and the owner |
-| 6 | P9's conditions for live money (P9 plan §10) | P9's own gate | P10's migrations come after P9's. Production can't have billing without P9's tables, functions and worker role, which wait for P9's conditions (P15) |
-| 7 | The accountant confirms in writing how subscription income is accounted for VAT (Q10) | a written sign-off | the switch can't be turned on without a recorded treatment (a database check). If VAT is inside the price, the platform posting splits it (§3.5) |
-| 8 | The owner's answers | Q1–Q14 and F1–F5, answered 11 November 2026 | met |
-| 9 | The owner switches billing on, as Super Admin, from the platform admin | BR-1.3 | `enabled` false by default; only the non-grantable `platform.billing.switch` changes it |
+| # | Condition | Kind | Proven by | Enforced by |
+|---|---|---|---|---|
+| 1 | TransactPay documents a transfer between two of our virtual accounts, debiting the source account, with the destination's required fields (`accountName` included) | system | their answer (§1); a sandbox test moves money between two sandbox virtual accounts and sees both balances change | `walletTransfer` declared only by the adapter release that implements it; production refuses `BILLING_CHARGES=on` without it, and the guard (§3.8) is closed |
+| 2 | TransactPay states what a repeated reference does, when and for how long the lookup answers, every status and which are final; **guarantees that a final failure never later succeeds**; and **states after how long "not found" is final** | system | their answer (§2, including §2.5); sandbox tests of a duplicate reference, a lookup after a timeout, a reference never sent, and pending to final where the sandbox allows (§4) | `finalFailureIsFinal` and `notFoundFinalAfter`, each declared only with its guarantee; without both, production refuses `BILLING_CHARGES=on` |
+| 3 | TransactPay states its insufficient-funds answer | system | their answer (§3); the adapter maps it to `insufficient`; a sandbox test | part of the adapter release behind `walletTransfer` |
+| 4 | The fee model is confirmed, and is one §3.5 supports, AlphaKolect bearing the fee (F5) | system | their answer (§5); its posting tested; the reconciler finds no difference after a sandbox transfer | the adapter declares one fee model, and the capability only if it is supported. A confirmation with another model isn't posted |
+| 5 | Pooled or per-account balances (P9 follow-up §2) | system | their answer | the capability is declared only for per-account balances. If pooled, P10-10 and the reconciler return to the reviewer and the owner |
+| 6 | P9's conditions for live money (P9 plan §10, conditions 1–10: a real deposit, the balance enquiry, the worker's isolation in production, and the rest) | **approval** | the reviewer's closure of P9's live-money gate | a release approval for condition 6, citing that closure, must be recorded before billing can be switched on (§3.8). P10's migrations also come after P9's, but that orders the schema; it proves none of P9's conditions |
+| 7 | The accountant confirms in writing how subscription income is accounted for VAT (Q10) | **approval**, and a system check | a written sign-off | a release approval for condition 7, citing the letter, and the recorded treatment: the switch can't be turned on without both. If VAT is inside the price, the platform posting splits it (§3.5) |
+| 8 | The owner's answers | **approval** | Q1–Q14 and F1–F5, answered 11 November 2026; C1 and F6 (`P10_OWNER_BILLING_CONFIRMATION.md`) | **not met:** awaiting C1 and F6. Checked by the plan review and the project lead, not by the system |
+| 9 | The owner switches billing on, as Super Admin, from the platform admin | system | BR-1.3 | `enabled` false by default; only the non-grantable `platform.billing.switch` changes it |
 
 ## 10. The build, once approved
 
 - **Migrations:**
-  1. `billing_core`: schema, tables (with the switch and exemption histories, unbilled dates, attempts), RLS, the price
-     seed, the permission flag, the platform's VAT-payable account, the order's platform posting and `cancelled` state,
-     `create_order`'s reservation;
-  2. `billing_functions`: the run, the charge task, the claim's guard, attempts and holds, restore, the switch and
-     exemptions, the reads, `assert_authority`'s suspended outcome.
+  1. `billing_core`: schema, tables (the periods, the switch, exemption and guard histories, the release approvals,
+     attempts), RLS, the price seed, the permission flag, the platform's VAT-payable account, the order's platform
+     posting and `cancelled` state, `create_order`'s reservation and billing gate;
+  2. `billing_functions`: the run and its decision moment, the charge task, the claim's guard and cancellation, attempts
+     and holds, the `not_submitted` resolution, restore, the switch, approvals and exemptions, the reads,
+     `assert_authority`'s suspended outcome.
 - **Contracts:** `whileSuspended` on the registry and every existing operation; the new endpoints.
 - **Provider:**
-  - the port gains `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`, a declared fee model, and the
-    transfer;
-  - the FakeProvider covers every fee model and outcome;
-  - the TransactPay adapter declares neither capability.
-- **API and worker:** `modules/billing`, the worker's three tasks and the release guard, `BILLING_CHARGES`, the 402 and
-  403 envelopes.
+  - the port gains `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
+    `capabilities.notFoundFinalAfter`, a declared fee model, and the transfer;
+  - the FakeProvider covers every fee model and outcome, including a reference it never received;
+  - the TransactPay adapter declares none of the three capabilities.
+- **API and worker:** `modules/billing`, the worker's three tasks, the release guard and its history, `BILLING_CHARGES`,
+  the 402 and 403 envelopes.
 - **Tests:** as in §5, in the db and API suites.
 - **The gate:**
   - every step exit 0 on a clean tree at a named commit: `format:check`, `lint`, `typecheck`, `build`, `openapi:check`,
@@ -583,7 +745,8 @@ Each condition is enforced by the system. None depends on someone remembering it
   - Linux CI on the pull request.
 
 **The baseline before the build (2026-11-11).** P10 has only documents so far. The full gate ran at `817c28d`, whose code
-is identical to `main` at `031e4db` (P9's merge), to record the health of what P10 will build on:
+is identical to `main` at `031e4db` (P9's merge), to record the health of what P10 will build on. It validates no P10
+code, since none exists yet:
 
 | Step | Result |
 |---|---|
@@ -605,6 +768,7 @@ is identical to `main` at `031e4db` (P9's merge), to record the health of what P
 
 | Rev | Date | Change |
 |---|---|---|
+| 5 | 2026-11-11 | The third review's 6 blockers and the owner's record resolved (§14): the decision moment and the guard's history; one periods table; the gate in `create_order` and cancellation by the claim; holds as retry fields, with the schedule stated attempt by attempt; "not found" final after the provider's stated time; release approvals for the conditions that are judgments; the owner's confirmation form |
 | 4 | 2026-11-11 | The second review's 8 findings resolved (§13): the follow-up's answers recorded; suspended businesses accrue invoices; chargeable dates by recorded history; `waiver_pending`; the point of no return at the claim; retries only with the provider's guarantee; every release condition enforced, the request to pay making no order; bounded retries and holds |
 | 3 | 2026-11-11 | The plan review's 14 findings resolved (§12): every state transition, dates and windows, the upcoming charge, attempts, the reservation, the charge gate, the fee postings, exemptions and switch-off, the customer amendment, the VAT condition; the owner's follow-up (F1–F5) and TransactPay's questions extended |
 | 2 | 2026-11-11 | The owner's answers recorded (Q1–Q14, the wording): the design's open choices take them |
@@ -638,7 +802,7 @@ The reviewer did not approve revision 3 and listed 8 findings. Each is resolved 
 
 | # | Finding | Resolved in |
 |---|---|---|
-| 1 | The plan called F1–F5 unanswered; two answers have typing slips | Status and §8: answered, each with the suggested option. The design no longer hedges. The slips are noted in the form for the owner to confirm, and his words are not edited |
+| 1 | The plan called F1–F5 unanswered; two answers have typing slips | Status and §8: answered, each with the suggested option. The design no longer hedges. The slips were noted in the form for the owner to confirm. The form was later corrected, and the note no longer matched it: see §14, item 7 |
 | 2 | No transition for a billing date while suspended | §3.1: a suspended business accrues an invoice per chargeable date (Q5's chosen option over the one that would stop billing); the transition test covers it |
 | 3 | A closed gate could produce backdated invoices when it reopened | §3.4 and P10-19: a date is chargeable by the switch's and exemptions' recorded history at the date, and by the guard when processed. A delayed worker catches up; a pause, an exemption or held charges never backdate |
 | 4 | Exempting could race a transfer already sent | §3.1 and §3.8: `waiver_pending`, then `paid` if it succeeds (F4: a payment already sent is finished and recorded) or `waived` if it fails; a race test |
@@ -646,3 +810,21 @@ The reviewer did not approve revision 3 and listed 8 findings. Each is resolved 
 | 6 | Retries are unsafe if a final failure can later succeed | P10-20: retries only with the provider's guarantee (`finalFailureIsFinal`, §9 condition 2), without which billing can't charge at all; a late success despite it is listed as owed back (§6) |
 | 7 | The runtime guard didn't enforce every release condition, and the request to pay could make an order | §9's "Enforced by" column, one mechanism per condition (VAT by a database check on the switch). §3.5 and §3.7: only the worker's charge task makes orders, under the guard; the request to pay only marks invoices |
 | 8 | "After three failures" didn't stop retries | P10-21: 1 h, 6 h and 24 h, then held. One attempt per billing date or request to pay, never suspending. The platform team fixes the cause; no release command |
+
+## 14. The third plan review (2026-11-11)
+
+The reviewer did not approve revision 4 and listed 6 blockers and one point on the owner's record. Each is resolved
+below.
+
+| # | Finding | Resolved in |
+|---|---|---|
+| 1 | The date rules conflicted: a first billing date on the switch-on day failed "on at 00:00", and the guard was read when processed, so a date held while the worker was down could be invoiced after the guard reopened | §3.4, P10-19 and P10-26: each date has one decision moment, the first moment of its day at which billing is on, so the switch-on day counts (Q12). Exemption, guard and price are all read at that moment from recorded history; `billing.guard_history` (§3.8) records the worker's guard from its start. The worker's timing never changes an outcome (a test processes one history at several times) |
+| 2 | "One invoice or unbilled row per date" spanned two tables, which no unique constraint can do | §3.1 and P10-23: one `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint tying each outcome to its columns, and a trigger that keeps outcomes immutable. The run holds the business's row for update |
+| 3 | An order created after switch-off's cancellation scan, or before a configuration change, could stay `created` and keep its reservation | §3.5 and P10-22: `create_order` checks billing and the exemption under share lock, atomically with the insert; the claim, under the same locks and with the worker's runtime guard, cancels instead of sending when the gate is closed. Switch-off and exemption no longer scan orders. Race tests for each |
+| 4 | `held` was used as a state but not listed, and the retry count was ambiguous | §3.5 and P10-21: holding is a retry field, and the invoice stays `open`. The schedule is stated attempt by attempt: retries 1 h, 6 h and 24 h after failures 1–3, held at failure 4, with each outcome's effect on the count |
+| 5 | A worker that stops after the claim and before the send leaves an order `unknown` for ever | §3.5 and P10-24: with the provider's guaranteed duration (`notFoundFinalAfter`, TransactPay §2.5), "not found" after that long resolves `failed`, `not_submitted`, releasing the reservation. Without it, billing can't charge (§9 condition 2). A crash-before-send test |
+| 6 | P9's live-money conditions were called system-enforced, but migration order proves none of them | §9: each condition is marked system or approval. P9's conditions and the accountant's sign-off are release approvals (P10-25), recorded with their evidence before the switch can be turned on; the plan no longer claims the system checks them |
+| 7 | The follow-up's note said F2 and F3 kept their slips, but the form had been corrected | The correction, which the integration team did not make, is committed as found (`f30d107`). The note now records both versions (`5a8ca3b`). The owner confirms the answers as they read (`P10_OWNER_BILLING_CONFIRMATION.md`, C1), and §9 condition 8 is not met until he does |
+
+The reviewer also advised not to push or present revision 4 as approved. Nothing has been pushed since revision 1, and
+PR #12 stays open and unmerged, for review only, not as an approved plan.

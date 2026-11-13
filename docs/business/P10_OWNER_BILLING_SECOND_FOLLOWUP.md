@@ -7,7 +7,7 @@ business is charged or keeps its access, so they are yours to decide. Each has o
 
 As before, **"Not sure" is a fine answer**.
 
-**Answered by:** ____________________ **Date:** ____________________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 13th of November, 2026
 
 ---
 
@@ -23,7 +23,8 @@ deactivated, nobody in it can sign in. Suppose it is deactivated while it owes o
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: What it owes stays owed, but nothing is taken while it is deactivated. It isn't charged for the time it was
+> deactivated. Once reactivated, it is billed again from its next billing date, and what it owed is taken as usual.
 
 ## G2. A payment that fails because of TransactPay, not the business
 
@@ -42,4 +43,5 @@ or AlphaKolect's side. You chose that access returns only when everything owed i
 - ☐ Other: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: Access returns once everything except the month on hold is paid. The month on hold stays owed and is taken as
+> soon as the problem is fixed, without suspending the business again for it.

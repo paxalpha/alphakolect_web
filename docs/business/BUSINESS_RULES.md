@@ -24,6 +24,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 2.3 A business gets a **Live wallet (bank virtual account) only after confirming its email**. Unconfirmed sign-ups get nothing. *(Q2a, Q3c)*
 2.4 The ~197 virtual accounts created for fake sign-ups should be closed with TransactPay. *(Q3a, Q3d)*
 2.5 Every business gets a **90-day free trial** from sign-up. *(Q9b)*
+*Note added on 13 November 2026, with the owner's approval:* The 90-day free trial starts on the day the business **confirms its email**, not on the day it signs up. This replaces "from sign-up" above. *(Owner's answer to Q1 of the billing questions, 11 November 2026.)*
 
 ## 3. Who can do what
 

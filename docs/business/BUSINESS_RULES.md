@@ -112,6 +112,8 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 > - **10.6b Login:** a **deactivated** agent **cannot log in** to the mobile app, from the moment of deactivation.
 > - *Still to define:* what counts as "activity" (proposed: a login or a recorded collection). See `TARGET_ARCHITECTURE.md` §30.
 
+*Note added on 13 November 2026, with the owner's approval:* "Activity" is now defined: an agent is active if, in the 15 days before the billing date, the agent **signed in to the mobile app** or **recorded a collection**. *(Owner's answer to Q2 of the billing questions, 11 November 2026.)*
+
 ## 11. Records
 
 11.1 **Money records are never deleted.** A mistake is corrected with a **visible reversing entry**, the way a bank does it. *(Q6d)*

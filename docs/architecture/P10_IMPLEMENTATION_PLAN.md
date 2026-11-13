@@ -1,13 +1,15 @@
 # P10 implementation plan — billing
 
-**Status: revision 7 (2026-11-11), a draft for the independent reviewer's plan review. Nothing is built.**
+**Status: revision 8 (2026-11-13), a draft for the independent reviewer's plan review. Nothing is built.**
 
 - **The reviews:**
   - revision 3 resolved the first plan review's 14 findings (§12);
   - revision 4 resolved the second review's 8 findings (§13);
   - revision 5 resolved the third review's 6 blockers and its point on the owner's record (§14);
   - revision 6 resolved the fourth review's two release gaps, its status-table concern and the owner's record (§15);
-  - revision 7 resolves the fifth review's three items, and the gaps found in a full self-review of revision 6 (§16).
+  - revision 7 resolved the fifth review's three items, and the gaps found in a full self-review of revision 6 (§16);
+  - revision 8 records the owner's G1, G2, N1 and N2 answers, and hardens the plan after the sixth review and a
+    further full self-review (§17).
 - **The owner's answers:**
   - `docs/business/P10_OWNER_BILLING.md`, answered 11 November 2026: every question (Q1–Q14) with the suggested option,
     and the permissions' wording approved as written;
@@ -17,12 +19,14 @@
   - `docs/business/P10_OWNER_BILLING_CONFIRMATION.md`, answered 11 November 2026 (`3869154`): C1, yes, F2 and F3 as
     they now read are his answers; F6, a business whose billing date is the day billing is switched on again is
     charged that day, as in Q12 (the suggested option);
-  - `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md`, **awaiting the owner**: G1, a deactivated business's debts
-    and dates; G2, restoring access while a month is held for a failure that isn't the business's;
-  - `docs/business/P10_OWNER_RULE_NOTES.md`, **awaiting the owner**: dated notes under BR-2.5 (the trial starts at
-    email confirmation, Q1) and BR-10.6 (what "activity" means, Q2), as rule 11.2's note was added (D9).
-  - The plan follows the suggested options of G1 and G2 until he answers. §9 condition 8 is not met until G1, G2 and
-    the rule notes are answered.
+  - `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md`, answered 13 November 2026: G1, deactivated businesses keep
+    their debt but aren't charged for deactivated dates; G2, access returns once all non-held invoices are paid, and a
+    held invoice stays owed without suspending access by itself;
+  - `docs/business/P10_OWNER_RULE_NOTES.md`, approved 13 November 2026 (N1 and N2, "add it as written"; the name and
+    date as the project lead confirmed them, `2b6059d`). The dated notes are now in `BUSINESS_RULES.md` under rule 2.5
+    (the trial starts at email confirmation, `85e5ac6`) and rule 10.6 (what "activity" means, `02d816f`), word for
+    word, as rule 11.2's note was added (D9).
+  - Every owner question is answered, and the signed rules agree with the answers: §9 condition 8 is met.
 - **The build starts once** the reviewer approves this plan and the project lead agrees.
 
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in
@@ -87,8 +91,8 @@ judgment says, and §9 doesn't claim it does.
 | TA-1: platform ledger | Settled in P6: the ledger has `owner_kind`. The platform chart has 1100 Platform wallet, 4100 Subscription income and 5100 Provider charges, and the templates `subscription.paid` (business: Dr 5100 / Cr 1100) and `platform.subscription_received` (platform: Dr 1100 / Cr 4100) exist |
 | The P9 plan §6: the subscription on P9's payment orders | An order posts to one ledger today. A subscription posts to two, the business's and the platform's, in one transaction (§3.5, P10-8) |
 | The P9 plan §10 condition 5: VA-to-VA transfers, payout idempotency, `accountName` | Asked of TransactPay (`P10_TRANSACTPAY_QUESTIONS.md` §1–§5, `accountName` included). Billing can't charge until their answers are implemented and proven in the sandbox (§9) |
-| OPEN-10: does the trial start at sign-up or at email verification? | The owner's Q1: at email confirmation. **BR-2.5 still says "from sign-up".** The owner's answer is the decision for P10, recorded as a traceable exception here and in §9 condition 8. The signed rule is brought up to date by a dated note, word for word as the owner approves it (`P10_OWNER_RULE_NOTES.md`, N1), as rule 11.2's was (D9). BR-2.5's original wording stays, and the note says what replaces it |
-| OPEN-11: what counts as agent activity (BR-10.6a, "still to define")? | The owner's Q2: a sign-in to the mobile app or a recorded collection, in the 15 days before the billing date (§3.3). Added under BR-10.6 by a dated note as he approves it (N2) |
+| OPEN-10: does the trial start at sign-up or at email verification? | The owner's Q1: at email confirmation. BR-2.5 said "from sign-up". The owner approved a dated note under it, word for word (`P10_OWNER_RULE_NOTES.md`, N1, 13 November 2026), now in `BUSINESS_RULES.md` (`85e5ac6`), as rule 11.2's was (D9). BR-2.5's original wording stays, and the note says what replaces it. There is one source of truth again |
+| OPEN-11: what counts as agent activity (BR-10.6a, "still to define")? | The owner's Q2: a sign-in to the mobile app or a recorded collection, in the 15 days before the billing date (§3.3). Now a dated note under BR-10.6 (N2, `02d816f`) |
 
 ## 3. Design
 
@@ -96,21 +100,43 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 
 ### 3.1 Billing state and invoices (P10-2)
 
-- **`billing.merchant_billing`,** one row per business, created when its email is confirmed. It holds:
+- **`billing.merchant_billing`,** one row per business, created when the business first becomes `active` (below). It
+  holds:
   - the state (`trial`, `current`, `suspended`, `exempt`);
   - `trial_ends_on`;
   - `anchor_day` and `next_billing_on` (§3.4);
   - the exemption's reason and author.
 - **Kept apart from the merchant lifecycle** (`tenancy.merchants.status`: `pending_verification`, `active`,
   `deactivated`). A suspended business is still `active`. Unconfirmed businesses have no billing row.
-- **A deactivated business (G1, the suggested option until the owner answers; P10-13).** The platform team can
+- **When the billing row is created (P10-31).** In the same transaction in which the business first becomes `active`.
+  That happens on two paths, and P10 changes both:
+  - P3's `identity.verify_email`, when the owner confirms the email and the business leaves `pending_verification`;
+  - P4's lifecycle function, when a business deactivated before its owner confirmed is reactivated after the owner has
+    confirmed. It goes straight to `active`, without passing through `verify_email`.
+
+  On either path:
+  - the confirmation moment is the later of the business's `created_at` and its owner's `email_verified_at`, and
+    `trial_ends_on` is that moment's WAT day plus 90 days (Q1; BR-2.5's note). On the second path that day can fall
+    while the business was deactivated: the trial still runs from the confirmation, as Q1 says;
+  - creating the row takes `billing.settings` for share (19). If billing has ever been switched on, the row gets its
+    first billing date at once (§3.4). The first switch-on takes the settings row for update, so a row created at the
+    same moment either is seen by the switch-on or sees it: none is left without a date (a race test, and the
+    platform status lists any row without a date once billing has been switched on);
+  - a business that changes owner keeps its row and its trial. An ownership transfer isn't a confirmation.
+- **Businesses that exist when P10's migration runs.** The migration creates a row for every business that is `active`,
+  or `deactivated` with a confirmed owner, by the same confirmation moment. Each is in `trial`, with no billing date
+  until billing is first switched on. The migration lists every row it creates for the platform team. In every
+  environment so far this is test data (BR-1.1). If any real business exists in production before the migration runs
+  there, P15 shows the owner its trial dates before billing can be switched on (§6).
+- **A deactivated business (G1, answered 13 November 2026; P10-13).** The platform team can
   deactivate a business and reactivate it later (P4's lifecycle function), and `tenancy.merchants` keeps only the latest
   deactivation. So:
   - P10 changes the lifecycle function to append each deactivation and reactivation to `billing.lifecycle_history`, in
     the same transaction, holding the business's `merchant_billing` row for update (a P4 change, like §3.6's P5 change);
   - a date whose decision moment falls while the business is deactivated is unbilled, `deactivated` (§3.4), so a
     reactivated business is never billed for that time;
-  - what it owes stays owed, and nothing is taken while it is deactivated: `create_order` refuses, and a claim cancels
+  - what it owes stays owed. No new order is created or claimed while it is deactivated. If a claim committed before
+    deactivation, that charge is already past the point of no return and may finish while the business is deactivated
     (§3.5). Its billing state doesn't change. Once reactivated, it is billed from its next date, and what it owes is
     taken as usual.
 - **`billing.periods`:** one row per business and billing date, with the primary key `(merchant_id, billing_on)` (P10-23).
@@ -136,6 +162,7 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 | `suspended` | a billing date is decided invoiced | `suspended` | a new invoice, `open`, added to what is owed. The owner chose "everything owed must be paid" (Q5) over "a suspended business isn't billed for further months" |
 | `current` | a charge attempt is refused for lack of money, by the reservation (§3.5) or by the provider | `suspended` | the invoice stays `open` |
 | `suspended` | a charge attempt is refused for lack of money | `suspended` | the invoice stays `open` |
+| `current` or `suspended` | an attempt on a held invoice is refused for lack of money | unchanged | it stays `open` and held; this invoice does not cause or renew suspension (G2) |
 | `current` or `suspended` | a charge attempt fails finally for any other reason | unchanged | stays `open`; retried on the bounded schedule of §3.5. A failure that isn't for lack of money never suspends |
 | `current` or `suspended` | a charge attempt's outcome is `unknown` | unchanged | stays `open`; no new attempt until the lookup resolves it (§3.5) |
 | `current` | a charge succeeds | `current` | `paid` |
@@ -206,7 +233,8 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
 
 **Dates**
 - **No date exists before billing is first switched on.** `next_billing_on` is empty until then. Switching on for the
-  first time sets each business's first billing date to the later of `trial_ends_on` and the switch-on day (Q12). That
+  first time sets each business's first billing date to the later of `trial_ends_on` and the switch-on day (Q12), in
+  the switch-on's own transaction, holding the settings row for update (§3.1). That
   includes exempt and deactivated businesses, whose dates are then unbilled while that lasts.
 - **A business confirmed after the first switch-on** gets `trial_ends_on` as its first billing date, when its billing
   row is created.
@@ -214,7 +242,7 @@ All dates are in WAT (Africa/Lagos, UTC+1, no daylight saving; ADR-11). A "day" 
   anchor day of the following month, or that month's last day if it is shorter (Q3).
   - Every date is computed from `anchor_day`, never from the previous date, so the day never drifts. Anchor 31 gives 31
     Jan, 28 or 29 Feb, 31 Mar.
-  - The anchor is kept through exemptions and switch-offs.
+  - The anchor is kept through exemptions, deactivations and switch-offs.
 - **The period key is the billing date.** `billing.periods` holds one row per business and date, by its primary key
   (§3.1).
 
@@ -277,8 +305,9 @@ computed by the run's own function, with:
 - `agentsSoFar`: the count for the window ending now, marked as an estimate (the final count is taken on the date);
 - the band and the version in force on that date;
 - the amount, or `awaitingPrice: true` for 21 or more with no price;
-- `walletShort`: whether the wallet's balance, less the reservations (§3.5), is below what is owed plus the upcoming
-  amount.
+- `walletShort`: whether the wallet's balance, less the reservations (§3.5), is below what is owed for months that
+  aren't held plus the upcoming amount: the shortfall that would suspend the business (§3.5, G2). A held month is shown
+  separately, as owed.
 
 It isn't shown while billing is off or the business is exempt, since that date won't be charged unless that changes
 first. Charges held by the guard don't hide it: the guard may reopen before the date.
@@ -303,8 +332,9 @@ it. The claim takes the same share locks, and also receives whether the worker's
 - Otherwise the claim moves it to `cancelled`, in the same transaction, which releases its reservation. The attempt is
   recorded as cancelled.
 - So an order created just before a switch-off, an exemption, a deactivation, or a change of the worker's configuration
-  is cancelled by its claim, never sent. Switching off and exempting don't cancel orders themselves. In revision 4 they did, and an order
-  inserted after their scan could be left `created`, holding its reservation (the third review).
+  is cancelled by its claim, never sent. Switching off, exempting and deactivating don't cancel orders themselves. In
+  revision 4 switching off and exempting did, and an order inserted after their scan could be left `created`, holding
+  its reservation (the third review).
 - While the worker is stopped, a `created` order keeps its reservation. Nothing else spends from a Live wallet in P10
   (P9 Q2). The platform status lists any `created` order older than one pass.
 
@@ -324,12 +354,17 @@ it. The claim takes the same share locks, and also receives whether the worker's
   automatically. A second debit that results is owed back to the business, and is listed as a refund for the platform
   team (§6).
 
-**Taking nothing unless everything owed is covered (Q5, Q6; P10-11).** Q6 chose "take nothing" when the wallet holds
-less than what is owed, and Q5 "everything owed must be paid". Read together, with several invoices open:
-- an attempt is made only when the business's Live wallet, less its reservations, covers **everything it owes** (every
-  `open` invoice, held ones included). Then the invoices are attempted oldest first;
-- otherwise, a due attempt is recorded `insufficient` without making an order, exactly as if the reservation had
-  refused it (§3.1's lack-of-money rows);
+**Taking nothing unless what is owed is covered (Q5, Q6, G2; P10-11, P10-32).** Q6 chose "take nothing" when the
+wallet holds less than what is owed, Q5 "everything owed must be paid", and G2 that a month on hold never suspends a
+business by itself. Read together, with several invoices open, let **available** be the Live wallet's balance less its
+reservations, **N** the sum of the `open` invoices that aren't held, and **H** the sum of the held ones:
+- **invoices that aren't held** are attempted, oldest first, only when available covers N. Otherwise each one due is
+  recorded `insufficient` without an order, exactly as if the reservation had refused it (§3.1's lack-of-money rows).
+  A held month never counts towards that shortfall, so it can't make a business short for its other months, and so
+  can't suspend it indirectly (G2);
+- **a held invoice** with its attempt due is attempted only when available covers N + H, after the others. Otherwise
+  no order is made and nothing is recorded: it stays held, its attempt stays due, and the business isn't suspended for
+  it. The worker's sweep attempts it once a confirmed deposit makes available cover N + H;
 - `create_order`'s reservation stays the last check, per order. Nothing else spends from a Live wallet in P10, and P9
   never debits a deposit automatically (a contradicted deposit goes to the platform team, E1). So a wallet that covered
   everything a moment earlier still does between orders; if it somehow didn't, the reservation refuses, and nothing is
@@ -338,8 +373,8 @@ less than what is owed, and Q5 "everything owed must be paid". Read together, wi
 **When an attempt is due.** An invoice without an unfinished attempt is due:
 - when it is issued (attempt 1);
 - after a non-money failure, at `next_attempt_at` (the schedule below);
-- after `insufficient`, when the worker's sweep finds the wallet covers everything owed, after P9 posted a confirmed
-  deposit (§3.7);
+- after `insufficient`, when the worker's sweep finds available covers N (above), after P9 posted a confirmed deposit
+  (§3.7);
 - after `cancelled`, once the gate is open again;
 - on a request to pay (§3.7): every `open` invoice without an unfinished attempt becomes due at once, a held one by
   `held_attempt_due`. At most one request is acted on per business an hour; a repeat within the hour is answered with
@@ -352,8 +387,8 @@ retry fields record the schedule:
 - `held`: true once `failures` reaches 4;
 - `held_attempt_due`: whether a held invoice has its one allowed attempt waiting.
 
-After an `insufficient` attempt, the next one is made when the wallet covers everything owed (above, §3.7). After a
-non-money failure, the schedule is:
+After an `insufficient` attempt, the next one is made when available covers N (above, §3.7). After a non-money
+failure, the schedule is:
 
 | Attempt | Made |
 |---|---|
@@ -363,13 +398,25 @@ non-money failure, the schedule is:
 | 4 | 24 hours after failure 3 |
 | — | after failure 4 (the first attempt and its three retries), the invoice is held |
 
-- **A held invoice is attempted only when `held_attempt_due` is set.** The run sets it at each later billing date of the
-  business, and a request to pay sets it (at most one request an hour, above). Each such attempt clears it.
-- **A held invoice doesn't keep a business suspended** (G2, the suggested option until the owner answers): access
-  returns once every other open invoice is paid (§3.1, §3.7). The held invoice stays owed.
+- **A held invoice is attempted only when `held_attempt_due` is set.** It is set:
+  - by the run, at each later billing date of the business;
+  - by a request to pay (at most one request an hour, above);
+  - **once the cause looks fixed** (G2: "taken as soon as the problem is fixed"). Once a day, if any subscription
+    charge has succeeded since the invoice was held, the cause is evidently gone, and each held invoice gets its
+    attempt. So a held month is taken within a day of the provider working again, with no command from the platform
+    team, and the attempts stay bounded: at most one a day, and only after evidence of a success.
+
+  The flag clears only when an order is actually made for it. While available doesn't cover N + H, it stays set, and
+  the worker's sweep makes the order after a confirmed deposit that covers it.
+- **A held invoice doesn't keep a business suspended** (G2, answered 13 November 2026): access returns once every other
+  open invoice is paid (§3.1, §3.7). The held invoice stays owed.
+- **A provider's `insufficient` answer on a held invoice** doesn't suspend the business either. The invoice stays held,
+  and is next attempted by the rules above.
 - **Each outcome:**
   - success: the invoice is `paid`, and any hold ends;
-  - `insufficient`: `failures` returns to 0 and any hold ends; §3.1's lack-of-money row applies;
+  - `insufficient` on a non-held invoice: `failures` returns to 0 and §3.1's lack-of-money row applies;
+  - `insufficient` on a held invoice: it stays `open` and held, and does not cause or renew suspension (G2). It is
+    next due on a later billing date or request to pay;
   - another non-money failure: `failures` goes up by 1, and the schedule above applies (a held invoice stays held);
   - cancelled: `failures` and the schedule don't change. The attempt is made again once the gate reopens.
 - **The platform team** sees each held invoice with every failure's provider answer. Their part is to fix the cause
@@ -388,12 +435,13 @@ taken (Q6).
 
 **The point of no return (P10-22).** An order is "sent" from the moment its claim commits it to `unknown`.
 - The claim moves it from `created` to `unknown` (P9's design: a claimed order may already have been sent). It does so
-  only under the share locks above, with billing on and the business not exempt.
-- Switching off and exempting take those rows for update, so a claim and a switch-off are serialized:
-  - if the switch-off commits first, every later claim cancels;
-  - if the claim commits first, the order is past the point of no return, and is finished and recorded, as F4 records.
-- After its claim, the worker does nothing but check its lease and runtime guard, and send. A lapsed lease leaves the
-  order `unknown`, for the lookup (below).
+  only under the share locks above, with billing on and the business neither exempt nor deactivated.
+- Switching off, exempting and deactivating take those rows for update, so each change and a claim are serialized:
+  - if the change commits first, every later claim cancels;
+  - if the claim commits first, the order is past the point of no return and is finished and recorded. It may settle
+    after the switch-off, exemption or deactivation commits (F4, G1).
+- After its claim, the worker does nothing but check its lease and runtime guard, and send. A later deactivation does
+  not cancel that already-claimed order. A lapsed lease leaves the order `unknown`, for the lookup (below).
 - `cancelled` is a state P10 adds to P9's orders, reachable only from `created`, and only by a claim.
 
 **An order the provider never received (P10-24).** The claim commits before the send. A worker that stops between the
@@ -414,9 +462,16 @@ for ever, which would keep the invoice from a new attempt and keep its reservati
   - **`refusedAfter(A)` with `visibleWithin(L)`:** every request we send carries, or is bound by, a limit A: TransactPay
     refuses any request reaching them more than A after we sent it (an expiry in the request, or a bound they state and
     enforce). And every request they accept is visible to the requery within L of reaching them. Then a "not found"
-    obtained at or after **the lease's end + A + L** is final: any request we sent either reached them by the lease's
-    end + A, and is visible by the lease's end + A + L, or is refused.
+    obtained at or after **the lease's end + A + L + K** is final: any request we sent either reached them by the
+    lease's end + A, and is visible by the lease's end + A + L, or is refused. K allows for our clock and
+    TransactPay's differing, since A is applied on their clock and `lease_until` is ours;
   - A visibility time L alone, with no bound on arrival, is **not** enough, and the capability isn't declared on it.
+- **The clock allowance K (P10-33)** is 5 minutes. The worker checks that it holds: each answer from TransactPay carries
+  an HTTP `Date`, and if that differs from the database's clock by more than K/2, the worker **pauses its charges**: it
+  makes, claims and sends no order, and resolves no "not found" as final, until they agree again. The pause is shown
+  on the platform status. It isn't a closure of the release guard, so dates are still decided as usual: like a stopped
+  worker, the charges catch up once the clocks agree, and a passing clock fault never leaves a month unbilled. P15
+  keeps the servers' clocks synchronized (§6).
 - **A final "not found"** resolves the order `failed`, with the reason `not_submitted`. That releases the reservation,
   and the schedule above allows a new attempt with a new reference. It counts as a non-money failure, so a worker that
   keeps crashing reaches a hold.
@@ -427,6 +482,9 @@ for ever, which would keep the invoice from a new attempt and keep its reservati
 - **If the old reference is paid out despite the guarantee,** it is an order finding: listed, nothing posted
   automatically, and a resulting second debit is listed as owed back to the business (§6). The debit is never
   unrecorded: the confirming lookup or the reconciler (below) records it.
+- **The capability is part of the release guard** (§9 condition 2). Without it, billing can't charge.
+- **The rule applies to every outbound order,** since the guarantee is the provider's. In P10 there are no others (P9
+  Q2).
 
 **Order findings (P10-29).** P9's contradiction path covers provider events (deposits): `record_order` refuses any order
 already final, so an answer that contradicts a final order had nowhere to go. P10 adds `payments.order_findings`, a P9
@@ -436,9 +494,6 @@ change:
 - it is shown to the platform team with the reconciliation findings, and resolved by a person with a note, as P9's are.
   Nothing is posted or changed automatically;
 - written only by the worker's functions, and read through the platform's findings view.
-- **The capability is part of the release guard** (§9 condition 2). Without it, billing can't charge.
-- **The rule applies to every outbound order,** since the guarantee is the provider's. In P10 there are no others (P9
-  Q2).
 
 **Success: two ledgers, and AlphaKolect's fee (F5).** On success, `record_order` posts in one transaction:
 - `subscription.paid` to the business's ledger: Dr 5100 / Cr 1100, for the price. The business pays exactly the price
@@ -519,8 +574,8 @@ legitimately while an order is unfinished: the provider may have moved the money
 comparison:
 - **Source wallet:** a provider balance below the books by no more than the sum of its `unknown` and `submitted`
   outbound orders is "in flight", not a finding;
-- **Platform wallet:** a provider balance above the books by no more than the sum of its incoming unfinished orders is
-  likewise in flight;
+- **Platform wallet:** a provider balance above the books by no more than the sum of its incoming unfinished orders,
+  less the fees the declared fee model takes from them, is likewise in flight;
 - an in-flight difference is checked again on the next pass. Once the orders are final, any difference that remains is
   a finding, as in P9;
 - a reversal not yet found by the watch shows as a difference until it is. It is recorded as a finding, as P9 records
@@ -556,6 +611,10 @@ their statuses", updated 14 October 2026), not the table P9's adapter was writte
   orders without locking them, after their own lock, so they see every claim that committed before them;
 - deactivating and reactivating: P4's lifecycle footprint as it is (the merchant, 2), then the billing state (19, for
   update) and the lifecycle history (19);
+- creating a billing row, in `verify_email` or a first activation by reactivation: P3's or P4's footprint as it is,
+  then the settings (19, share) and the new row (19);
+- switching billing on for the first time: the settings (19, for update), then every billing row without a date (19,
+  one sorted acquisition, L5);
 - the run: the billing state (19, for update), then the period (19);
 - a normal reversal: the projections (14), the order (18), then the attempt, the period and the billing state (19);
 - an order finding: the order (18) and the finding (18), nothing in billing.
@@ -597,16 +656,17 @@ returns `suspended` when the session's business is suspended and the permission 
 - **Access returns only when the charge is confirmed.** In the same transaction that pays the last open invoice that
   isn't held, the state goes from `suspended` to `current` (Q5, G2). A deposit alone never restores.
 - **A charge is retried in two ways:**
-  - the worker's sweep picks up a suspended business whose wallet, less its reservations, now covers everything it owes
-    (§3.5), after P9 posted a confirmed deposit;
+  - after P9 posts a confirmed deposit, the worker's sweep picks up a suspended business whose wallet, less its
+    reservations, now covers what it owes for months that aren't held (N, §3.5), and a held invoice whose attempt is
+    due once the wallet covers everything owed (N + H);
   - the owner, or staff with `merchant.subscription.pay`, asks for one.
 - **The request to pay:**
   - it carries an `Idempotency-Key`, and a repeat returns the first answer;
   - it makes no order itself (§3.5): it makes the open invoices due, a held one by its one allowed attempt, and answers
     with their attempts. At most one request is acted on per business an hour (§3.5);
   - with billing off, or charges held by the guard's latest recorded state (§3.8), it records nothing and says so;
-  - if the wallet doesn't cover everything owed, the attempts are recorded `insufficient` and the answer gives the
-    amount short (Q6).
+  - if the wallet doesn't cover what is owed for months that aren't held, their due attempts are recorded
+    `insufficient`, a held invoice stays held with its attempt still due, and the answer gives the amount short (Q6).
 - **Sessions aren't revoked or reissued.** The state is read on each call, so the next request after the restore
   succeeds.
 
@@ -734,7 +794,15 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - No guard row before m(D): `charges_held`.
 - Deactivated at m(D), reactivated before processing: `deactivated`. Reactivated: billed from the next date, and what
   was owed is taken as usual (G1).
+- A claim committed before deactivation: the order may finish after deactivation; a claim after deactivation cancels.
 - A business confirmed after the first switch-on: its first date is its trial end.
+- **The billing row (P10-31):** created by `verify_email`, and by a reactivation that makes a business `active` for the
+  first time (its owner confirmed while it was deactivated), with the trial from the confirmation moment either way.
+  A business confirmed at the same moment as the first switch-on gets a date (a race test: no row without one).
+  An ownership transfer leaves the row and the trial as they were.
+- **The migration's rows:** an `active` business, and a `deactivated` one with a confirmed owner, each get a `trial`
+  row from the later of `created_at` and the owner's `email_verified_at`; a business still `pending_verification`
+  gets none; each created row is listed.
 - One history, processed at several different times, gives the same rows.
 - A lifted exemption bills from the next date (F2).
 
@@ -761,18 +829,27 @@ point of no return finish through P9's machinery. A success is posted and pays i
 - A confirmation with an undeclared fee model isn't posted: the order stays `unknown`, its reservation held, and an
   order finding is recorded. A replayed confirmation posts nothing more.
 
-**Everything owed (Q5, Q6)**
-- Two invoices open, the wallet covering one: nothing is taken, both attempts are `insufficient`, and the request to
-  pay answers with the amount short. Covering both: both taken, oldest first.
-- The sweep attempts only once the wallet, less reservations, covers everything owed.
+**What is owed (Q5, Q6, G2)**
+- Two invoices open, neither held, the wallet covering one: nothing is taken, both attempts are `insufficient`, and the
+  request to pay answers with the amount short. Covering both: both taken, oldest first.
+- A held month and a new month, the wallet covering only the new one: the new one is taken, the held one isn't
+  attempted, and the business isn't suspended. The held month never makes a business short for its other months.
+- The sweep attempts invoices that aren't held only once available covers N, and a held one only once it covers
+  N + H.
+- `walletShort` counts months that aren't held, and shows a held month separately.
 
 **Attempts, retries and holds**
 - `insufficient`, then a deposit: attempt 2, with a new reference.
 - Non-money failures: attempts 2, 3 and 4 at 1 h, 6 h and 24 h after each failure. Failure 4 holds the invoice, which
   stays `open`.
-- A held invoice: no automatic attempt; one at its next billing date, and one per request to pay, at most one an hour.
-  Success ends the hold; another failure keeps it.
-- `insufficient` resets the count and ends a hold.
+- A held invoice: no attempt by the schedule; one at its next billing date, one per request to pay (at most one an
+  hour), and one a day once any subscription charge has succeeded since it was held. Success ends the hold; another
+  failure keeps it. With no success anywhere since, no daily attempt is made.
+- `insufficient` on an invoice that isn't held resets the count.
+- A held invoice that is the only one owed, with the wallet short: no order and no `insufficient` are recorded, access
+  stays active, and `held_attempt_due` stays set. A confirmed deposit that covers N + H makes the sweep attempt it once
+  and clear the flag.
+- The provider answering `insufficient` on a held invoice: it stays `open` and held, and the business isn't suspended.
 - `cancelled` leaves the count and schedule as they were, and the attempt is made again once the gate reopens.
 - `unknown`: nothing until resolved. Resolved failed gives a new attempt by the schedule; resolved successful gives
   nothing, and the invoice is paid.
@@ -786,6 +863,9 @@ from its lookup for a set time)
 - With `refusedAfter(A)` and `visibleWithin(L)`: "not found" before `lease_until` + A + L stays `unknown`; at or after
   it, `failed`, `not_submitted`, the reservation released, and attempt 2 by the schedule.
 - With `blocksReference`: the first "not found" after `lease_until` is final; one before it is not.
+- **The clock allowance:** with `refusedAfter(A)`, a "not found" between `lease_until` + A + L and that plus K stays
+  `unknown`. TransactPay's `Date` differing from the database's clock by more than K/2: no order is made, claimed or
+  sent, and no "not found" becomes final; dates are still decided, and the charges catch up once the clocks agree.
 - **The late request** (the fifth review's case): a request leaves before `lease_until` and arrives after the first
   "not found".
   - With `blocksReference`, it is refused.
@@ -841,6 +921,8 @@ from its lookup for a set time)
 - switch-off against a claim: either the claim commits first and the order is sent and recorded, or the switch-off
   commits first and no claim commits after it. Never a send after a committed switch-off;
 - the same for exempting;
+- deactivation against a claim: if deactivation commits first, the claim cancels; if the claim commits first, that
+  order may finish and settle after deactivation.
 - exempting while a charge is past the point of no return: `waiver_pending`, then `paid` on success, `waived` on
   failure, including when the exemption is lifted before the charge is resolved.
 
@@ -855,6 +937,10 @@ from its lookup for a set time)
 - An `unknown` charge changes no state.
 - With several invoices open, access returns only when all are paid (Q5), except one that is held (G2): a suspended
   business whose other invoices are paid is restored, and the held one stays owed.
+- When only a held invoice remains and its due attempt finds the wallet short, the due flag persists without an order
+  or suspension; a confirmed deposit that covers N + H makes the sweep attempt it, with access active.
+- If an attempted held invoice receives a provider `insufficient` answer, it remains held and owed, and access stays
+  active; this result does not suspend or re-suspend the business.
 
 **BR-10.6a, 10.6b**
 - A deactivated agent can't sign in, and is counted by activity alone.
@@ -873,7 +959,8 @@ from its lookup for a set time)
 **Isolation and guards**
 - A business sees only its own subscription. A run and a charge touch only the business they claim (TA-11).
 - Lock order (category 19, the claim's and `create_order`'s share locks, `create_order`'s new 14:NKU, switch-off and
-  exemption taking no order lock, the lifecycle function's new 19, the reversal path, order findings).
+  exemption taking no order lock, the lifecycle function's new 19, `verify_email`'s new 19, the first switch-on, the
+  reversal path, order findings).
 - Grants: only the worker's role writes `billing.guard_history`; only the switch function writes
   `billing.release_approvals`.
 - Grants: the worker's functions are executable by `alphakolect_worker` alone.
@@ -896,7 +983,9 @@ from its lookup for a set time)
 - **P13:** the Subscription page and the redirect while suspended (`middleware.ts`).
 - **P15:** the worker's billing tasks in production, its `BILLING_CHARGES` setting, and §9's conditions. One billing
   worker process at a time: a deployment stops the old worker before the new one starts, so the guard's history (§3.8)
-  never interleaves two processes.
+  never interleaves two processes. The servers' clocks synchronized, so the clock allowance K holds (P10-33). If any
+  real business exists in production before P10's migration runs there, its trial dates are shown to the owner before
+  billing can be switched on (§3.1).
 
 ## 7. Decisions (recommended options, the project lead's standing instruction)
 
@@ -906,23 +995,23 @@ from its lookup for a set time)
 | P10-2 | Where suspension lives | its own billing state, with every transition defined (§3.1), not a merchant lifecycle status: suspension and deactivation have different causes, people and ways back |
 | P10-3 | The subscription gate (TA-25) | a required per-endpoint declaration in the registry plus a per-permission flag checked in `assert_authority`; no separate middleware |
 | P10-4 | Reading the state for suspension | without a row lock, so the check adds nothing to any request's lock footprint; TA-12 accepts that a request already admitted completes |
-| P10-5 | What triggers a restore | a confirmed charge only; retried by the worker's sweep once the wallet covers everything owed, or at the business's request. A held invoice doesn't keep a business suspended (G2) |
+| P10-5 | What triggers a restore | a confirmed charge only; retried by the worker's sweep once the wallet covers what is owed for months that aren't held (N), or at the business's request. A held invoice doesn't keep a business suspended (G2); if its due attempt waits for funds, the due flag persists and the sweep retries after a confirmed deposit covering N + H |
 | P10-6 | Price changes | versions with a start date at least 30 days away (Q8), never edits; invoices keep their version |
 | P10-7 | Agent activity | from existing sessions and collections, in a defined window, with a guard test that keeps that evidence; no `tenancy.agent_activity` table and nothing added to the hot paths |
 | P10-8 | Posting a subscription | P9's order gains the platform's posting, by the declared fee model, AlphaKolect bearing the fee (F5); both ledgers post in the order's success transaction |
 | P10-9 | Billing off | nothing invoiced or charged; dates that pass are recorded unbilled; a read-only preview for the platform team |
 | P10-10 | How money moves | a provider transfer from the business's virtual account to the platform's, through the port. Recording it in the books alone, if TransactPay's balances turn out to be pooled, is **not** chosen: it would change what the ledgers' 1100s mirror, and goes to the reviewer and the owner once TransactPay answers |
-| P10-11 | Not enough money | an attempt only when the wallet, less reservations, covers everything owed (Q5 with Q6); the reservation in `create_order` as the last check per order; the provider's answer after |
+| P10-11 | Not enough money | invoices that aren't held are attempted only when the wallet, less reservations, covers all of them (N; Q5 with Q6); a held one only when it covers everything (N + H; G2); the reservation in `create_order` as the last check per order; the provider's answer after |
 | P10-12 | Billing's lock category | 19, after payments |
-| P10-13 | Businesses billing leaves alone | unconfirmed ones (no billing row); `exempt` ones (F1); deactivated ones by their own recorded history: no date charged while deactivated, debts kept, nothing taken until reactivated (G1, pending the owner) |
-| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes six things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), the resolution of an order not found (P10-24), the `reversed` state with its postings and the watch (P10-27), order findings (P10-29), and the reconciler's in-flight rule (P10-30). It also changes P4's lifecycle function (P10-13) and P5's `assert_authority` (P10-3). P10 does not close before P9 does |
+| P10-13 | Businesses billing leaves alone | unconfirmed ones (no billing row); `exempt` ones (F1); deactivated ones by their own recorded history: no dates charged and no new orders while deactivated; debts are kept; a claim committed before deactivation may finish (G1) |
+| P10-14 | P9's open state | P10 is planned and built on P9's merged code, and changes six things in P9: `create_order` (the reservation, and the billing gate for a subscription order), the claim (the `cancelled` state), the resolution of an order not found (P10-24), the `reversed` state with its postings and the watch (P10-27), order findings (P10-29), and the reconciler's in-flight rule (P10-30). It also changes P3's `identity.verify_email` (the billing row, P10-31), P4's lifecycle function (its history, and the billing row on a first activation by reactivation; P10-13, P10-31) and P5's `assert_authority` (P10-3). P10 does not close before P9 does |
 | P10-15 | Gate | this plan's review now; one review of the build at the end |
 | P10-16 | The customer audience | out of P10's exit criteria by an explicit amendment, as P2's was; RESTRUCTURING_MAP's P10 row is amended when this plan is approved. Building customer sign-in here would be a phase of its own |
 | P10-17 | Concurrent spending | every outbound order reserves its amount against the source wallet's locked 1100 projection |
 | P10-18 | The release guard | four conditions, checked by the run (from history), before an order is made and before each send (in the worker), and in `create_order` and the claim (in the database, under share lock); configuration alone is not trusted |
 | P10-19 | Deciding a date | from recorded history alone (the switch, exemptions, the guard, custom prices) at the date's decision moment, so the worker's timing never changes an outcome; every date is recorded, invoiced or unbilled with its reason |
 | P10-20 | Retrying a failed charge | only with the provider's guarantee that a final failure is final; without it, billing can't charge |
-| P10-21 | Bounded retries | after a non-money failure, retries 1 h, 6 h and 24 h later; failure 4 holds the invoice (a retry field, not a state): then one attempt per billing date or request to pay, never suspending |
+| P10-21 | Bounded retries | after a non-money failure, retries 1 h, 6 h and 24 h later; failure 4 holds the invoice (a retry field, not a state): then one attempt per billing date, per request to pay, and once a day after evidence that the cause is gone (P10-32); never suspending |
 | P10-22 | The point of no return, and cancelling | the claim's commit, made only with billing on and the business neither exempt nor deactivated, under a share lock that switch-off, exemption and deactivation must wait for. A claim that finds the gate closed cancels the order instead, so no `created` order is stranded |
 | P10-23 | One row per billing date | a single `billing.periods` table, invoiced or unbilled, with one primary key, a check constraint and immutable outcomes; not two tables, whose uniqueness no constraint could span |
 | P10-24 | An order the provider never received | "not found" is final, as `not_submitted`, only under a provider guarantee that covers a request delayed on its way: the reference blocked by the first "not found", or a refusal bound A on arrival with a visibility time L, final from `lease_until` + A + L. L alone isn't enough. A confirming lookup 24 hours later. Without the guarantee, the order stays `unknown`, its reservation held, and billing can't charge |
@@ -932,6 +1021,10 @@ from its lookup for a set time)
 | P10-28 | The status table | the adapter maps TransactPay's current table (IDs 1–12, 14 October 2026), by ID and by name, 11 and 12 not final, with a test for each; P9's older mapping is passed to P9 |
 | P10-29 | Contradictions on orders | `payments.order_findings`, since P9's contradiction path covers deposits only and `record_order` refuses a final order; recorded, shown and resolved by a person; nothing posted automatically |
 | P10-30 | The reconciler with charges in flight | a difference within the wallet's unfinished outbound (or, for the platform, incoming) orders is in flight and checked again; anything else, or anything left once they are final, is a finding |
+| P10-31 | When the billing row is created | in the transaction in which the business first becomes `active`, on both paths (`verify_email`, and reactivation after the owner confirmed while deactivated), the trial from the later of `created_at` and the owner's `email_verified_at`; serialized with the first switch-on through the settings row; existing businesses given rows by the migration on the same rule, and listed |
+| P10-32 | Held months and what is owed | a held month counts neither towards the shortfall that suspends (N) nor towards whether other months are taken; it is taken when the wallet covers everything (N + H), and attempted once a day after any subscription charge succeeds since it was held (G2: "as soon as the problem is fixed") |
+| P10-33 | The clock allowance | K = 5 minutes, added to the `refusedAfter(A)` finality time; a `Date` from TransactPay more than K/2 from the database's clock pauses charges without closing the guard, so no month is lost to a clock fault |
+| P10-34 | Declaring a capability | only in an adapter release that the independent reviewer reviews, citing TransactPay's written answer (who, when) and the sandbox run (commit, date, results) for each one. In P10's build the TransactPay adapter declares none, and a test pins that, so a declaration can't arrive without that test changing in review |
 
 ## 8. Questions out
 
@@ -940,15 +1033,16 @@ from its lookup for a set time)
 | The owner | `docs/business/P10_OWNER_BILLING.md` | answered 11 November 2026: every question with the suggested option; the wording approved |
 | The owner | `docs/business/P10_OWNER_BILLING_FOLLOWUP.md` | answered 11 November 2026: F1–F5, each with the suggested option. F2 and F3 were first saved with typing slips ("Thne", "words that passed", `e5a7b83`) and later corrected in the form, not by the integration team (`f30d107`). The form records both |
 | The owner | `docs/business/P10_OWNER_BILLING_CONFIRMATION.md` | answered 11 November 2026 (`3869154`): C1, F2 and F3 confirmed as they now read; F6, charged that day, as in Q12 (the suggested option) |
-| The owner | `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md` | **awaiting his answers:** G1, a deactivated business's debts and dates; G2, restoring access while a month is held |
-| The owner | `docs/business/P10_OWNER_RULE_NOTES.md` | **awaiting his answers:** N1, a dated note under BR-2.5 (the trial from email confirmation); N2, under BR-10.6 (what "activity" means). Once approved, the notes are added to `BUSINESS_RULES.md` word for word, as rule 11.2's was |
+| The owner | `docs/business/P10_OWNER_BILLING_SECOND_FOLLOWUP.md` | answered 13 November 2026: G1, debts stay owed and no dates are charged while deactivated; G2, access returns once all non-held invoices are paid, and the held invoice doesn't suspend by itself |
+| The owner | `docs/business/P10_OWNER_RULE_NOTES.md` | approved 13 November 2026: N1 and N2, "add it as written" (the form's name and date as the project lead confirmed them, `2b6059d`). The notes are in `BUSINESS_RULES.md` under rules 2.5 (`85e5ac6`) and 10.6 (`02d816f`), word for word |
 | TransactPay | `docs/business/P10_TRANSACTPAY_QUESTIONS.md` (with the P9 follow-up) | §1 moving money between virtual accounts, and `accountName`; §2 duplicate references, the lookup, the status table, whether a failure can later succeed, the guarantee that makes "not found" final for a delayed request (§2.5), and the status table, reversals and their times (§2.6); §3 insufficient funds; §4 sandbox testing; §5 fees. **Not sent yet** |
 
 ## 9. Before billing can charge
 
 Each condition is one of two kinds:
 - **System:** the code refuses to charge without it. Capabilities are declared in the adapter's code, so whether a
-  declaration is true is reviewed in the release that adds it. Once declared, nothing charges without it.
+  declaration is true is reviewed in the release that adds it: the independent reviewer reviews it against TransactPay's
+  written answer and the sandbox run, cited for each capability (P10-34). Once declared, nothing charges without it.
 - **Approval:** a person's judgment, which the system can't check. The system refuses to switch billing on until the
   approval is recorded with its evidence (§3.8). It enforces that the record exists, not what it says.
 
@@ -961,26 +1055,52 @@ Each condition is one of two kinds:
 | 5 | Pooled or per-account balances (P9 follow-up §2) | system | their answer | the capability is declared only for per-account balances. If pooled, P10-10 and the reconciler return to the reviewer and the owner |
 | 6 | P9's conditions for live money (P9 plan §10, conditions 1–10: a real deposit, the balance enquiry, the worker's isolation in production, and the rest) | **approval** | the reviewer's closure of P9's live-money gate | a release approval for condition 6, citing that closure, must be recorded before billing can be switched on (§3.8). P10's migrations also come after P9's, but that orders the schema; it proves none of P9's conditions |
 | 7 | The accountant confirms in writing how subscription income is accounted for VAT (Q10) | **approval**, and a system check | a written sign-off | a release approval for condition 7, citing the letter, and the recorded treatment: the switch can't be turned on without both. If VAT is inside the price, the platform posting splits it (§3.5) |
-| 8 | The owner's answers, and the signed rules agreeing with them | **approval** | Q1–Q14, F1–F5, C1 and F6, answered 11 November 2026; G1 and G2; the notes under BR-2.5 and BR-10.6 (N1, N2), added to `BUSINESS_RULES.md` as approved | **not met:** awaiting G1, G2, N1 and N2. Until N1 is approved and added, Q1 is a recorded exception to BR-2.5 (§2). Checked by the plan review and the project lead, not by the system. Any answer TransactPay's replies make necessary goes to the owner in a new form |
+| 8 | The owner's answers, and the signed rules agreeing with them | **approval** | Q1–Q14, F1–F5, C1 and F6, answered 11 November 2026; G1, G2, N1 and N2, answered 13 November 2026; the notes under BR-2.5 and BR-10.6 in `BUSINESS_RULES.md` (`85e5ac6`, `02d816f`) | **met.** Checked by the plan review and the project lead, not by the system. Any answer TransactPay's replies make necessary goes to the owner in a new form (§9.1) |
 | 9 | The owner switches billing on, as Super Admin, from the platform admin | system | BR-1.3 | `enabled` false by default; only the non-grantable `platform.billing.switch` changes it |
+
+**Where the conditions stand (2026-11-13).** Condition 8 is met. Conditions 1–5 wait on TransactPay's answers
+(`P10_TRANSACTPAY_QUESTIONS.md`, not sent yet) and the sandbox; condition 6 on P9's closure; condition 7 on the
+accountant; condition 9 on the owner, last. Billing stays paused until every one holds.
+
+### 9.1 When TransactPay answers
+
+Each answer decides a capability. So that no answer can be read hopefully, the outcome of each is fixed now:
+
+| Their answer | What follows |
+|---|---|
+| §1: a transfer between two of our virtual accounts exists and debits the source account | `walletTransfer` may be declared once the sandbox shows both balances change (P10-34) |
+| §1: no such transfer, or balances pooled | `walletTransfer` isn't declared, and billing can't charge. P10-10 returns to the reviewer and the owner; recording the subscription in the books alone isn't chosen in advance |
+| §2.4, §2.6.2: a failure (4 or 8) can later succeed or be retriggered | `finalFailureIsFinal` isn't declared. Retries are unsafe, so billing can't charge, and the plan returns to the reviewer |
+| §2.5: form a (the reference blocked) or form b (A and L) | `notFoundFinal` may be declared with that form and its times, and K added to form b |
+| §2.5: L alone, or neither | `notFoundFinal` isn't declared, and billing can't charge. Without it a crashed send would hold a business's money indefinitely |
+| §2.6.4–§2.6.6: a reversal window with both times in the requery's answer, and lookups lasting the window plus a day | `reversalWindow` may be declared |
+| §2.6.4: successes can't be reversed | `reversalWindow` declared as zero: no watch, and any reversal seen is an order finding |
+| §2.6: reversals possible, but no window or no times | `reversalWindow` isn't declared, and billing can't charge |
+| §2.6.1: the requery's statuses or names differ from the published table | the mapping (P10-28) changes to theirs, with its tests, before any capability is declared |
+| §3: their insufficient-funds answer | mapped to `insufficient`, with a sandbox test where the sandbox allows |
+| §5: no fee, a fee from the amount, or a fee charged to the platform | the matching fee model is declared and its posting tested (§3.5) |
+| §5: a fee charged to the business on top | not supported (F5): the capability isn't declared, and the choice goes to the owner in a new form |
+| Any answer that changes what a business pays or when | a new owner form before the capability is declared |
 
 ## 10. The build, once approved
 
 - **Migrations:**
   1. `billing_core`: schema, tables (the periods, the switch, exemption and guard histories, the release approvals,
-     attempts), RLS, the price seed, the permission flag, the platform's VAT-payable account, the order's platform
+     attempts), the rows for existing businesses (P10-31), RLS, the price seed, the permission flag, the platform's VAT-payable account, the order's platform
      posting, its `cancelled` and `reversed` states and the reversal templates, `create_order`'s reservation and billing
      gate, `billing.lifecycle_history`, `payments.order_findings`;
   2. `billing_functions`: the run and its decision moment, the charge task, the claim's guard and cancellation, attempts
      and holds, the `not_submitted` resolution and the confirming lookup, the reversal watch and its classification,
-     order findings, the reconciler's in-flight rule, restore, the switch, approvals and exemptions, the lifecycle
-     function's history, the reads, `assert_authority`'s suspended outcome.
+     order findings, the reconciler's in-flight rule, restore, the switch, approvals and exemptions, the billing row in
+     `verify_email` and on reactivation, the lifecycle function's history, the reads, `assert_authority`'s suspended
+     outcome.
 - **Contracts:** `whileSuspended` on the registry and every existing operation; the new endpoints.
 - **Provider:**
   - the port gains `capabilities.walletTransfer`, `capabilities.finalFailureIsFinal`,
     `capabilities.notFoundFinal`, `capabilities.reversalWindow`, a declared fee model, and the transfer;
   - the FakeProvider covers every fee model and outcome, including a reference it never received, a request delayed
-    on its way, an arrived request hidden from its lookup for a while, and reversals with their times;
+    on its way, an arrived request hidden from its lookup for a while, reversals with their times, and a `Date` set
+    off from the database's clock;
   - the TransactPay adapter declares none of the four capabilities, and maps the current status table (§3.5).
 - **API and worker:** `modules/billing`; the worker's tasks (the run, the charge task, the resolution of unknown orders
   with the confirming lookup, the reversal watch); the release guard and its history; `BILLING_CHARGES`; the 402 and
@@ -1016,6 +1136,7 @@ code, since none exists yet:
 
 | Rev | Date | Change |
 |---|---|---|
+| 8 | 2026-11-13 | The owner's G1, G2, N1 and N2 recorded, and the notes under BR-2.5 and BR-10.6 added (§9 condition 8 met); the sixth review's verdict and a further full self-review (§17): the billing row on both activation paths and for existing businesses, the first switch-on race, held months kept out of the suspending shortfall and attempted once the cause is gone, the clock allowance, the outcome of every TransactPay answer fixed in advance (§9.1), capability declarations reviewed with their evidence |
 | 7 | 2026-11-11 | The fifth review's three items and a full self-review resolved (§16): "not found" final only with a bound on a request's arrival, or the reference blocked; the reversal watch retried until conclusive, a reversal classified by its own time; BR-2.5 and BR-10.6 notes put to the owner; order findings; the reconciler with charges in flight; deactivation; everything owed before taking anything; restore with a held month; the owner's second follow-up (G1, G2) |
 | 6 | 2026-11-11 | The fourth review resolved (§15): "not found" final only under a guarantee covering a late request, counted from the lease's end; a reversed success (`reversed`, both postings reversed, the invoice reopened); the current status table; the owner's confirmation (C1, F6) recorded |
 | 5 | 2026-11-11 | The third review's 6 blockers and the owner's record resolved (§14): the decision moment and the guard's history; one periods table; the gate in `create_order` and cancellation by the claim; holds as retry fields, with the schedule stated attempt by attempt; "not found" final after the provider's stated time; release approvals for the conditions that are judgments; the owner's confirmation form |
@@ -1124,4 +1245,39 @@ the review doesn't have to find them.
 | S9 | A business confirmed after the first switch-on had no first billing date; a custom price's effect below 21 agents wasn't stated; a stated lease clock was wrong (the worker measures its lease on its own monotonic clock, with 10% in hand) | §3.4, §3.2, §3.5 |
 | S10 | Smaller: a "both capabilities" test from revision 5; the decisions table out of order; a missing `suspended` lack-of-money row; the upcoming charge hidden while charges are held | §5, §7 (P10-24 to P10-30 in order), §3.1, §3.4 |
 
-Nothing has been pushed since revision 1. PR #12 stays open, unmerged and a draft, for review only.
+PR #12 stays open, unmerged and a draft, for review only. (Corrected in revision 8: this line first said nothing had
+been pushed since revision 1, but the project lead had pushed revision 6, `11ea6b4`; revision 7's commits were local.)
+
+## 17. The owner's answers, the sixth review, and a further self-review (2026-11-13)
+
+**The owner.** He answered G1 and G2 with the suggested options (`588f7ad`), and approved both rule notes, N1 and N2,
+"add it as written" (`b616407`). The form's name and date lines were blank; the project lead confirmed them, and they
+were recorded with a line saying so (`2b6059d`). The notes are now in `BUSINESS_RULES.md` under rules 2.5 (`85e5ac6`)
+and 10.6 (`02d816f`), word for word, with only the date filled in, as rule 11.2's was. §9 condition 8 is met.
+
+**The sixth review** (of revision 7, `2ebe06a`): not approved, as "a strong draft" needing one more loop. The design
+isn't rejected; the plan is held by the owner's notes, now done, and by TransactPay's answers. Billing stays paused
+until every §9 condition holds, and PR #12 stays a draft. §9.1 now fixes, for each possible answer, what follows, so
+the answers can't be read hopefully when they come.
+
+**A draft found in the working copy.** Before this revision, an uncommitted draft of revision 8 was found in the
+working copy; the integration team didn't write it. It recorded G1 and G2 and two edge cases, and it is kept where
+sound. Its errors are corrected below (items 5 and 6).
+
+**The self-review.** The whole plan was read again against the code it changes:
+
+| # | Gap | Resolved in |
+|---|---|---|
+| 1 | A charge already claimed when a business is deactivated wasn't defined (the draft's case) | §3.5: deactivation and the claim serialize; a claim committed first may finish after the deactivation; one after it cancels. §5 tests both |
+| 2 | The billing row was "created when the email is confirmed", but on two paths a business first becomes `active`: `verify_email`, and a reactivation after the owner confirmed while it was deactivated (P4's function, which doesn't go through `verify_email`) | §3.1 and P10-31: the row is created on both, the trial from the later of `created_at` and the owner's `email_verified_at`. §5 tests both |
+| 3 | Businesses that exist when the migration runs had no rule | §3.1 and P10-31: rows by the same rule for `active` businesses and `deactivated` ones with a confirmed owner, listed; P15 shows the owner any real one (§6) |
+| 4 | A business confirmed at the moment of the first switch-on could be left without a billing date for good, and the run writes nothing for such a row | §3.1 and §3.4: row creation and the first switch-on serialize on the settings row; a race test; the status lists any row without a date |
+| 5 | "Everything owed" counted held months, so a held month could make a business short for its next month, and so suspend it indirectly, against G2. The draft kept that threshold | §3.5 and P10-32: months that aren't held are attempted when the wallet covers them (N); a held month only when it covers everything (N + H). `walletShort` and the sweep follow. §5 tests the case |
+| 6 | The draft cited `ac6220a` (the blank form) for the owner's answers, and a test still said `insufficient` ends a hold, against the draft's own G2 rule | §17 cites `588f7ad`; §5 says `insufficient` resets the count only on an invoice that isn't held |
+| 7 | G2 says a held month is "taken as soon as the problem is fixed", but it waited for the next billing date or a request to pay | §3.5 and P10-32: once a day, after any subscription charge has succeeded since it was held, each held invoice gets its attempt. Bounded, and no command needed |
+| 8 | `refusedAfter(A)` compares our clock with TransactPay's, with no allowance for the two differing | §3.5 and P10-33: K = 5 minutes added; the worker pauses charges (without closing the guard, so no month is lost) while TransactPay's `Date` is more than K/2 off; P15 keeps the clocks synchronized |
+| 9 | Two P10-24 bullets had ended up under order findings in revision 7 | moved back under P10-24 |
+| 10 | Revision 7 left "switching off and exempting don't cancel orders" without deactivation; the anchor rule didn't name deactivation; the reconciler's platform range ignored fees | §3.5, §3.4, P10-30 |
+| 11 | "System" conditions depend on a capability being declared truthfully, and nothing said how a declaration is reviewed | §9 and P10-34: declared only in a release the independent reviewer reviews against the written answer and the sandbox run; a test pins that P10's build declares none |
+
+Nothing beyond revision 6 has been pushed. PR #12 stays open, unmerged and a draft, for independent review only.

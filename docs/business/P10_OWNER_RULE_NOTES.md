@@ -11,7 +11,10 @@ As with rule 11.2 in October, we would like to add short, dated notes under rule
 what you decided. The original wording stays as it is, and the notes say what replaces it. **We will not touch the
 signed rules without your approval.** As before, **"Not sure" is a fine answer.**
 
-**Answered by:** ____________________ **Date:** ____________________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 13th of November, 2026
+
+*The name and date above were left blank on the form, and were recorded by the integration team on 13 November 2026,
+as the project lead confirmed them. The answers below are the owner's, unedited.*
 
 ---
 

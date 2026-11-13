@@ -59,7 +59,7 @@ signed rules without your approval.** As before, **"Not sure" is a fine answer.*
   settle it before billing is built.)*
 - ☐ Not sure, let's discuss
 
-> Answer:
+> Answer: Yes, add it as written
 
 **N2.** May we add the note under rule 10.6?
 
@@ -68,4 +68,4 @@ signed rules without your approval.** As before, **"Not sure" is a fine answer.*
 - ☐ No, leave rule 10.6 as it is
 - ☐ Not sure, let's discuss
 
-> Answer:
+> Answer: Yes. add it as written

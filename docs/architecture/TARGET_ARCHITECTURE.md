@@ -32,7 +32,7 @@ Conventions: **MUST** = invariant the implementation and tests enforce. **ADR-n*
 | ADR-5 | **Double-entry ledger is the single source of truth for every balance** — real money *and* record wallets. Balances are derived; a locked projection table serves reads and overdraft checks. No `UPDATE balance`, no `DELETE` of money rows, ever. **Every money command executes atomically and produces one or more balanced journal entries; the whole command commits or rolls back.** | BR-4.4, 11.1, 7.4; fixes every money defect found. |
 | ADR-6 | **Server-derived tenant context + central authorization + Postgres Row-Level Security.** **Application authorization decides what an actor may do; RLS only prevents accidental cross-tenant data access** (defence in depth, never the permission system). **No request may choose its own tenant.** | Tenant isolation is the most-broken area today. |
 | ADR-7 | **Explicit actor model**: one `identity` (login) with **memberships** (platform, merchant-owner/staff/agent, customer). Audience-scoped sessions, not one JWT shape for everyone. | BR-3; removes Staff/Collaborator/Agent ID confusion. |
-| ADR-8 | **Payments behind a provider port** (`PaymentProvider`); TransactPay is one adapter. Domain code never calls TransactPay directly. | T1–T3 unresolved; testability; provider change possible. |
+| ADR-8 | **Payments behind a provider port** (`PaymentProvider`); Paystack is the adapter (TransactPay, the first, was removed in P9 revision 8). Domain code never calls the provider directly. | T1–T3 unresolved; testability; provider change possible. |
 | ADR-9 | **Postgres-backed job queue (pg-boss)** + **transactional outbox** for all async work (VA provisioning, billing, notifications, reconciliation). | No extra infrastructure; exactly-once-ish via idempotency. |
 | ADR-10 | **Immutable, containerised deploys from CI** to infrastructure dedicated to AlphaKolect; production is never a git working copy. | Current deploy model is the root cause of drift and credential sprawl. |
 | ADR-11 | **Money in minor units** (`bigint` kobo) + ISO-4217 currency column on every amount. **Naira (NGN) only for now** (owner decision, revised 2026-09-26): the system accepts and validates `NGN` only, and there is no currency selection in the UI. The currency column exists so adding currencies later is a controlled change (currency table with minor-unit exponents, per-currency plan prices, platform ledger per currency) rather than a schema rewrite. Timezone: WAT. | FLOAT money today; the old code's XOF option is dropped. |
@@ -801,6 +801,8 @@ Application → review/approve (permission) → **disbursement** (method OPEN-9:
 - **Billing is paused until this module ships** (BR-1.3): implemented as a platform setting `billing.enabled=false` plus a per-merchant override.
 
 ## 12. TransactPay integration boundary
+
+> **Revision, 19 November 2026 (P9 revision 8).** The provider is **Paystack**; TransactPay is removed. This section describes the port and its rules, which hold for any provider, and was written with TransactPay in mind: read "TransactPay" as "the provider". What Paystack does and does not offer, and what was built, is in `docs/architecture/P9_IMPLEMENTATION_PLAN.md` §16. In short: wallets are dedicated virtual accounts of a customer; events are signed; the balance is one, and nothing moves between accounts.
 
 ```ts
 interface PaymentProvider {

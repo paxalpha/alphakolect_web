@@ -7,7 +7,7 @@ The code is changed (payments plan revision 8, section 16). Paystack works diffe
 touch money or rules you have approved, so each needs your answer before real money flows. Nothing here moves real money:
 the system runs against Paystack's test mode only until you and the project lead say otherwise.
 
-**Answered by:** ______________________ **Date:** ______________________
+**Answered by:** Mayowa Edward Fadahunsi **Date:** 19th of November, 2026
 
 *Please tick one answer for each question. If you are not sure, tick "Not sure" and we will explain it in person.*
 
@@ -29,7 +29,7 @@ answered in writing before real money, whatever the provider.
 - ☐ Stop: I want to speak to a lawyer or to Paystack before any more is built.
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -44,7 +44,7 @@ the business's wallet with **what actually arrived (the amount less the fee)**, 
   built, and a new account in the books.)*
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -63,7 +63,7 @@ name and a word as the last name:
 - ☐ Something else: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -80,7 +80,7 @@ them, no business gets an account number until we collect them (the request fail
 - ☐ Collect the owner's phone number, and BVN and bank account if Paystack requires them, at registration from now on.
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -94,7 +94,7 @@ up, and nothing moves at Paystack. The money stays in the same Paystack balance 
 - ☐ I want subscriptions paid another way: ______
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -113,7 +113,7 @@ rule without you. We propose a dated note under each, word for word:
 - ☐ Do not add it.
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -126,7 +126,7 @@ closed. Closing them needs TransactPay's help, and the relationship is ending.
 - ☐ Leave them; we are not using TransactPay again.
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -140,7 +140,7 @@ out yet: payouts are switched off, and cannot be switched on in production, unti
 - ☐ AlphaKolect bears both: they are AlphaKolect's cost.
 - ☐ Not sure
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 
@@ -154,7 +154,7 @@ accepted). Test mode needs nothing.
 - ☐ Not sure
 - ☐ There is no Paystack account yet. I will create it myself and give no one else its password.
 
-> Answer:
+> Answer: I go with the suggestion
 
 ---
 

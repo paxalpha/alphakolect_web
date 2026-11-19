@@ -101,7 +101,7 @@ export const paymentBodies = {
   classifyWalletReceipt: (w: { payments: PaymentResources }) => ({ accountId: w.payments.capitalId }),
   resolveUnmatchedTransaction: () => ({ resolution: 'dismissed', note: 'Matrix' }),
   resolveReconciliationFinding: () => ({ note: 'Matrix' }),
-  receiveTransactPayEvent: () => ({}),
+  receivePaystackEvent: () => ({}),
 };
 
 /**

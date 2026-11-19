@@ -45,7 +45,7 @@ export const LIMITS: Readonly<Record<LimitName, Rule>> = {
   // invitations. Issuing: the identifier is the business; accepting (a password check): the identifier is the email.
   customer_app_invite: { windowSeconds: 3600, perIp: 120, perIdentifier: 100 },
   customer_app_accept: { windowSeconds: 900, perIp: 30, perIdentifier: 10 },
-  // TransactPay's notifications (TA-8): stored before anything else, so bounded; the identifier is the provider.
+  // The payment provider's notifications (TA-8): stored before anything else, so bounded; the identifier is the provider.
   provider_webhook: { windowSeconds: 60, perIp: 300, perIdentifier: 1200 },
 };
 

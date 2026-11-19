@@ -8838,7 +8838,7 @@
     "/v1/platform/payments/findings": {
       "get": {
         "operationId": "listPlatformFindings",
-        "summary": "Differences between the books and TransactPay (each page is recorded)",
+        "summary": "Differences between the books and Paystack (each page is recorded)",
         "tags": [
           "platform"
         ],
@@ -9190,10 +9190,10 @@
         }
       }
     },
-    "/v1/webhooks/transactpay": {
+    "/v1/webhooks/paystack": {
       "post": {
-        "operationId": "receiveTransactPayEvent",
-        "summary": "TransactPay’s notifications: stored, then confirmed with TransactPay before anything is done",
+        "operationId": "receivePaystackEvent",
+        "summary": "Paystack’s notifications: stored, then confirmed with Paystack before anything is done",
         "tags": [
           "public"
         ],
@@ -9234,6 +9234,16 @@
           },
           "400": {
             "description": "VALIDATION_ERROR",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "UNAUTHENTICATED",
             "content": {
               "application/json": {
                 "schema": {
@@ -13746,7 +13756,7 @@
           "createdAt"
         ],
         "additionalProperties": false,
-        "description": "The worker creates the account at TransactPay"
+        "description": "The worker creates the account at Paystack"
       },
       "LiveWallet": {
         "type": "object",
@@ -13915,7 +13925,7 @@
           "resolvedAt"
         ],
         "additionalProperties": false,
-        "description": "A difference between the books and TransactPay"
+        "description": "A difference between the books and Paystack"
       },
       "UnmatchedTransactionList": {
         "type": "object",

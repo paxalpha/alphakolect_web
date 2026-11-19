@@ -61,7 +61,7 @@ const balance = async (merchantId: string, code: string) =>
       )
     ).b,
   );
-const notify = (body: object) => request(app).post('/v1/webhooks/transactpay').send(body);
+const notify = (body: object) => request(app).post('/v1/webhooks/paystack').send(body);
 const eventOf = (reference: string) =>
   one(
     `SELECT id, status, outcome FROM payments.provider_events WHERE reference = $1 ORDER BY id DESC LIMIT 1`,

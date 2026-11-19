@@ -459,7 +459,7 @@ describe('payment orders (TA-8): never sent twice', () => {
     const w = await funded();
     const { id } = await order(w);
     // Claimed by a worker that then died: nothing reached the provider.
-    await owner.query(`SELECT * FROM payments.claim_orders(100, 300)`);
+    await owner.query(`SELECT * FROM payments.claim_orders(100, 300, 'fake')`);
     const sent = fake.transferCount;
     for (let i = 0; i < 3; i++) {
       await due(id);

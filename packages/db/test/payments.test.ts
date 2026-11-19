@@ -356,7 +356,7 @@ describe('Live wallets (BR-2.3, 4.1–4.3)', () => {
     await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
     const w = await walletOf(b.merchantId);
     const claim = async () =>
-      (await worker.query(`SELECT * FROM payments.claim_wallets(1000, 300)`)).rows.filter(
+      (await worker.query(`SELECT * FROM payments.claim_wallets(1000, 300, 'fake')`)).rows.filter(
         (r) => r.id === w.id,
       );
     const [first] = await claim();
@@ -515,7 +515,9 @@ describe('provider events (TA-8; the forged and the replayed)', () => {
   it('a claim hands out what is due once; an unusable confirmation is refused', async () => {
     const id = await storeEvent();
     const claimed = async () =>
-      (await worker.query(`SELECT * FROM payments.claim_events(1000, 300)`)).rows.filter((r) => r.id === id);
+      (await worker.query(`SELECT * FROM payments.claim_events(1000, 300, 'fake')`)).rows.filter(
+        (r) => r.id === id,
+      );
     const [first] = await claimed();
     expect(first).toBeDefined();
     expect(await claimed()).toEqual([]);
@@ -735,7 +737,9 @@ describe('payment orders (TA-8): a timeout is not a failure', () => {
     return { ...w, id, reference };
   }
   const claim = async (id: string) =>
-    (await worker.query(`SELECT * FROM payments.claim_orders(1000, 300)`)).rows.filter((r) => r.id === id);
+    (await worker.query(`SELECT * FROM payments.claim_orders(1000, 300, 'fake')`)).rows.filter(
+      (r) => r.id === id,
+    );
   const due = (id: string) =>
     owner.query(
       `UPDATE payments.payment_orders SET lease_until = NULL, next_check_at = now() WHERE id = $1`,
@@ -920,12 +924,12 @@ describe('P9-R1: the API cannot act as the worker, nor the worker as the API', (
   const WORKER_CALLS: [string, unknown[]][] = [
     [`SELECT payments.request_wallets($1)`, [PROVIDER]],
     [`SELECT payments.request_customer_wallets($1)`, [PROVIDER]],
-    [`SELECT * FROM payments.claim_wallets(1, 1)`, []],
+    [`SELECT * FROM payments.claim_wallets(1, 1, 'fake')`, []],
     [`SELECT payments.record_wallet_created($1, $1, 'r', '1', 'n', 'b')`, [U]],
     [`SELECT payments.record_wallet_failed($1, $1, 'e', 1)`, [U]],
-    [`SELECT * FROM payments.claim_events(1, 1)`, []],
+    [`SELECT * FROM payments.claim_events(1, 1, 'fake')`, []],
     [`SELECT payments.record_event($1, $1, true, 'tx', '1', 100, 'NGN', 'successful', now(), 5)`, [U]],
-    [`SELECT * FROM payments.claim_orders(1, 1)`, []],
+    [`SELECT * FROM payments.claim_orders(1, 1, 'fake')`, []],
     [`SELECT payments.record_order($1, $1, 'succeeded', 'r', 't', NULL)`, [U]],
     [`SELECT * FROM payments.reconcile_wallets()`, []],
     [`SELECT payments.record_finding('wallet', $1, 1, 0)`, [U]],
@@ -987,10 +991,48 @@ describe('P9-R1: the API cannot act as the worker, nor the worker as the API', (
   });
 });
 
+describe('P9 revision 8: a worker claims only the rows of its own provider', () => {
+  const claimAs = async (fn: string, provider: string, id: string) =>
+    (await worker.query(`SELECT * FROM payments.${fn}(1000, 300, $1)`, [provider])).rows.filter(
+      (r) => r.id === id,
+    );
+
+  it('a wallet, an event and an order of another provider are not claimed, and are still there for their own', async () => {
+    const b = await business();
+    await work(`SELECT payments.request_wallets($1)`, [PROVIDER]);
+    const w = await walletOf(b.merchantId);
+    expect(await claimAs('claim_wallets', 'paystack', w.id)).toEqual([]);
+    expect(await claimAs('claim_wallets', 'fake', w.id)).toHaveLength(1);
+
+    const id = await storeEvent();
+    expect(await claimAs('claim_events', 'paystack', id)).toEqual([]);
+    expect(await claimAs('claim_events', 'fake', id)).toHaveLength(1);
+
+    const funded = await withWallet();
+    await confirm(await storeEvent(), { id: txId(), account: funded.accountNumber, amount: 100_000 });
+    const ledgerId = (
+      await one(`SELECT id FROM ledger.ledgers WHERE merchant_id = $1`, [funded.b.merchantId])
+    ).id;
+    const order = (
+      await one(
+        `SELECT payments.create_order($1, NULL, '{"accountNumber":"0123456789","bankCode":"058"}', 30000, $2, 'test', $3, 'subscription.paid', '{}') AS id`,
+        [funded.walletId, `AKO-${randomBytes(8).toString('hex')}`, ledgerId],
+      )
+    ).id as string;
+    expect(await claimAs('claim_orders', 'paystack', order)).toEqual([]);
+    expect(await one(`SELECT state FROM payments.payment_orders WHERE id = $1`, [order])).toEqual({
+      state: 'created',
+    });
+    expect(await claimAs('claim_orders', 'fake', order)).toHaveLength(1);
+  });
+});
+
 describe('P9-R3: an answer from an expired lease changes nothing', () => {
   const claimedOf = async (table: string, fn: string, id: string) => {
     await owner.query(`UPDATE payments.${table} SET lease_until = NULL WHERE id = $1`, [id]);
-    return (await worker.query(`SELECT * FROM payments.${fn}(1000, 300)`)).rows.find((r) => r.id === id)!;
+    return (await worker.query(`SELECT * FROM payments.${fn}(1000, 300, 'fake')`)).rows.find(
+      (r) => r.id === id,
+    )!;
   };
 
   it('a wallet: the later claim’s worker decides; the earlier one’s answer, or no token, is stale', async () => {

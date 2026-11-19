@@ -76,8 +76,8 @@ export class PaymentsWorker {
           display_name: string;
         }>(
           `SELECT id, lease_token, owner_kind, merchant_id, customer_id, alias, display_name
-             FROM payments.claim_wallets(1, $1)`,
-          [this.leaseMs / 1000],
+             FROM payments.claim_wallets(1, $1, $2)`,
+          [this.leaseMs / 1000, provider.name],
         ),
       );
       if (!w) return;
@@ -136,8 +136,8 @@ export class PaymentsWorker {
     for (let n = 0; n < BATCH; n++) {
       const [e] = await db.transaction((tx) =>
         tx.query<{ id: string; lease_token: string; reference: string | null; attempts: number }>(
-          `SELECT id, lease_token, reference, attempts FROM payments.claim_events(1, $1)`,
-          [this.leaseMs / 1000],
+          `SELECT id, lease_token, reference, attempts FROM payments.claim_events(1, $1, $2)`,
+          [this.leaseMs / 1000, provider.name],
         ),
       );
       if (!e) return;
@@ -205,8 +205,8 @@ export class PaymentsWorker {
           to_bank: { accountNumber: string; bankCode: string } | null;
         }>(
           `SELECT id, lease_token, prior_state, reference, amount_minor, from_provider_ref, to_provider_ref, to_bank
-             FROM payments.claim_orders(1, $1)`,
-          [this.leaseMs / 1000],
+             FROM payments.claim_orders(1, $1, $2)`,
+          [this.leaseMs / 1000, provider.name],
         ),
       );
       if (!o) return;

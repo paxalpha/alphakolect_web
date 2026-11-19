@@ -8,7 +8,8 @@ be recorded. Not approved for live money or production migrations.** Planned and
 Decisions that would go to the project lead take the recommended option (his standing instruction) and are recorded in §7
 and §16.5. The owner answered `docs/business/P9_OWNER_PAYMENTS.md` (Q1–Q8) on 26 October 2026 and
 `docs/business/P9_OWNER_PLATFORM_WALLET_PERMISSION.md` on 31 October 2026, each with the suggested option. The change of
-provider raises questions for the owner, in `docs/business/P9_OWNER_PAYSTACK.md` (unanswered). The TransactPay forms
+provider raises questions for the owner, in `docs/business/P9_OWNER_PAYSTACK.md`: answered on 19 November 2026, each with the
+suggested option (§16.11). The TransactPay forms
 (`P9_TRANSACTPAY_QUESTIONS.md`, `P9_TRANSACTPAY_FOLLOWUP.md`) are superseded; the follow-up was never sent. The gate review is
 the independent reviewer's.
 
@@ -385,7 +386,7 @@ creation; a deposit needs the demo bank app by hand.
 | 8 | For payouts (P10): the OTP requirement turned off for the account, the transfer fee and stamp duty accounted for in the books (owner Q9), a payout run in test mode, and `PAYSTACK_PAYOUTS=on` | **Payouts are off** and refused in production (P9-22). A payout that waits for an OTP is unknown and never sent; one that is abandoned, blocked or rejected is a conclusive failure (16.5 P9-25) |
 | 9 | Each environment re-runs the role bootstrap before these migrations, with `worker_password`, and confirms that `alphakolect_worker` has no role memberships | As §10 conditions 8 and 9 |
 | 10 | The worker's credentials reach its runtime alone | As §10 condition 10; P15 |
-| 11 | The owner's answers to `P9_OWNER_PAYSTACK.md`, custody (OPEN-12) confirmed in writing, the Paystack account live (owner Q8), the live key set in production only | The business's decision |
+| 11 | The owner's answers to `P9_OWNER_PAYSTACK.md` (**given 19 November 2026, §16.11**), custody (OPEN-12) confirmed in writing with Paystack and a lawyer (**outstanding**), the Paystack account live (**not yet**, owner Q8), the live key set in production only | The business's decision; the answers are in, the custody confirmation and the go-live are not |
 | 12 | TransactPay's keys revoked wherever they are kept, including `apps/api/.env.prod`; the old accounts closed (owner Q7) | Removal is not complete while a live key exists |
 | 13 | A reversal that follows a payout reported successful: a payout reversed afterwards returns the amount to the balance | An order is final once it succeeds, so the books would not follow. P10 decides how a late reversal is posted |
 
@@ -475,3 +476,22 @@ concurrency are untouched by it: 105, 910, 38). The contract check and the secre
 | The negative-test fixture | The step "The accepted exception hides nothing else" compares the base with the new spec after removing one other path the two share. In run 44607642892 that path was `/v1/health` ("Removed /v1/health from the new spec"), and the comparison failed as it must ("Removing another path still fails the check, as it must"). `/v1/health` is a fixture: it is not an exception, and the line is not evidence about the webhook |
 | What this proves | The exception is accepted for that exact path, and removing another shared path still fails with the exception in force |
 | Nothing else is granted | No other path-removal, and no other kind of breaking change, is excepted. The file holds that one line; the check's threshold is unchanged (`--fail-on ERR`) |
+
+### 16.11 The owner's answers to `P9_OWNER_PAYSTACK.md` (19 November 2026)
+
+Mayowa Edward Fadahunsi answered all nine questions on 19 November 2026: "I go with the suggestion", each time. Nothing was inferred; the
+suggested option of each question is what is recorded.
+
+| Q | Answer | What follows |
+|---|---|---|
+| Q1 One balance, custody | Build and test in Paystack's test mode only; no real money until custody is confirmed in writing with Paystack and a lawyer | Condition 11 keeps custody open. Nothing here goes live |
+| Q2 Who bears Paystack's fee on money received | The business: its wallet is credited the amount less the fee | P9-14 stands as built |
+| Q3 The name a payer sees | The word "Business" | P9-21 stands as built |
+| Q4 Identity checks | Not now: ask Paystack in writing which category applies and exactly what it requires, then come back to the owner with a form on collecting the phone and, if required, the BVN | **Wallet creation stays off** (P9-23). The written question to Paystack, and then that form, are the next steps. Condition 3 stays open |
+| Q5 Subscriptions between wallets | A book entry between two wallets, no provider call | For P10 (§16.6) |
+| Q6 The rules that name TransactPay | Add the dated note as written | Added, word for word, under rules 1.4, 2.4 and 4.1 of `BUSINESS_RULES.md` |
+| Q7 The old TransactPay accounts | Ask TransactPay to close all of them before the relationship ends | An operator task; condition 12 stays open until it is done and the keys are revoked |
+| Q8 Is the Paystack account ready | Not yet; the work continues in test mode | Condition 11 stays open |
+| Q9 Who pays to send money out | The business bears the transfer fee and the stamp duty: its wallet is debited the amount, the fee and the stamp duty | P10 posts all three. **Payouts stay off** (P9-22) until it does; condition 8 stays open |
+
+The answers close no condition of 16.4: they decide who bears what, and say that nothing goes live yet.

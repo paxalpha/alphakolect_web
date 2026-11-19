@@ -6,6 +6,7 @@ import { newSigningJwk } from './support/keys.js';
 // Made-up keys of the right shape, for the configuration's rules.
 const TEST_KEY = 'sk_test_0123456789abcdef'; // gitleaks:allow
 const LIVE_KEY = 'sk_live_0123456789abcdef'; // gitleaks:allow
+const SIGNING_SECRET = 'whsec_0123456789abcdef'; // gitleaks:allow
 
 // Test fixtures only; not real credentials.
 const DATABASE_URL = 'postgresql://user:s3cret-value@127.0.0.1:5436/alphakolect'; // gitleaks:allow
@@ -117,14 +118,14 @@ describe('loadConfig', () => {
       ...live,
       PAYMENT_PROVIDER: 'paystack',
       PAYSTACK_SECRET_KEY: LIVE_KEY,
-      PAYSTACK_WEBHOOK_SIGNING_SECRET: 'whsec_0123456789abcdef',
+      PAYSTACK_WEBHOOK_SIGNING_SECRET: SIGNING_SECRET,
       PAYSTACK_PREFERRED_BANK: 'wema-bank',
       PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
     });
     expect(config.payments.provider).toBe('paystack');
     expect(config.payments.paystack).toMatchObject({
       preferredBank: 'wema-bank',
-      webhookSigningSecret: 'whsec_0123456789abcdef',
+      webhookSigningSecret: SIGNING_SECRET,
     });
   });
 

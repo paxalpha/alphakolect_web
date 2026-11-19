@@ -14,7 +14,7 @@ import { ngn } from '../../src/platform/money.js';
 
 type Seen = { url: string; method: string; headers: Record<string, string>; body: unknown };
 const SECRET = 'sk_test_0123456789abcdef'; // gitleaks:allow
-const SIGNING = 'whsec_0123456789abcdef';
+const SIGNING = 'whsec_0123456789abcdef'; // gitleaks:allow
 const NOW = 1_800_000_000;
 
 function provider(answer: (seen: Seen) => Response | Promise<Response>, extra: Partial<PaystackConfig> = {}) {
@@ -307,7 +307,8 @@ describe('notifications are signed', () => {
     expect(p.verifyNotification(body, { 'paystack-signature': stamped(NOW - 300) })).toBe(true);
     expect(p.verifyNotification(body, { 'paystack-signature': stamped(NOW + 300) })).toBe(true);
     // One of two signatures during a rotation is enough, whatever its position.
-    const other = `v1=whk_2:${hmac('whsec_other0000000000', `${NOW}.${body}`)}`;
+    const OTHER = 'whsec_other0000000000'; // gitleaks:allow
+    const other = `v1=whk_2:${hmac(OTHER, `${NOW}.${body}`)}`;
     expect(p.verifyNotification(body, { 'paystack-signature': `${other},${stamped(NOW)}` })).toBe(true);
   });
 
@@ -318,7 +319,7 @@ describe('notifications are signed', () => {
     expect(refused(stamped(NOW + 301))).toBe(false);
     expect(refused(stamped(NOW), body.replace('150050', '999999'))).toBe(false);
     expect(refused(stamped(NOW), body.replace(', ', ','))).toBe(false); // the bytes, not the JSON
-    expect(refused(stamped(NOW, body, 'whsec_other0000000000'))).toBe(false);
+    expect(refused(stamped(NOW, body, 'whsec_other0000000000'))).toBe(false); // gitleaks:allow
     expect(refused(stamped(NOW).replace('t=', 'x='))).toBe(false);
     expect(refused(`t=${NOW},v1=whk_1:abc`)).toBe(false);
     expect(refused(`t=${NOW}`)).toBe(false);

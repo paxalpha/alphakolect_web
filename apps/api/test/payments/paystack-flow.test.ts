@@ -16,7 +16,7 @@ import { expectError, tenancyFixtures } from '../support/tenancy.js';
 // this file's rows apart from the other files', which use the fake provider.
 
 const SECRET = 'sk_test_0123456789abcdef'; // gitleaks:allow
-const SIGNING = 'whsec_0123456789abcdef';
+const SIGNING = 'whsec_0123456789abcdef'; // gitleaks:allow
 const DOMAIN = 'wallets.example.test';
 
 type Tx = {

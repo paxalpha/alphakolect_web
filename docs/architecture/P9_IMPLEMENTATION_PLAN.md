@@ -350,6 +350,7 @@ adapter, the webhook and a few rules around them change. What was read of Paysta
 - **The webhook** is `POST /v1/webhooks/paystack`. The signature is checked on the exact bytes received: a notification that fails
   is refused (401) and **not stored**; one that passes is stored as it arrived and is still only a lead, confirmed by the API
   (P9-2, P9-15). Only `charge.success` carries a reference to confirm.
+- **Two switches, both off by default** (P9-22, P9-23): wallet creation and payouts. They gate what AlphaKolect cannot yet do correctly (a customer's phone and identity; payout fees in the books).
 - **Fees.** The books are credited what arrived: the amount less the fee Paystack names (P9-14). Both figures are Paystack's.
 - **One balance.** `perAccountBalance` is false, so the reconciler compares the one balance against the sum of every wallet's
   1100 (P9-3, built before). A test shows that what the balance gains is what the books gain, fees included.
@@ -361,7 +362,7 @@ adapter, the webhook and a few rules around them change. What was read of Paysta
   unknown, and never sent again.
 - **Claims are scoped to the provider** (migration `20261119000100`, P9-16).
 - **Configuration**: `PAYMENT_PROVIDER=paystack` with `PAYSTACK_SECRET_KEY`, `PAYSTACK_PREFERRED_BANK`,
-  `PAYSTACK_WALLET_EMAIL_DOMAIN` and optionally `PAYSTACK_WEBHOOK_SIGNING_SECRET`. A test key outside production and a live key
+  `PAYSTACK_WALLET_EMAIL_DOMAIN`, optionally `PAYSTACK_WEBHOOK_SIGNING_SECRET`, and the switches `PAYSTACK_WALLET_CREATION` and `PAYSTACK_PAYOUTS` (default off). A test key outside production and a live key
   in it (P9-19).
 - **TransactPay is gone** from the code, the configuration, the tests and the contract. The legacy client under `legacy/` is
   untouched, as legacy. The earlier sections, the migrations' comments and the TransactPay forms are history.
@@ -376,16 +377,17 @@ creation; a deposit needs the demo bank app by hand.
 |---|---|---|
 | 1 | A real test deposit through the demo bank app, the webhook and the worker | The fields (`reference`, `amount`, `fees`, `channel`, `authorization.receiver_bank_account_number`), the amount in kobo and the status are as documented, not seen |
 | 2 | The sandbox suite run once, and its not-found answers read (customer 404, transaction 400 or 404, transfer 404) | If a not-found is another shape, the adapter reads it as unclear: safe, but no wallet is ever made and no forged event ends. The lesson of §14 |
-| 3 | Paystack's business category for AlphaKolect, and whether it requires a customer's BVN and bank account (owner Q4) | If required, no account number can be made without them: the creation is refused, and the wallet fails visibly for the platform team |
+| 3 | Paystack's business category for AlphaKolect, and what it requires of the customer of a dedicated account: a phone number always, and in some categories a validated BVN and bank account (owner Q4) | AlphaKolect holds neither. **Wallet creation is off** (`PAYSTACK_WALLET_CREATION=off`, P9-23) until this is settled and the data, the consent and the validation are built; a business waits without a wallet, and nothing is lost |
 | 4 | The balance: whether `GET /balance` includes a DVA credit at once or at settlement, and whether the fee is taken at deposit | A settlement delay shows as a difference until it settles. The fee is assumed taken at deposit (P9-14) |
 | 5 | Whether a customer just made is always found, and whether Paystack refuses a second account for one customer | The same risk as §10 condition 7: a lookup that lags after a lost answer, then a second account |
 | 6 | That Paystack accepts a business name as the first name and "Business" as the last, and the account name it builds (owner Q3) | Unseen |
 | 7 | The webhook URL and the signing secret set on Paystack's dashboard; the proxy allows Paystack's three documented addresses (52.31.139.75, 52.49.173.169, 52.214.14.220) | Without the secret only the older signature works; the allowlist is a second wall, for P15 |
-| 8 | For payouts (P10): the OTP requirement turned off for the account, fees understood, and a payout run in test mode | A payout that waits for an OTP is unknown and never sent |
+| 8 | For payouts (P10): the OTP requirement turned off for the account, the transfer fee and stamp duty accounted for in the books (owner Q9), a payout run in test mode, and `PAYSTACK_PAYOUTS=on` | **Payouts are off** and refused in production (P9-22). A payout that waits for an OTP is unknown and never sent; one that is abandoned, blocked or rejected is a conclusive failure (16.5 P9-25) |
 | 9 | Each environment re-runs the role bootstrap before these migrations, with `worker_password`, and confirms that `alphakolect_worker` has no role memberships | As §10 conditions 8 and 9 |
 | 10 | The worker's credentials reach its runtime alone | As §10 condition 10; P15 |
 | 11 | The owner's answers to `P9_OWNER_PAYSTACK.md`, custody (OPEN-12) confirmed in writing, the Paystack account live (owner Q8), the live key set in production only | The business's decision |
 | 12 | TransactPay's keys revoked wherever they are kept, including `apps/api/.env.prod`; the old accounts closed (owner Q7) | Removal is not complete while a live key exists |
+| 13 | A reversal that follows a payout reported successful: a payout reversed afterwards returns the amount to the balance | An order is final once it succeeds, so the books would not follow. P10 decides how a late reversal is posted |
 
 ### 16.5 Decisions (the recommended options, the lead's standing instruction)
 
@@ -398,7 +400,11 @@ creation; a deposit needs the demo bank app by hand.
 | P9-18 | A payout's reference | Our reference when it fits Paystack's form, otherwise a fixed digest of it; the transfer and its lookup use the same function. A step before the transfer that fails is `NOT_SENT`: failed, nothing posted |
 | P9-19 | Keys | A test key outside production and a live key in it, refused at startup otherwise |
 | P9-20 | A listing | Not built: `GET /transaction` and the requery exist, but nothing in P9 uses them. A missed notification is found by the balance, as before (§3.6); a listing with its own path to credit a missed transaction is later work |
-| P9-21 | Customer names | First name the owner's name, last name "Business", "Platform" or "Customer"; no phone. Paystack decides (condition 6) |
+| P9-21 | Customer names | First name the owner's name, last name "Business", "Platform" or "Customer"; **no phone is sent, because none is held**, which is why wallet creation is off (P9-23). Paystack decides what it accepts (condition 6) |
+| P9-22 | Payouts | **Off** unless `PAYSTACK_PAYOUTS=on`, and `on` is refused in production. Paystack takes the transfer fee, and a ₦50 stamp duty from ₦10,000, from the one balance on top of the amount ("we deduct the transfer amount and the transfer fee"), and the books post the amount alone: every payout would leave a difference nobody explains. Off, `transfer` is `UNSUPPORTED`, so a created order fails unsent and posts nothing. P10, the first to send a payout, defines who bears both charges (owner Q9) and posts them. No payout is created in P9 (Q2) |
+| P9-23 | Wallet creation | **Off** unless `PAYSTACK_WALLET_CREATION=on`. Off, the worker requests and claims no wallet (a business waits, nothing counts attempts), and switching on picks every business up. Production may switch it on only after condition 3 |
+| P9-24 | An account is a wallet only when stated so | Assigned, active and in naira, all stated, for a lookup and for a creation; a creation's answer must also name the customer asked for. Missing, ambiguous or contradicting fields are `UNKNOWN_OUTCOME`: not activated, and for the platform team to see. A closed account is reported closed |
+| P9-25 | Transfer statuses | All nine of Paystack's "how transfers work": conclusive success, reversed, failed, abandoned, blocked, rejected (the last three fail the order); not conclusive pending, received and otp. A status not in the table is not final. Paystack documents that a retry should use the same reference; the worker still never sends again, only looks up |
 
 ### 16.6 Obligations passed on
 
@@ -438,3 +444,23 @@ the pinned inventory of transaction classes (the wallet provisioning was split i
 test of mine that swept every business in the shared test database into Paystack (the flow test now creates only the wallets it
 asks for). A test fixture that stored and recorded an event in two steps could lose it to a worker of a file beside it, and
 failed once in a parallel run: it is one transaction now. Linux CI is the next witness. Not run: anything against Paystack.
+
+### 16.10 The reviewer's first review of PR #13 (19 November 2026)
+
+Request changes, at `68ee3eb`. Each finding, and what was done:
+
+| Finding | Resolution |
+|---|---|
+| P1 A dedicated account's customer is incomplete: no phone, and no identity validation where the category requires it | Right: AlphaKolect holds neither, and its category is not known. **Wallet creation is off by default** and cannot make an account until condition 3 is settled and the data, consent and validation exist (P9-23); owner Q4 now names the phone too. Building the collection of a phone and a BVN is a decision for the owner and the privacy policy, so it is not built here |
+| P1 An incomplete account response can activate a wallet | An account is a wallet only when stated assigned, active and in naira, and a creation's answer must name the customer asked for (P9-24). Tests: each missing, false or contradicting field, for the lookup and the creation, and a closed account reported closed |
+| P1 Payout fees and stamp duty are missing from the accounting | **Payouts are off by default and refused in production** (P9-22): none is created in P9, and with the switch off a created order fails unsent. Who bears the fee and the stamp duty is the owner's (Q9). Posting both is P10's, the first to send a payout; condition 8 and 13 gate it |
+| P2 The transfer status mapping is incomplete | All nine documented statuses (P9-25), for the transfer and the lookup, in one table-driven test |
+| Gitleaks | The test signing secrets are marked and the two reviewed findings of the history recorded in `.gitleaksignore` (`af88472`); the scan passes on that head |
+| The API contract check | The removal of `POST /v1/webhooks/transactpay` is a reviewed, accepted exception, approved by the project lead on 19 November with five conditions: `packages/contracts/openapi/oasdiff-ignore.txt` lists that one finding with its reason and this PR; the CI job passes it to `oasdiff` and then proves the exception is exact, by failing a comparison in which another path is removed |
+
+What this review confirms and this revision keeps: provider-scoped claims, the forward-only migration, the raw-body signature check,
+unsigned notifications refused and not stored, confirmation through the API, unclear outcomes unknown, TransactPay out of the new code.
+The release gates of 16.4 stay open, and P9 is not closed.
+
+After the reviewer's first review (16.10): format, lint and typecheck clean, and the API suite 2133 passed and 3 skipped (contracts, db and
+concurrency are untouched by it: 105, 910, 38). The contract check and the secret scan are Linux CI's.

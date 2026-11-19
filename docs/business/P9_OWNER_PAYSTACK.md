@@ -69,14 +69,15 @@ name and a word as the last name:
 
 ## Q4. Identity checks Paystack may ask for
 
-For businesses in some categories (financial services is one), Paystack requires the **BVN and a bank account** of the person
-each account is made for, and it uses them to name the account. AlphaKolect does not collect these today. We do not know
+Paystack requires a **phone number** for the customer each account number is made for, and, for businesses in some categories
+(financial services is one), the **BVN and a bank account** of that person, which it uses to name the account. AlphaKolect
+collects none of these today, so **no business is given an account number yet: wallet creation is switched off** until this is settled. We do not know
 which category Paystack will give AlphaKolect: that is decided when the Paystack account goes live. If Paystack requires
 them, no business gets an account number until we collect them (the request fails safely and is shown to the AlphaKolect team).
 
-- ☐ **Not now. We ask Paystack in writing which category applies and whether the checks are required. If they are, we stop
-  and come back to you with a form about collecting the BVN (a privacy decision).** *(Our suggestion.)*
-- ☐ Collect the owner's BVN and bank account at registration from now on.
+- ☐ **Not now. We ask Paystack in writing which category applies and exactly what it requires. Then we come back to you with a
+  form about collecting the phone and, if required, the BVN (a privacy decision).** *(Our suggestion.)*
+- ☐ Collect the owner's phone number, and BVN and bank account if Paystack requires them, at registration from now on.
 - ☐ Not sure
 
 > Answer:
@@ -123,6 +124,20 @@ closed. Closing them needs TransactPay's help, and the relationship is ending.
 
 - ☐ **Ask TransactPay to close all of them before the relationship ends.** *(Our suggestion.)*
 - ☐ Leave them; we are not using TransactPay again.
+- ☐ Not sure
+
+> Answer:
+
+---
+
+## Q9. Who pays to send money out
+
+When AlphaKolect sends money out of Paystack to a bank account (the first time is in billing, P10), Paystack takes a **transfer
+fee** and, from ₦10,000, a **₦50 stamp duty** out of AlphaKolect's one balance, **on top of** the amount sent. Nothing sends money
+out yet: payouts are switched off, and cannot be switched on in production, until the books carry both charges.
+
+- ☐ **The business bears both: its wallet is debited the amount, the fee and the stamp duty.** *(Our suggestion.)*
+- ☐ AlphaKolect bears both: they are AlphaKolect's cost.
 - ☐ Not sure
 
 > Answer:

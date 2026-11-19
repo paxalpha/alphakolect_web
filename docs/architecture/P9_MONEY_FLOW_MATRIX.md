@@ -220,6 +220,10 @@ test marked W, D, R and A, run as before against the FakeProvider.
 | D10 | A step before the transfer fails (the name, the recipient) | `NOT_SENT`: `failed`, nothing posted, nothing sent | T "a step before the transfer"; P "a step before the transfer that fails" |
 | D11 | The transfer was made and the answer lost | `unknown`, then `succeeded` by the lookup on the same reference; never sent twice | P "an answer lost after the money moved" |
 | D12 | A repeated reference, or a transfer waiting for an OTP | `unknown`: looked up, never read as a failure | T "only a 400 or 422 is a refusal" |
+| A9 | An account that is not stated to be assigned, active and in naira, or a creation naming another customer | Not a wallet: `UNKNOWN_OUTCOME`, the wallet stays `provisioning` and is retried; a closed account is reported closed | T "an account that is not stated to be a wallet" |
+| A10 | Wallet creation switched off | No wallet is requested or claimed, nothing is called at Paystack, nothing counts attempts | P "switched off"; T "what is switched off" |
+| D13 | A payout with payouts switched off (the default; never on in production) | `UNSUPPORTED`: the order fails unsent, nothing is posted, nothing is called | P "with payouts off"; T "what is switched off"; `config.test.ts` |
+| D14 | Every documented transfer status | success, reversed, failed, abandoned, blocked, rejected conclusive (the last three fail the order); pending, received, otp not; an unknown status is not final | T "reads every status Paystack documents" |
 | E7 | Paystack has one balance | Compared against the sum of every wallet's books (`perAccountBalance` false) | W "pooled balance"; P "what Paystack's one balance gains" |
 | H1 | A worker of another provider's rows (a deployment whose provider was changed) | Not claimed: wallets, events and orders are claimed by their own provider only | D "P9 revision 8" |
 | H2 | A live key outside production, or a test key in it | Refused at startup | `config.test.ts` "P9 rev 8" |

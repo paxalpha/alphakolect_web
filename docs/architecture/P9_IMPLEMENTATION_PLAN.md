@@ -464,3 +464,14 @@ The release gates of 16.4 stay open, and P9 is not closed.
 
 After the reviewer's first review (16.10): format, lint and typecheck clean, and the API suite 2133 passed and 3 skipped (contracts, db and
 concurrency are untouched by it: 105, 910, 38). The contract check and the secret scan are Linux CI's.
+
+#### The evidence for the API contract exception (recorded at the reviewer's request, 19 November 2026)
+
+| | |
+|---|---|
+| The one exception granted | `POST /v1/webhooks/transactpay`, removed: `oasdiff` reports it as `api path removed without deprecation`. Listed in `packages/contracts/openapi/oasdiff-ignore.txt`, with its reason, the lead's approval and this pull request |
+| The failing run, before the exception | Head `68ee3eb`, run 44602903430: the step "Fail on breaking changes against the base" failed with `in API POST /v1/webhooks/transactpay api path removed without deprecation` |
+| The passing run, with it | Head `b994f72`, run 44607642892: the same step, comparing the base with the real new spec, passes with the ignore file. The ignore file is the only thing that changed between the two |
+| The negative-test fixture | The step "The accepted exception hides nothing else" compares the base with the new spec after removing one other path the two share. In run 44607642892 that path was `/v1/health` ("Removed /v1/health from the new spec"), and the comparison failed as it must ("Removing another path still fails the check, as it must"). `/v1/health` is a fixture: it is not an exception, and the line is not evidence about the webhook |
+| What this proves | The exception is accepted for that exact path, and removing another shared path still fails with the exception in force |
+| Nothing else is granted | No other path-removal, and no other kind of breaking change, is excepted. The file holds that one line; the check's threshold is unchanged (`--fail-on ERR`) |

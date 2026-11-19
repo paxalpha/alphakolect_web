@@ -126,7 +126,42 @@ describe('loadConfig', () => {
     expect(config.payments.paystack).toMatchObject({
       preferredBank: 'wema-bank',
       webhookSigningSecret: SIGNING_SECRET,
+      // Off unless said (P9-22, P9-23).
+      walletsEnabled: false,
+      payoutsEnabled: false,
     });
+  });
+
+  it('P9 rev 8: wallet creation and payouts are off unless said; payouts cannot be on in production', () => {
+    const paystack = {
+      ...valid,
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_SECRET_KEY: TEST_KEY,
+      PAYSTACK_PREFERRED_BANK: 'test-bank',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+    };
+    expect(loadConfig(paystack).payments.paystack).toMatchObject({
+      walletsEnabled: false,
+      payoutsEnabled: false,
+    });
+    expect(
+      loadConfig({ ...paystack, PAYSTACK_WALLET_CREATION: 'on', PAYSTACK_PAYOUTS: 'on' }).payments.paystack,
+    ).toMatchObject({ walletsEnabled: true, payoutsEnabled: true });
+    expect(problemsOf({ ...paystack, PAYSTACK_PAYOUTS: 'yes' }).problems).toHaveLength(1);
+    const production = {
+      ...paystack,
+      NODE_ENV: 'production',
+      SMTP_URL: 'smtp://mail.example.test:25',
+      MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
+      WEB_APP_URL: 'https://app.example.test',
+      PAYSTACK_SECRET_KEY: LIVE_KEY,
+    };
+    expect(
+      loadConfig({ ...production, PAYSTACK_WALLET_CREATION: 'on' }).payments.paystack?.walletsEnabled,
+    ).toBe(true);
+    expect(problemsOf({ ...production, PAYSTACK_PAYOUTS: 'on' }).problems).toEqual([
+      'PAYSTACK_PAYOUTS must be off in production: payout fees and stamp duty are not in the books yet',
+    ]);
   });
 
   it('P9 rev 8: a test key outside production and a live key in it, so a developer’s machine cannot move real money', () => {

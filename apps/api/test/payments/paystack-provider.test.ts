@@ -24,6 +24,8 @@ function provider(answer: (seen: Seen) => Response | Promise<Response>, extra: P
     webhookSigningSecret: SIGNING,
     preferredBank: 'test-bank',
     walletEmailDomain: 'wallets.example.test',
+    walletsEnabled: true,
+    payoutsEnabled: true,
     now: () => NOW,
     fetch: (async (url: string, init: RequestInit) => {
       const call: Seen = {
@@ -48,9 +50,15 @@ const account = {
   account_number: '9930000737',
   account_name: 'ALPHAKOLECT / ADE STORES BUSINESS',
   bank: { name: 'Paystack-Titan', slug: 'titan-paystack' },
+  currency: 'NGN',
   active: true,
   assigned: true,
 };
+/** What POST /dedicated_account answers: the account, and the customer it was made for. */
+const madeFor = (code: string, extra: object = {}) => ({
+  status: true,
+  data: { ...account, customer: { customer_code: code }, ...extra },
+});
 const customer = (extra: object = {}) => ({
   status: true,
   data: { email: EMAIL, customer_code: 'CUS_abc', dedicated_account: null, ...extra },
@@ -101,9 +109,7 @@ describe('wallets', () => {
   });
 
   it('creates one for a customer who has none: the account, with our preferred bank, and nothing else made', async () => {
-    const { p, seen } = provider((s) =>
-      s.method === 'GET' ? json(customer()) : json({ status: true, data: account }),
-    );
+    const { p, seen } = provider((s) => (s.method === 'GET' ? json(customer()) : json(madeFor('CUS_abc'))));
     await expect(p.createVirtualAccount(owner, ALIAS)).resolves.toMatchObject({
       providerRef: ALIAS,
       accountNumber: '9930000737',
@@ -120,7 +126,7 @@ describe('wallets', () => {
       if (s.method === 'GET') return notFound();
       return s.url.endsWith('/customer')
         ? json({ status: true, data: { email: EMAIL, customer_code: 'CUS_new' } })
-        : json({ status: true, data: account });
+        : json(madeFor('CUS_new'));
     });
     await p.createVirtualAccount(owner, ALIAS);
     expect(seen[1]!.url).toBe('https://api.paystack.co/customer');
@@ -428,20 +434,44 @@ describe('payouts', () => {
     await expect(send(json({ status: false }))).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
   });
 
-  it('reads the status of the transfer: success, failed and reversed are final; the rest is not', async () => {
+  it('reads every status Paystack documents: six conclusive, three not, and an unknown one is not final', async () => {
     for (const [status, expected] of [
       ['success', 'successful'],
       ['failed', 'failed'],
+      ['abandoned', 'failed'],
+      ['blocked', 'failed'],
+      ['rejected', 'failed'],
       ['reversed', 'reversed'],
       ['pending', 'pending'],
       ['received', 'pending'],
       ['queued', 'pending'],
-    ] as const)
+      ['something new', 'pending'],
+    ] as const) {
       await expect(
-        payout({
-          transfer: json({ status: true, data: { status, transfer_code: 'TRF_1' } }),
-        }).p.transfer(va, bank, ngn(100n), ref, ref),
+        payout({ transfer: json({ status: true, data: { status, transfer_code: 'TRF_1' } }) }).p.transfer(
+          va,
+          bank,
+          ngn(100n),
+          ref,
+          ref,
+        ),
       ).resolves.toMatchObject({ status: expected });
+      // The lookup reads the same table.
+      const { p } = provider(() =>
+        json({ status: true, data: { reference: ref, status, transfer_code: 'TRF_1' } }),
+      );
+      await expect(p.findTransferByReference(ref)).resolves.toMatchObject({ status: expected });
+    }
+    // Waiting for a code is not final, and a payout in that state is not sent: it is unknown to the caller, pending to a lookup.
+    await expect(
+      payout({
+        transfer: json({ status: true, data: { status: 'otp', transfer_code: 'TRF_1' } }),
+      }).p.transfer(va, bank, ngn(100n), ref, ref),
+    ).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    const { p: waiting } = provider(() =>
+      json({ status: true, data: { reference: ref, status: 'otp', transfer_code: 'TRF_1' } }),
+    );
+    await expect(waiting.findTransferByReference(ref)).resolves.toMatchObject({ status: 'pending' });
   });
 
   it('refuses what it cannot send: a transfer between accounts, another currency, an amount past a safe integer', async () => {
@@ -543,10 +573,96 @@ describe('the balance and what is not offered', () => {
 
   it('declares and refuses what Paystack does not give: a balance per account, a transfer between accounts', async () => {
     const { p, seen } = provider(() => json({}));
-    expect(p.capabilities).toEqual({ listTransactions: false, perAccountBalance: false, vaTransfer: false });
+    expect(p.capabilities).toEqual({
+      listTransactions: false,
+      perAccountBalance: false,
+      vaTransfer: false,
+      createWallets: true,
+      payouts: true,
+    });
     await expect(p.getBalance(va)).rejects.toMatchObject({ code: 'UNSUPPORTED' });
     await expect(p.listTransactions(va, new Date())).rejects.toMatchObject({ code: 'UNSUPPORTED' });
     expect(seen).toEqual([]);
+  });
+});
+
+describe('an account that is not stated to be a wallet is not one (P9 rev 8, the reviewer\u2019s P1)', () => {
+  it('assigned, active and in naira, all stated, or the lookup and the creation say nothing is certain', async () => {
+    for (const bad of [
+      { active: false },
+      { assigned: false },
+      { active: undefined },
+      { assigned: undefined },
+      { active: 'true' },
+      { currency: 'GHS' },
+      { currency: undefined },
+      { account_number: undefined },
+    ]) {
+      const { p } = provider(() => json(customer({ dedicated_account: { ...account, ...bad } })));
+      await expect(p.findVirtualAccountByAlias(ALIAS)).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+      await expect(p.createVirtualAccount(owner, ALIAS)).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
+    for (const bad of [
+      { active: false },
+      { assigned: false },
+      { currency: 'GHS' },
+      { currency: undefined },
+    ]) {
+      const { p } = provider((s) => (s.method === 'GET' ? json(customer()) : json(madeFor('CUS_abc', bad))));
+      await expect(p.createVirtualAccount(owner, ALIAS)).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    }
+  });
+
+  it('an account made names the customer it was made for, or it is not used', async () => {
+    const answer = (data: unknown) => provider((s) => (s.method === 'GET' ? json(customer()) : json(data))).p;
+    await expect(
+      answer({
+        status: true,
+        data: { ...account, customer: { customer_code: 'CUS_other' } },
+      }).createVirtualAccount(owner, ALIAS),
+    ).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    await expect(
+      answer({ status: true, data: { ...account, customer: {} } }).createVirtualAccount(owner, ALIAS),
+    ).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+    await expect(
+      answer({ status: true, data: account }).createVirtualAccount(owner, ALIAS),
+    ).rejects.toMatchObject({ code: 'UNKNOWN_OUTCOME' });
+  });
+
+  it('a closed account is reported closed, never active, and one that does not say so is not active either', async () => {
+    for (const [extra, status] of [
+      [{}, 'active'],
+      [{ active: false }, 'closed'],
+      [{ assigned: false }, 'closed'],
+      [{ active: undefined }, 'closed'],
+    ] as const) {
+      const { p } = provider(() => json(customer({ dedicated_account: { ...account, ...extra } })));
+      expect((await p.getVirtualAccount(ALIAS)).status).toBe(status);
+    }
+  });
+});
+
+describe('what is switched off (P9 rev 8, P9-22 and P9-23)', () => {
+  it('wallets and payouts are off unless said, and nothing is sent to Paystack when they are', async () => {
+    const { p, seen } = provider(() => json({}), { walletsEnabled: undefined, payoutsEnabled: undefined });
+    expect(p.capabilities).toMatchObject({ createWallets: false, payouts: false });
+    await expect(
+      p.transfer(
+        va,
+        { kind: 'bank', bankCode: '058', accountNumber: '0123456789' },
+        ngn(100n),
+        'ak-order-0123456789',
+        'x',
+      ),
+    ).rejects.toMatchObject({ code: 'UNSUPPORTED' });
+    expect(seen).toEqual([]);
+    // Looking things up is not switched off: a payout already sent must still be found.
+    await expect(
+      provider(
+        () => json({ status: false, message: 'Transfer not found' }, 404),
+        {},
+      ).p.findTransferByReference('ak-order-0123456789'),
+    ).resolves.toBeNull();
   });
 });
 

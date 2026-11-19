@@ -70,11 +70,12 @@ class StandInPaystack {
         account_number: `99${String(++this.accounts).padStart(4, '0')}${Math.floor(Math.random() * 1e4)}`,
         account_name: 'ALPHAKOLECT / TEST',
         bank: { name: 'Paystack-Titan', slug: 'titan-paystack' },
+        currency: 'NGN',
         active: true,
         assigned: true,
       };
       c.dedicated_account = account;
-      return this.reply({ status: true, data: account });
+      return this.reply({ status: true, data: { ...account, customer: { customer_code: c.customer_code } } });
     }
     if (path.startsWith('/transaction/verify/')) {
       const t = this.transactions.get(decodeURIComponent(path.slice('/transaction/verify/'.length)));
@@ -132,6 +133,15 @@ const paystackApi = new StandInPaystack();
 const provider = new PaystackProvider({
   secretKey: SECRET,
   webhookSigningSecret: SIGNING,
+  preferredBank: 'test-bank',
+  walletEmailDomain: DOMAIN,
+  walletsEnabled: true,
+  payoutsEnabled: true,
+  fetch: paystackApi.fetch,
+});
+/** The same Paystack with both switches off, as production starts. */
+const switchedOff = new PaystackProvider({
+  secretKey: SECRET,
   preferredBank: 'test-bank',
   walletEmailDomain: DOMAIN,
   fetch: paystackApi.fetch,
@@ -233,6 +243,23 @@ describe('wallets', () => {
         b.merchantId,
       ]),
     ).toEqual({ status: 'active', account_number: made.accountNumber });
+  });
+});
+
+describe('switched off (P9-22, P9-23)', () => {
+  it('with wallet creation off, no business is given a wallet, claimed or counted, and Paystack is not called', async () => {
+    const off = new PaymentsWorker({ db, provider: switchedOff, logger: pino({ level: 'silent' }) });
+    const b = await business();
+    const calls = paystackApi.accounts + paystackApi.customers.size;
+    await off.provisionWallets();
+    await off.createWallets();
+    expect(paystackApi.accounts + paystackApi.customers.size).toBe(calls);
+    expect(
+      await one(
+        `SELECT 1 AS found FROM payments.live_wallets WHERE merchant_id = $1 AND provider = 'paystack'`,
+        [b.merchantId],
+      ),
+    ).toBeUndefined();
   });
 });
 
@@ -387,6 +414,16 @@ describe('payouts', () => {
     } finally {
       paystackApi.failRecipient = false;
     }
+    expect(await stateOf(o.id)).toBe('failed');
+    expect(paystackApi.transferCalls).toBe(sent);
+    expect(await balance(o.b.merchantId, '1100')).toBe(100_000);
+  });
+
+  it('with payouts off, an order fails unsent and nothing is posted: their fees are not in the books', async () => {
+    const o = await funded();
+    const sent = paystackApi.transferCalls;
+    const off = new PaymentsWorker({ db, provider: switchedOff, logger: pino({ level: 'silent' }) });
+    await off.settleOrders();
     expect(await stateOf(o.id)).toBe('failed');
     expect(paystackApi.transferCalls).toBe(sent);
     expect(await balance(o.b.merchantId, '1100')).toBe(100_000);

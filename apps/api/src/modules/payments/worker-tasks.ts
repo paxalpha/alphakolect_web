@@ -61,6 +61,9 @@ export class PaymentsWorker {
   /** Request a wallet for each business whose email is confirmed (BR-2.3), then create those due. */
   async provisionWallets(): Promise<void> {
     const { db, provider } = this.deps;
+    // Switched off (the provider's own rules for who may be given an account are not met yet): nothing is requested, so
+    // nothing waits claimed or counts attempts; switching on picks every business up.
+    if (!provider.capabilities.createWallets) return;
     await db.transaction(async (tx) => {
       await tx.query(`SELECT payments.request_wallets($1)`, [provider.name]);
     });
@@ -70,6 +73,7 @@ export class PaymentsWorker {
   /** Create the wallets already requested and due: the second half of provisionWallets. */
   async createWallets(): Promise<void> {
     const { db, provider, logger } = this.deps;
+    if (!provider.capabilities.createWallets) return;
     for (let n = 0; n < BATCH; n++) {
       const claimedAt = performance.now();
       const [w] = await db.transaction((tx) =>

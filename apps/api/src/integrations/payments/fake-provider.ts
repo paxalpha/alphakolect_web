@@ -47,6 +47,8 @@ export class FakeProvider implements PaymentProvider {
       listTransactions: true,
       perAccountBalance: true,
       vaTransfer: true,
+      createWallets: true,
+      payouts: true,
       ...capabilities,
     };
   }

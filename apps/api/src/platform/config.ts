@@ -156,6 +156,10 @@ const EnvSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]{2,40}$/, 'must be a bank slug such as test-bank')
     .optional(),
+  // Both off unless said: wallets wait for Paystack's customer requirements to be met (plan §16.4 condition 3), and payouts
+  // for their fees to be in the books (§16.5 P9-22; refused in production).
+  PAYSTACK_WALLET_CREATION: z.enum(['on', 'off']).default('off'),
+  PAYSTACK_PAYOUTS: z.enum(['on', 'off']).default('off'),
   PAYSTACK_WALLET_EMAIL_DOMAIN: z
     .string()
     .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'must be a domain we control, such as wallets.alphakolect.com')
@@ -183,6 +187,12 @@ const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
           message: 'is required when PAYMENT_PROVIDER is paystack',
         });
     }
+    if (e.NODE_ENV === 'production' && e.PAYSTACK_PAYOUTS === 'on')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYSTACK_PAYOUTS'],
+        message: 'must be off in production: payout fees and stamp duty are not in the books yet',
+      });
     const key = e.PAYSTACK_SECRET_KEY;
     if (key !== undefined && key.startsWith('sk_live_') !== (e.NODE_ENV === 'production'))
       ctx.addIssue({
@@ -226,6 +236,8 @@ export type Config = Readonly<{
       webhookSigningSecret?: string;
       preferredBank: string;
       walletEmailDomain: string;
+      walletsEnabled: boolean;
+      payoutsEnabled: boolean;
     }>;
   }>;
   auth: Readonly<{
@@ -297,6 +309,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
                 : {}),
               preferredBank: e.PAYSTACK_PREFERRED_BANK!,
               walletEmailDomain: e.PAYSTACK_WALLET_EMAIL_DOMAIN!,
+              walletsEnabled: e.PAYSTACK_WALLET_CREATION === 'on',
+              payoutsEnabled: e.PAYSTACK_PAYOUTS === 'on',
             }),
           }
         : {}),

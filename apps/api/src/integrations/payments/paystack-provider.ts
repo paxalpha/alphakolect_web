@@ -43,6 +43,18 @@ export type PaystackConfig = Readonly<{
   webhookSigningSecret?: string;
   /** The bank a DVA is made with: `test-bank` in test mode, a live provider's slug (`GET /dedicated_account/available_providers`). */
   preferredBank: string;
+  /**
+   * Whether wallets are made. Off by default: Paystack requires a customer's phone for a dedicated account, and, for some
+   * business categories, a validated identity (BVN and bank account) first. AlphaKolect holds neither, and its category is
+   * not known (plan §16.4 condition 3, owner Q4). It is switched on only when that is settled.
+   */
+  walletsEnabled?: boolean;
+  /**
+   * Whether payouts are sent. Off by default: Paystack takes a transfer fee, and a ₦50 stamp duty from ₦10,000, out of the
+   * one balance on top of the amount, and the books post the amount alone, so a payout would leave a difference nobody
+   * explains. They are switched on when the posting carries both charges (P10, plan §16.5 P9-22).
+   */
+  payoutsEnabled?: boolean;
   /** The domain of the email address given to each wallet's customer: ours, so no payer's or owner's mailbox is used. */
   walletEmailDomain: string;
   timeoutMs?: number;
@@ -97,12 +109,20 @@ function transactionStatus(value: unknown): ProviderTxStatus {
   }
 }
 
-/** A transfer's status; `otp` means it waits for a code nobody will enter, and is told apart for the caller. */
+/**
+ * A transfer's status, as Paystack's "How transfers work" table gives it. Conclusive: success; reversed (the amount is
+ * returned); failed; abandoned (no OTP within 30 minutes); blocked (our approval server did not answer); rejected (it
+ * declined). Not conclusive: pending, received (waiting for an approval), and otp, which waits for a code nobody will
+ * enter and is told apart for the caller. A status not in the table is not final either: it is looked at again.
+ */
 function transferStatus(value: unknown): ProviderTxStatus | 'otp' {
   switch (String(value ?? '').toLowerCase()) {
     case 'success':
       return 'successful';
     case 'failed':
+    case 'abandoned':
+    case 'blocked':
+    case 'rejected':
       return 'failed';
     case 'reversed':
       return 'reversed';
@@ -118,7 +138,7 @@ type Answer = Readonly<{ status: number; body: Json }>;
 export class PaystackProvider implements PaymentProvider {
   readonly name = 'paystack';
   /** One pooled balance, no transfer between accounts, and no listing built (P9-3, plan §16). */
-  readonly capabilities = { listTransactions: false, perAccountBalance: false, vaTransfer: false } as const;
+  readonly capabilities: PaymentProvider['capabilities'];
   readonly requestTimeoutMs: number;
 
   private readonly fetch: typeof globalThis.fetch;
@@ -128,6 +148,13 @@ export class PaystackProvider implements PaymentProvider {
     this.fetch = config.fetch ?? globalThis.fetch;
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL;
     this.requestTimeoutMs = config.timeoutMs ?? 20_000;
+    this.capabilities = {
+      listTransactions: false,
+      perAccountBalance: false,
+      vaTransfer: false,
+      createWallets: config.walletsEnabled === true,
+      payouts: config.payoutsEnabled === true,
+    };
   }
 
   // ── wallets ───────────────────────────────────────────────────────────────────────
@@ -135,7 +162,7 @@ export class PaystackProvider implements PaymentProvider {
   async findVirtualAccountByAlias(alias: string): Promise<VirtualAccountRef | null> {
     const customer = await this.fetchCustomer(alias);
     const account = customer?.dedicated_account;
-    return typeof account === 'object' && account !== null ? this.accountRef(alias, asJson(account)) : null;
+    return typeof account === 'object' && account !== null ? this.provisioned(alias, asJson(account)) : null;
   }
 
   /** The alias is the customer's identity, so a repeat finds what the first made (TA-8); a duplicate is refused by Paystack, not made. */
@@ -151,7 +178,7 @@ export class PaystackProvider implements PaymentProvider {
       customer = asJson(made.body.data);
     }
     const existing = customer.dedicated_account;
-    if (typeof existing === 'object' && existing !== null) return this.accountRef(alias, asJson(existing));
+    if (typeof existing === 'object' && existing !== null) return this.provisioned(alias, asJson(existing));
     const code = text(customer.customer_code);
     if (!code) throw new ProviderError('UNKNOWN_OUTCOME', 'No customer code in the answer');
     const res = await this.call('POST', '/dedicated_account', {
@@ -159,7 +186,11 @@ export class PaystackProvider implements PaymentProvider {
       preferred_bank: this.config.preferredBank,
     });
     this.refuseOrUnknown(res, 'The virtual account');
-    return this.accountRef(alias, asJson(res.body.data));
+    const made = asJson(res.body.data);
+    // The answer to a creation names its customer: it must be the one asked for. One that does not is not ours to use.
+    if (text(asJson(made.customer).customer_code) !== code)
+      throw new ProviderError('UNKNOWN_OUTCOME', 'The account made names another customer, or none');
+    return this.provisioned(alias, made);
   }
 
   async getVirtualAccount(providerRef: string): Promise<VirtualAccountState> {
@@ -169,7 +200,7 @@ export class PaystackProvider implements PaymentProvider {
       throw new ProviderError('NOT_FOUND', 'Virtual account not found');
     return {
       ...this.accountRef(providerRef, account),
-      status: account.active === false || account.assigned === false ? 'closed' : 'active',
+      status: account.active === true && account.assigned === true ? 'active' : 'closed',
     };
   }
 
@@ -186,6 +217,8 @@ export class PaystackProvider implements PaymentProvider {
     // between two wallets (P10), never a call here.
     if (to.kind !== 'bank')
       throw new ProviderError('UNSUPPORTED', 'Paystack has no transfer between virtual accounts');
+    if (!this.capabilities.payouts)
+      throw new ProviderError('UNSUPPORTED', 'Payouts are switched off: their fees are not in the books yet');
     if (amount.currency !== 'NGN' || !Number.isSafeInteger(Number(amount.amountMinor)))
       throw new ProviderError('INVALID_REQUEST', 'Only whole kobo in naira can be paid out');
     const ours = paystackReference(reference);
@@ -423,6 +456,18 @@ export class PaystackProvider implements PaymentProvider {
       typeof res.body.message === 'string' &&
       message.test(res.body.message)
     );
+  }
+
+  /**
+   * An account that may hold a wallet: assigned, active and in naira, all stated. One that lacks any of them, or says it is
+   * not, is not a wallet, and is not guessed to be one: an unclear answer, for the platform team to see.
+   */
+  private provisioned(alias: string, data: Json): VirtualAccountRef {
+    const ref = this.accountRef(alias, data);
+    if (data.assigned !== true || data.active !== true)
+      throw new ProviderError('UNKNOWN_OUTCOME', 'The account is not stated to be assigned and active');
+    if (data.currency !== 'NGN') throw new ProviderError('UNKNOWN_OUTCOME', 'The account is not in naira');
+    return ref;
   }
 
   private accountRef(alias: string, data: Json): VirtualAccountRef {

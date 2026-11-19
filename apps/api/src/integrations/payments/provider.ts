@@ -85,6 +85,10 @@ export interface PaymentProvider {
     listTransactions: boolean;
     perAccountBalance: boolean;
     vaTransfer: boolean;
+    /** Whether the worker may make wallets now. Off: none is requested or claimed, and nothing is lost. */
+    createWallets: boolean;
+    /** Whether a payout may be sent now. Off: it is refused as UNSUPPORTED, and the order fails unsent. */
+    payouts: boolean;
   }>;
   /** The idempotency key is the wallet's alias, whatever the provider guarantees: see findVirtualAccountByAlias. */
   createVirtualAccount(owner: VaOwner, idempotencyKey: string): Promise<VirtualAccountRef>;

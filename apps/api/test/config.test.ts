@@ -3,6 +3,10 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { assertApiConfig, ConfigError, loadConfig } from '../src/platform/config.js';
 import { newSigningJwk } from './support/keys.js';
 
+// Made-up keys of the right shape, for the configuration's rules.
+const TEST_KEY = 'sk_test_0123456789abcdef'; // gitleaks:allow
+const LIVE_KEY = 'sk_live_0123456789abcdef'; // gitleaks:allow
+
 // Test fixtures only; not real credentials.
 const DATABASE_URL = 'postgresql://user:s3cret-value@127.0.0.1:5436/alphakolect'; // gitleaks:allow
 let valid: Record<string, string>;
@@ -95,12 +99,11 @@ describe('loadConfig', () => {
     expect(config.webAppUrl).toBe('http://localhost:3000');
   });
 
-  it('P9: the provider’s keys are required with TransactPay; production refuses the fake', () => {
-    expect(problemsOf({ ...valid, PAYMENT_PROVIDER: 'transactpay' }).problems).toEqual([
-      'TRANSACTPAY_BASE_URL is required when PAYMENT_PROVIDER is transactpay',
-      'TRANSACTPAY_PUBLIC_KEY is required when PAYMENT_PROVIDER is transactpay',
-      'TRANSACTPAY_SECRET_KEY is required when PAYMENT_PROVIDER is transactpay',
-      'TRANSACTPAY_ENCRYPTION_KEY_BASE64 is required when PAYMENT_PROVIDER is transactpay',
+  it('P9: Paystack’s settings are required with Paystack; production refuses the fake', () => {
+    expect(problemsOf({ ...valid, PAYMENT_PROVIDER: 'paystack' }).problems).toEqual([
+      'PAYSTACK_SECRET_KEY is required when PAYMENT_PROVIDER is paystack',
+      'PAYSTACK_PREFERRED_BANK is required when PAYMENT_PROVIDER is paystack',
+      'PAYSTACK_WALLET_EMAIL_DOMAIN is required when PAYMENT_PROVIDER is paystack',
     ]);
     const live = {
       ...valid,
@@ -109,17 +112,58 @@ describe('loadConfig', () => {
       MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
       WEB_APP_URL: 'https://app.example.test',
     };
-    expect(problemsOf(live).problems).toEqual(['PAYMENT_PROVIDER must be transactpay in production']);
+    expect(problemsOf(live).problems).toEqual(['PAYMENT_PROVIDER must be paystack in production']);
+    const config = loadConfig({
+      ...live,
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_SECRET_KEY: LIVE_KEY,
+      PAYSTACK_WEBHOOK_SIGNING_SECRET: 'whsec_0123456789abcdef',
+      PAYSTACK_PREFERRED_BANK: 'wema-bank',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+    });
+    expect(config.payments.provider).toBe('paystack');
+    expect(config.payments.paystack).toMatchObject({
+      preferredBank: 'wema-bank',
+      webhookSigningSecret: 'whsec_0123456789abcdef',
+    });
+  });
+
+  it('P9 rev 8: a test key outside production and a live key in it, so a developer’s machine cannot move real money', () => {
+    const paystack = {
+      ...valid,
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_PREFERRED_BANK: 'test-bank',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+    };
+    expect(loadConfig({ ...paystack, PAYSTACK_SECRET_KEY: TEST_KEY }).payments.provider).toBe('paystack');
+    const live = problemsOf({ ...paystack, PAYSTACK_SECRET_KEY: LIVE_KEY });
+    expect(live.problems).toEqual(['PAYSTACK_SECRET_KEY must be a test key (sk_test_…) outside production']);
+    const production = problemsOf({
+      ...paystack,
+      NODE_ENV: 'production',
+      SMTP_URL: 'smtp://mail.example.test:25',
+      MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
+      WEB_APP_URL: 'https://app.example.test',
+      PAYSTACK_SECRET_KEY: TEST_KEY,
+    });
+    expect(production.problems).toEqual(['PAYSTACK_SECRET_KEY must be a live key (sk_live_…) in production']);
+    // Neither key is ever printed, and a malformed one is no key.
+    expect(live.message).not.toContain('0123456789abcdef');
+    expect(problemsOf({ ...paystack, PAYSTACK_SECRET_KEY: 'not-a-key' }).problems).toHaveLength(1);
     expect(
-      loadConfig({
-        ...live,
-        PAYMENT_PROVIDER: 'transactpay',
-        TRANSACTPAY_BASE_URL: 'https://tp.example.test',
-        TRANSACTPAY_PUBLIC_KEY: 'p',
-        TRANSACTPAY_SECRET_KEY: 's',
-        TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
-      }).payments.provider,
-    ).toBe('transactpay');
+      problemsOf({
+        ...paystack,
+        PAYSTACK_SECRET_KEY: TEST_KEY,
+        PAYSTACK_WEBHOOK_SIGNING_SECRET: 'x',
+      }).problems,
+    ).toHaveLength(1);
+    expect(
+      problemsOf({
+        ...paystack,
+        PAYSTACK_SECRET_KEY: TEST_KEY,
+        PAYSTACK_WALLET_EMAIL_DOMAIN: 'no-dot',
+      }).problems,
+    ).toHaveLength(1);
   });
 
   it('ruling 4: in production the API refuses the worker’s connection; locally it is tolerated', () => {
@@ -130,11 +174,10 @@ describe('loadConfig', () => {
       SMTP_URL: 'smtp://mail.example.test:25',
       MAIL_FROM: 'AlphaKolect <no-reply@example.test>',
       WEB_APP_URL: 'https://app.example.test',
-      PAYMENT_PROVIDER: 'transactpay',
-      TRANSACTPAY_BASE_URL: 'https://tp.example.test',
-      TRANSACTPAY_PUBLIC_KEY: 'p',
-      TRANSACTPAY_SECRET_KEY: 's',
-      TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_SECRET_KEY: LIVE_KEY,
+      PAYSTACK_PREFERRED_BANK: 'wema-bank',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
     };
     expect(() => assertApiConfig(loadConfig(production))).not.toThrow();
     let refused: unknown;
@@ -157,7 +200,7 @@ describe('loadConfig', () => {
 
   it('requires the email settings and the web app URL in production', () => {
     expect(problemsOf({ ...valid, NODE_ENV: 'production' }).problems).toEqual([
-      'PAYMENT_PROVIDER must be transactpay in production',
+      'PAYMENT_PROVIDER must be paystack in production',
       'SMTP_URL is required in production',
       'MAIL_FROM is required in production',
       'WEB_APP_URL is required in production',
@@ -168,11 +211,10 @@ describe('loadConfig', () => {
       SMTP_URL: 'smtps://mailer:pw@smtp.example.com:465', // gitleaks:allow
       MAIL_FROM: 'AlphaKolect <no-reply@alphakolect.com>',
       WEB_APP_URL: 'https://app.alphakolect.com/',
-      PAYMENT_PROVIDER: 'transactpay',
-      TRANSACTPAY_BASE_URL: 'https://tp.example.test',
-      TRANSACTPAY_PUBLIC_KEY: 'p',
-      TRANSACTPAY_SECRET_KEY: 's',
-      TRANSACTPAY_ENCRYPTION_KEY_BASE64: 'e',
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_SECRET_KEY: LIVE_KEY,
+      PAYSTACK_PREFERRED_BANK: 'wema-bank',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
     });
     expect(config.webAppUrl).toBe('https://app.alphakolect.com');
   });

@@ -6,7 +6,7 @@ import request from 'supertest';
 import { afterAll, describe, expect, inject, it, vi } from 'vitest';
 import { FakeProvider } from '../../src/integrations/payments/fake-provider.js';
 import { ProviderError } from '../../src/integrations/payments/provider.js';
-import { TransactPayProvider } from '../../src/integrations/payments/transactpay-provider.js';
+import { PaystackProvider } from '../../src/integrations/payments/paystack-provider.js';
 import { PaymentsWorker } from '../../src/modules/payments/worker-tasks.js';
 import { createDb } from '../../src/platform/db.js';
 import { ngn } from '../../src/platform/money.js';
@@ -145,16 +145,15 @@ describe('wallets (BR-2.3)', () => {
     expect(await fake.findVirtualAccountByAlias(alias)).toBeNull();
   });
 
-  it('P9-R2: TransactPay’s answers, through the worker: only a stated no creates', async () => {
+  it('P9-R2: Paystack’s answers, through the worker: only a stated no creates', async () => {
     const answer = async (response: () => Response) => {
       const b = await business();
       await queued(b.merchantId);
       const { alias } = await walletOf(b.merchantId);
-      const lookups = new TransactPayProvider({
-        baseUrl: 'https://tp.test',
-        publicKey: 'p',
-        secretKey: 's',
-        encryptionKey: 'e',
+      const lookups = new PaystackProvider({
+        secretKey: 'sk_test_0123456789abcdef', // gitleaks:allow
+        preferredBank: 'test-bank',
+        walletEmailDomain: 'wallets.example.test',
         fetch: (async () => response()) as typeof fetch,
       });
       const other = new FakeProvider();
@@ -179,7 +178,13 @@ describe('wallets (BR-2.3)', () => {
     expect(await answer(() => new Response('<html>', { status: 404 }))).toBe(false);
     expect(await answer(() => new Response('<html>', { status: 200 }))).toBe(false);
     expect(await answer(json({ status: false }, 200))).toBe(false);
-    expect(await answer(json({ message: 'Account not found', code: '04', status: false }, 200))).toBe(true);
+    expect(await answer(json({ status: false, message: 'Customer not found' }, 200))).toBe(false); // not a 404
+    expect(await answer(json({ status: false, message: 'Something else' }, 404))).toBe(false);
+    expect(await answer(json({ status: true, data: { email: 'a@b.test', customer_code: 'C' } }, 200))).toBe(
+      false,
+    );
+    // No customer, as Paystack documents it: the one answer that lets the worker create.
+    expect(await answer(json({ status: false, message: 'Customer not found' }, 404))).toBe(true);
   });
 
   it('B1: the wallet holds the account the lookup names, not the one a repeated creation returned', async () => {

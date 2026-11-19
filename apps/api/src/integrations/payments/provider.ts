@@ -1,7 +1,7 @@
 import type { Money } from '../../platform/money.js';
 
 // Payment provider port (ADR-8, TARGET_ARCHITECTURE §12). Domain code depends on this interface only;
-// TransactPay is one adapter (built in P9), FakeProvider is the deterministic local/test adapter.
+// Paystack is the production adapter (P9, revision 8), FakeProvider is the deterministic local/test adapter.
 
 export type VaOwner = Readonly<{
   kind: 'merchant' | 'customer' | 'platform';
@@ -32,6 +32,8 @@ export type ProviderTransaction = Readonly<{
   reference: string;
   status: ProviderTxStatus;
   amount: Money;
+  /** What the provider kept from it, when it says so: the books credit what arrived, amount less this (P9-14). */
+  feeMinor?: bigint;
   from: VaRef | ExternalSource;
   to: VaRef | BankAccount;
   /** The account the money arrived in, as the provider names it: what a credit is matched by (P9). */
@@ -64,7 +66,9 @@ export class ProviderError extends Error {
       /** A timeout, no answer or a server error: the request may or may not have taken effect (TA-8). */
       | 'UNKNOWN_OUTCOME'
       /** The provider does not offer this (see capabilities). */
-      | 'UNSUPPORTED',
+      | 'UNSUPPORTED'
+      /** A step before the request that moves money failed: nothing was sent, so the order is failed, not unknown. */
+      | 'NOT_SENT',
     message: string,
   ) {
     super(message);
@@ -102,6 +106,11 @@ export interface PaymentProvider {
   listTransactions(account: VaRef, since: Date, cursor?: string): Promise<Page<ProviderTransaction>>;
   /** Balance of one VA, or the provider-wide (pooled) balance when `account` is omitted. */
   getBalance(account?: VaRef): Promise<Money>;
+  /**
+   * Whether a notification really came from the provider: its signature over the exact bytes received. A notification
+   * that fails is refused and not stored. A genuine one is still only a lead, confirmed through the API (P9-2).
+   */
+  verifyNotification(body: string, headers: Readonly<Record<string, string | string[] | undefined>>): boolean;
   parseEvent(raw: unknown, headers: Readonly<Record<string, string | undefined>>): ProviderEvent;
   closeVirtualAccount?(providerRef: string): Promise<void>;
 }

@@ -54,16 +54,26 @@ export async function paymentResources(owner: pg.Client, merchantId: string): Pr
   const accountNumber = (
     await one(`SELECT account_number FROM payments.live_wallets WHERE id = $1`, [walletId])
   ).account_number as string;
+  // One transaction: until it commits, the event is invisible to the workers of the test files beside this one, and once
+  // it has, it is done. Stored and then recorded in two steps, a worker could claim it between them, and its token
+  // would no longer be the one this helper holds.
   const event = async (tx: string, amount: number, status = 'successful') => {
-    const id = (await one(`SELECT payments.store_event('fake', '{}', '{}', NULL) AS id`)).id;
-    await one(`SELECT payments.record_event($1, $2, true, $3, $4, $5, 'NGN', $6, now(), 5)`, [
-      id,
-      await leased('provider_events', id as string),
-      tx,
-      accountNumber,
-      amount,
-      status,
-    ]);
+    await owner.query('BEGIN');
+    try {
+      const id = (await one(`SELECT payments.store_event('fake', '{}', '{}', NULL) AS id`)).id;
+      await one(`SELECT payments.record_event($1, $2, true, $3, $4, $5, 'NGN', $6, now(), 5)`, [
+        id,
+        await leased('provider_events', id as string),
+        tx,
+        accountNumber,
+        amount,
+        status,
+      ]);
+      await owner.query('COMMIT');
+    } catch (err) {
+      await owner.query('ROLLBACK');
+      throw err;
+    }
   };
   const tx = () => `matrix-${randomBytes(8).toString('hex')}`;
   const [first, second, reviewed] = [tx(), tx(), tx()];

@@ -428,3 +428,13 @@ The code scope approved at revision 7 was for the TransactPay adapter; this revi
 What to look at first: the adapter's not-found rules against the documentation (16.2); the signature check, and that a failed
 one stores nothing; the net credit and the balance test; the scoped claims' migration; conditions 1 to 12 as the release gates.
 The money-flow matrix (`P9_MONEY_FLOW_MATRIX.md`, §8) maps the scenarios to the tests that now prove them.
+
+### 16.9 The gate
+
+Run on 19 November 2026 on the branch `feat/p9-paystack` (from main, 031e4db), every step exit 0 at its final commit: `format:check`,
+`lint`, `typecheck`, `build`, `openapi:check`; `test` (contracts 105, db 910, API 2126 passed and 3 skipped, the Paystack sandbox
+block: §16.4); `test:concurrency` 38. Run with `npm_config_workspace_concurrency=1`. Two things the first run found, both fixed:
+the pinned inventory of transaction classes (the wallet provisioning was split in two, so its transactions have new names), and a
+test of mine that swept every business in the shared test database into Paystack (the flow test now creates only the wallets it
+asks for). A test fixture that stored and recorded an event in two steps could lose it to a worker of a file beside it, and
+failed once in a parallel run: it is one transaction now. Linux CI is the next witness. Not run: anything against Paystack.

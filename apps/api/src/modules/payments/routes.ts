@@ -11,7 +11,7 @@ import type { RequestContext } from '../../platform/request-context.js';
 import { tenantContextOf } from '../../platform/tenant.js';
 import type { PaymentsService } from './service.js';
 
-// /v1/merchant/wallet…, /v1/platform/payments…, /v1/platform/wallet and /v1/webhooks/transactpay (contracts:
+// /v1/merchant/wallet…, /v1/platform/payments…, /v1/platform/wallet and /v1/webhooks/paystack (contracts:
 // packages/contracts/src/endpoints/payments.ts). A session is already authenticated and its permission checked by the
 // policy middleware; bodies and queries are already validated. The database decides again (B1).
 
@@ -77,7 +77,7 @@ export function paymentHandlers({ payments: service }: { payments: PaymentsServi
     res.status(201).json(await service.requestPlatformWallet(req.auth!, contextOf(req)));
   };
 
-  const receiveTransactPayEvent: RequestHandler = async (req, res) => {
+  const receivePaystackEvent: RequestHandler = async (req, res) => {
     const { rawBody } = req as Request & { rawBody?: string };
     await service.receiveEvent(req.body, rawBody ?? JSON.stringify(req.body), req.headers, contextOf(req));
     res.json({ received: true });
@@ -93,6 +93,6 @@ export function paymentHandlers({ payments: service }: { payments: PaymentsServi
     resolveUnmatchedTransaction,
     resolveReconciliationFinding,
     createPlatformWallet,
-    receiveTransactPayEvent,
+    receivePaystackEvent,
   };
 }

@@ -3,8 +3,10 @@
 **For the independent reviewer's P9 coverage check (requested 2026-10-31). P9 stays open until that check is done.**
 
 This matrix maps each money-in scenario to the test that proves it, using the existing suites first. Tests were added only
-where the audit found a gap (§2). Every scenario here runs against the FakeProvider and a real test database. None has run
-against TransactPay (§5).
+where the audit found a gap (§2). Every scenario here runs against the FakeProvider and a real test database. **Revision 8 (19 November
+2026): the provider is Paystack.** The scenarios were written for the port, not for a provider, and still hold; the adapter's own
+behaviour, and what differs for Paystack, is in §8. Rows that name TransactPay (A4, A5, B9, §5) describe the adapter that was
+removed; §8 gives their Paystack equivalents. Nothing has run against Paystack's test mode yet (§5).
 
 Test locations:
 
@@ -13,7 +15,8 @@ Test locations:
 | W | `apps/api/test/payments/worker.test.ts`: the real worker, webhook and database |
 | D | `packages/db/test/payments.test.ts`: the database functions, as each role calls them |
 | R | `packages/db/test/payments-races.test.ts`: staged races, 50 runs each |
-| T | `apps/api/test/payments/transactpay-provider.test.ts`: the adapter against a stubbed server |
+| T | `apps/api/test/payments/paystack-provider.test.ts`: the adapter against a stubbed server (was `transactpay-provider.test.ts`) |
+| P | `apps/api/test/payments/paystack-flow.test.ts`: the worker, webhook and ledger against a stand-in for Paystack |
 | A | `apps/api/test/payments/payments-api.test.ts`: the HTTP API |
 
 ## 1. Differences from the expected results, for the reviewer's ruling
@@ -156,9 +159,9 @@ All three are in W, under "the journeys, end to end".
 | **2. Forged and replayed** | A forged event; a valid one delivered three times at once; two workers at once; the forged one aged out | One credit, one receipt, one entry; one event `credited` and two `duplicate`; the forged one `rejected`; balance is the confirmed amount |
 | **3. Uncertain outcome** | Lookup rate limited; creation times out after taking effect; recovery by lookup; a deposit whose confirmation fails three times, past the point a forged one is rejected; recovery | One creation; wallet `active`; the event never rejected; one posting of two lines; correct balance |
 
-## 5. TransactPay's sandbox
+## 5. TransactPay's sandbox (history; superseded by §8)
 
-Run on 31 October 2026 with test keys only (plan §14). Run again with `TRANSACTPAY_SANDBOX=run`, using the test file T.
+Run on 31 October 2026 with test keys only (plan §14). The adapter it ran against was removed in revision 8. The Paystack equivalent is `PAYSTACK_SANDBOX=run` on the test file T, not yet run.
 
 **Proven against the sandbox:** creating an account, the response fields, finding it by alias at once, the not-found answers for
 an alias, a session and a payout, reading the balance's shape, and that repeating a creation makes a second account.
@@ -197,3 +200,33 @@ Given on draft PR #11 at `d16bba3`.
 | 2 | `review` for a reversal, in place of a reconciliation finding | **Accepted** | The platform team must monitor the review list: a reversal must not disappear because the aggregate balance happens to reconcile |
 | 3 | The `submitted` order state | **Accepted** | An order is never sent again because no answer came back |
 | 4 | The worker as a system-wide trust boundary | **Accepted, with a deployment condition** | The worker's credentials must reach the worker's runtime alone. In production the API now refuses to start if it is given `WORKER_DATABASE_URL`. P15 must prove the rest: a separate process and service identity, no worker credentials in the API's container, the worker's database access limited to its endpoint, and its secrets rotated independently (plan §10, condition 10) |
+
+## 8. Revision 8: Paystack (19 November 2026)
+
+What the change of provider alters in the scenarios above, and the tests that prove it. The scenarios themselves, and every
+test marked W, D, R and A, run as before against the FakeProvider.
+
+| ID | Scenario | Expected with Paystack | Test |
+|---|---|---|---|
+| A4 | A wallet is due; the customer is not found | The documented not-found only (HTTP 404, `status: false`, "not found"): the customer and its account are made, `active` | T "P9-R2"; P "a business's wallet"; W "Paystack's answers" |
+| A5 | A wallet is due; any other answer | 400, 401, 403, 429, 5xx, a 404 with another message or no JSON, a customer that is not the one asked for, a timeout: `provisioning`, nothing made, retried | T "P9-R2"; W "Paystack's answers" |
+| A6 | Creation made the account, the answer was lost | The customer's account is found by the alias on the next pass, and no second is made | P "a creation whose answer was lost" |
+| B9 | The provider cannot answer | 401, 429, 5xx, a 400 that is not "not found", no body: the event stays `pending`, never rejected | T "only the documented not-found" |
+| B13 | A payment that is not into a dedicated account (a card) | Not money arriving in a wallet: not found, rejected after the looks, nothing credited | P "a payment that is no dedicated-account deposit" |
+| B14 | A fee | The wallet is credited the amount less the fee; the one balance gains the same | T "reads the reference, the amount and fee"; P "a signed notification…", P "what Paystack's one balance gains" |
+| B15 | A notification with no signature, a wrong one, or an old one | Refused (401), nothing stored. A signed one is stored as it arrived, and is a lead only | T "notifications are signed"; P "a signed notification…" |
+| B16 | A signed notification for a reference Paystack does not know | Stored, then rejected after the looks; nothing credited | P "a reference Paystack does not know" |
+| D1 | A payout | Named by the name enquiry, made a recipient, sent once under our reference (a digest when it does not fit Paystack's form), posted once | T "payouts"; P "is named, sent under a reference Paystack accepts" |
+| D10 | A step before the transfer fails (the name, the recipient) | `NOT_SENT`: `failed`, nothing posted, nothing sent | T "a step before the transfer"; P "a step before the transfer that fails" |
+| D11 | The transfer was made and the answer lost | `unknown`, then `succeeded` by the lookup on the same reference; never sent twice | P "an answer lost after the money moved" |
+| D12 | A repeated reference, or a transfer waiting for an OTP | `unknown`: looked up, never read as a failure | T "only a 400 or 422 is a refusal" |
+| A9 | An account that is not stated to be assigned, active and in naira, or a creation naming another customer | Not a wallet: `UNKNOWN_OUTCOME`, the wallet stays `provisioning` and is retried; a closed account is reported closed | T "an account that is not stated to be a wallet" |
+| A10 | Wallet creation switched off | No wallet is requested or claimed, nothing is called at Paystack, nothing counts attempts | P "switched off"; T "what is switched off" |
+| D13 | A payout with payouts switched off (the default; never on in production) | `UNSUPPORTED`: the order fails unsent, nothing is posted, nothing is called | P "with payouts off"; T "what is switched off"; `config.test.ts` |
+| D14 | Every documented transfer status | success, reversed, failed, abandoned, blocked, rejected conclusive (the last three fail the order); pending, received, otp not; an unknown status is not final | T "reads every status Paystack documents" |
+| E7 | Paystack has one balance | Compared against the sum of every wallet's books (`perAccountBalance` false) | W "pooled balance"; P "what Paystack's one balance gains" |
+| H1 | A worker of another provider's rows (a deployment whose provider was changed) | Not claimed: wallets, events and orders are claimed by their own provider only | D "P9 revision 8" |
+| H2 | A live key outside production, or a test key in it | Refused at startup | `config.test.ts` "P9 rev 8" |
+
+**Unproven against Paystack.** Every row that depends on Paystack's own answers rests on its documentation: plan §16.4 lists the twelve conditions,
+and the first two (a test deposit through Paystack's demo bank app, and the sandbox suite) are the first to run.

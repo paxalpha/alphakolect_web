@@ -16,6 +16,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 1.2 Test data may be cleaned up or reset. Nothing needs to be carried into the new system unless you ask. *(F-A1)*
 1.3 **Automatic billing is paused** for everyone until the new billing system is ready. No business is charged or suspended in the meantime. *(F-A2)*
 1.4 You own every account (server, GitHub, TransactPay, email, domain). Your son works with **his own separate login**, which you can remove at any time. *(F-A4)*
+*Note added on 19 November 2026, with the owner's approval:* The payments provider is now Paystack. Where these rules say TransactPay, they now say Paystack, and the Paystack account is AlphaKolect's own. The accounts made at TransactPay for fake sign-ups are still to be closed there, as rule 2.4 says. *(Owner's answer to Q6 of the Paystack form, 19 November 2026.)*
 
 ## 2. Businesses (merchants)
 
@@ -23,6 +24,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 2.2 A business is **real only after it confirms its email address**. *(Q2a)*
 2.3 A business gets a **Live wallet (bank virtual account) only after confirming its email**. Unconfirmed sign-ups get nothing. *(Q2a, Q3c)*
 2.4 The ~197 virtual accounts created for fake sign-ups should be closed with TransactPay. *(Q3a, Q3d)*
+*Note added on 19 November 2026, with the owner's approval:* The payments provider is now Paystack. Where these rules say TransactPay, they now say Paystack, and the Paystack account is AlphaKolect's own. The accounts made at TransactPay for fake sign-ups are still to be closed there, as rule 2.4 says. *(Owner's answer to Q6 of the Paystack form, 19 November 2026.)*
 2.5 Every business gets a **90-day free trial** from sign-up. *(Q9b)*
 
 ## 3. Who can do what
@@ -41,6 +43,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 ## 4. Wallets: what holds money and what is a record
 
 4.1 **Only Live wallets hold real money.** Each Live wallet is a TransactPay bank virtual account. *(F-B1)*
+*Note added on 19 November 2026, with the owner's approval:* The payments provider is now Paystack. Where these rules say TransactPay, they now say Paystack, and the Paystack account is AlphaKolect's own. The accounts made at TransactPay for fake sign-ups are still to be closed there, as rule 2.4 says. *(Owner's answer to Q6 of the Paystack form, 19 November 2026.)*
 4.2 **Every customer gets a Live wallet.** *(F-B1a)*
 4.3 Every business has a Live wallet. AlphaKolect (the platform) has its own **Platform Live wallet**. *(Q1a)*
 4.4 These customer wallets are **records only**. They hold no money: *(F-B1b)*

@@ -9,8 +9,8 @@ import { Timestamp } from './merchant.js';
 //   /v1/platform/payments, /v1/platform/wallet — AlphaKolect's team: every wallet, money we have no record of (Q4),
 //     differences found by reconciliation (Q5), and the Platform Live wallet (Q6). Each page of a platform list is
 //     recorded in the activity record.
-//   /v1/webhooks/transactpay — TransactPay's notifications: stored, answered, and acted on only after the worker has
-//     confirmed the transaction with TransactPay. Nothing in a notification is trusted.
+//   /v1/webhooks/paystack — Paystack's notifications: stored, answered, and acted on only after the worker has
+//     confirmed the transaction with Paystack. A notification whose signature does not check is refused and not stored; a genuine one is still only a lead.
 
 const error = (description: string) => ({ description, schema: ErrorResponse });
 const rateLimited = {
@@ -96,7 +96,7 @@ export const UnmatchedTransaction = z
     accountNumber: z.string().nullable(),
     amount: Money,
     providerStatus: z.enum(['successful', 'failed', 'reversed']),
-    /** 'unmatched': nobody's books hold it. 'review': TransactPay later said something that contradicts the record. */
+    /** 'unmatched': nobody's books hold it. 'review': Paystack later said something that contradicts the record. */
     matched: z.enum(['unmatched', 'review']),
     merchantId: Id.nullable(),
     occurredAt: Timestamp.nullable(),
@@ -147,7 +147,7 @@ export const ReconciliationFinding = z
     resolutionNote: z.string().nullable(),
     resolvedAt: Timestamp.nullable(),
   })
-  .meta({ id: 'ReconciliationFinding', description: 'A difference between the books and TransactPay' });
+  .meta({ id: 'ReconciliationFinding', description: 'A difference between the books and Paystack' });
 export type ReconciliationFinding = z.infer<typeof ReconciliationFinding>;
 export const ReconciliationFindingList = z
   .object({ items: z.array(ReconciliationFinding), nextCursor: z.string().nullable() })
@@ -176,7 +176,7 @@ export const PlatformWalletRequested = z
     status: z.enum(['provisioning', 'active', 'failed', 'closed']),
     createdAt: Timestamp,
   })
-  .meta({ id: 'PlatformWalletRequested', description: 'The worker creates the account at TransactPay' });
+  .meta({ id: 'PlatformWalletRequested', description: 'The worker creates the account at Paystack' });
 export type PlatformWalletRequested = z.infer<typeof PlatformWalletRequested>;
 
 const merchantPermission = (permission: 'merchant.wallet.read' | 'merchant.wallet.classify') =>
@@ -269,7 +269,7 @@ export const listPlatformFindings = defineEndpoint({
   authorization: platformPermission('platform.payments.read'),
   audience: 'platform',
   security: ['cookieSession'],
-  summary: 'Differences between the books and TransactPay (each page is recorded)',
+  summary: 'Differences between the books and Paystack (each page is recorded)',
   request: { query: FindingListQuery },
   responses: { 200: { description: 'One page', schema: ReconciliationFindingList }, ...pageRefused },
 });
@@ -326,17 +326,18 @@ export const createPlatformWallet = defineEndpoint({
   },
 });
 
-export const receiveTransactPayEvent = defineEndpoint({
-  id: 'receiveTransactPayEvent',
+export const receivePaystackEvent = defineEndpoint({
+  id: 'receivePaystackEvent',
   method: 'post',
-  path: '/v1/webhooks/transactpay',
+  path: '/v1/webhooks/paystack',
   authorization: { class: 'public' },
   audience: 'public',
-  summary: 'TransactPay’s notifications: stored, then confirmed with TransactPay before anything is done',
+  summary: 'Paystack’s notifications: stored, then confirmed with Paystack before anything is done',
   request: { body: z.looseObject({}).meta({ id: 'ProviderEventBody' }) },
   responses: {
     200: { description: 'Stored', schema: z.object({ received: z.literal(true) }) },
     400: error('VALIDATION_ERROR'),
+    401: error('UNAUTHENTICATED'),
     413: error('PAYLOAD_TOO_LARGE'),
     429: rateLimited,
   },

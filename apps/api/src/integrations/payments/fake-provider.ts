@@ -47,6 +47,8 @@ export class FakeProvider implements PaymentProvider {
       listTransactions: true,
       perAccountBalance: true,
       vaTransfer: true,
+      createWallets: true,
+      payouts: true,
       ...capabilities,
     };
   }
@@ -176,6 +178,11 @@ export class FakeProvider implements PaymentProvider {
     let total = 0n;
     for (const a of this.accounts.values()) total += a.balance;
     return ngn(total);
+  }
+
+  /** The fake has no signature: whatever reaches it is stored, and confirmed (or not) by the worker. */
+  verifyNotification(): boolean {
+    return true;
   }
 
   parseEvent(raw: unknown, _headers: Readonly<Record<string, string | undefined>>): ProviderEvent {

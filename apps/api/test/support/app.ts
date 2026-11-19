@@ -25,7 +25,7 @@ export const TEST_MFA_KEY = { kid: 'test-mfa', key: randomBytes(32) };
 export async function createTestApp({
   serverRequestIds = false,
   ...options
-}: Partial<Pick<AppDeps, 'trustProxy' | 'signupGuard' | 'email' | 'logger'>> & {
+}: Partial<Pick<AppDeps, 'trustProxy' | 'signupGuard' | 'email' | 'logger' | 'paymentProvider'>> & {
   serverRequestIds?: boolean;
 } = {}) {
   const db = createDb(inject('apiDatabaseUrl'));

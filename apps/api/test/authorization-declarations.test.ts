@@ -136,7 +136,7 @@ const FROZEN: Record<string, unknown> = {
   resolveUnmatchedTransaction: perm('platform.payments.resolve'),
   resolveReconciliationFinding: perm('platform.payments.resolve'),
   createPlatformWallet: perm('platform.wallet.create'),
-  receiveTransactPayEvent: { class: 'public' },
+  receivePaystackEvent: { class: 'public' },
 };
 
 describe('the registry’s declarations', () => {

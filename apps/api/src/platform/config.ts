@@ -140,13 +140,30 @@ const EnvSchema = z.object({
       message: 'must be an origin such as https://app.alphakolect.com, without a path',
     })
     .optional(),
-  // Payments (P9). The provider the worker and the webhook use; its keys are required when it is TransactPay. The fake
-  // is refused in production.
-  PAYMENT_PROVIDER: z.enum(['fake', 'transactpay']).default('fake'),
-  TRANSACTPAY_BASE_URL: z.url({ protocol: /^https$/, error: 'must be an https:// URL' }).optional(),
-  TRANSACTPAY_PUBLIC_KEY: z.string().min(1).optional(),
-  TRANSACTPAY_SECRET_KEY: z.string().min(1).optional(),
-  TRANSACTPAY_ENCRYPTION_KEY_BASE64: z.string().min(1).optional(),
+  // Payments (P9). The provider the worker and the webhook use; Paystack's settings are required when it is Paystack. The
+  // fake is refused in production. A test key (sk_test_) is the only kind outside production, and a live key (sk_live_) the
+  // only kind in it: a developer's machine can never move real money.
+  PAYMENT_PROVIDER: z.enum(['fake', 'paystack']).default('fake'),
+  PAYSTACK_SECRET_KEY: z
+    .string()
+    .regex(/^sk_(test|live)_[A-Za-z0-9]{8,}$/, 'must be a Paystack secret key (sk_test_… or sk_live_…)')
+    .optional(),
+  PAYSTACK_WEBHOOK_SIGNING_SECRET: z
+    .string()
+    .regex(/^whsec_[A-Za-z0-9_-]{8,}$/, 'must be a Paystack signing secret (whsec_…)')
+    .optional(),
+  PAYSTACK_PREFERRED_BANK: z
+    .string()
+    .regex(/^[a-z0-9-]{2,40}$/, 'must be a bank slug such as test-bank')
+    .optional(),
+  // Both off unless said: wallets wait for Paystack's customer requirements to be met (plan §16.4 condition 3), and payouts
+  // for their fees to be in the books (§16.5 P9-22; refused in production).
+  PAYSTACK_WALLET_CREATION: z.enum(['on', 'off']).default('off'),
+  PAYSTACK_PAYOUTS: z.enum(['on', 'off']).default('off'),
+  PAYSTACK_WALLET_EMAIL_DOMAIN: z
+    .string()
+    .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'must be a domain we control, such as wallets.alphakolect.com')
+    .optional(),
 });
 
 /** Settings that have a convenient local default but must be set explicitly in production. */
@@ -157,27 +174,42 @@ const LOCAL_DEFAULTS = {
 } as const;
 
 const EnvSchemaWithProductionRules = EnvSchema.superRefine((e, ctx) => {
-  if (e.PAYMENT_PROVIDER === 'transactpay') {
+  if (e.PAYMENT_PROVIDER === 'paystack') {
     for (const name of [
-      'TRANSACTPAY_BASE_URL',
-      'TRANSACTPAY_PUBLIC_KEY',
-      'TRANSACTPAY_SECRET_KEY',
-      'TRANSACTPAY_ENCRYPTION_KEY_BASE64',
+      'PAYSTACK_SECRET_KEY',
+      'PAYSTACK_PREFERRED_BANK',
+      'PAYSTACK_WALLET_EMAIL_DOMAIN',
     ] as const) {
       if (e[name] === undefined)
         ctx.addIssue({
           code: 'custom',
           path: [name],
-          message: 'is required when PAYMENT_PROVIDER is transactpay',
+          message: 'is required when PAYMENT_PROVIDER is paystack',
         });
     }
+    if (e.NODE_ENV === 'production' && e.PAYSTACK_PAYOUTS === 'on')
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYSTACK_PAYOUTS'],
+        message: 'must be off in production: payout fees and stamp duty are not in the books yet',
+      });
+    const key = e.PAYSTACK_SECRET_KEY;
+    if (key !== undefined && key.startsWith('sk_live_') !== (e.NODE_ENV === 'production'))
+      ctx.addIssue({
+        code: 'custom',
+        path: ['PAYSTACK_SECRET_KEY'],
+        message:
+          e.NODE_ENV === 'production'
+            ? 'must be a live key (sk_live_…) in production'
+            : 'must be a test key (sk_test_…) outside production',
+      });
   }
   if (e.NODE_ENV !== 'production') return;
   if (e.PAYMENT_PROVIDER === 'fake')
     ctx.addIssue({
       code: 'custom',
       path: ['PAYMENT_PROVIDER'],
-      message: 'must be transactpay in production',
+      message: 'must be paystack in production',
     });
   for (const name of Object.keys(LOCAL_DEFAULTS) as Array<keyof typeof LOCAL_DEFAULTS>) {
     if (e[name] === undefined)
@@ -198,8 +230,15 @@ export type Config = Readonly<{
   /** Origin of the web app, for links in emails. */
   webAppUrl: string;
   payments: Readonly<{
-    provider: 'fake' | 'transactpay';
-    transactPay?: Readonly<{ baseUrl: string; publicKey: string; secretKey: string; encryptionKey: string }>;
+    provider: 'fake' | 'paystack';
+    paystack?: Readonly<{
+      secretKey: string;
+      webhookSigningSecret?: string;
+      preferredBank: string;
+      walletEmailDomain: string;
+      walletsEnabled: boolean;
+      payoutsEnabled: boolean;
+    }>;
   }>;
   auth: Readonly<{
     issuer: string;
@@ -261,13 +300,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     webAppUrl: new URL(e.WEB_APP_URL ?? LOCAL_DEFAULTS.WEB_APP_URL).origin,
     payments: Object.freeze({
       provider: e.PAYMENT_PROVIDER,
-      ...(e.PAYMENT_PROVIDER === 'transactpay'
+      ...(e.PAYMENT_PROVIDER === 'paystack'
         ? {
-            transactPay: Object.freeze({
-              baseUrl: e.TRANSACTPAY_BASE_URL!,
-              publicKey: e.TRANSACTPAY_PUBLIC_KEY!,
-              secretKey: e.TRANSACTPAY_SECRET_KEY!,
-              encryptionKey: e.TRANSACTPAY_ENCRYPTION_KEY_BASE64!,
+            paystack: Object.freeze({
+              secretKey: e.PAYSTACK_SECRET_KEY!,
+              ...(e.PAYSTACK_WEBHOOK_SIGNING_SECRET
+                ? { webhookSigningSecret: e.PAYSTACK_WEBHOOK_SIGNING_SECRET }
+                : {}),
+              preferredBank: e.PAYSTACK_PREFERRED_BANK!,
+              walletEmailDomain: e.PAYSTACK_WALLET_EMAIL_DOMAIN!,
+              walletsEnabled: e.PAYSTACK_WALLET_CREATION === 'on',
+              payoutsEnabled: e.PAYSTACK_PAYOUTS === 'on',
             }),
           }
         : {}),

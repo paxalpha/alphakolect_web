@@ -89,9 +89,9 @@ const EXPECTED: Record<string, Grantee[]> = {
   // payments — P9: the worker's functions are the worker's alone (P9-R1: they trust their caller for what a provider
   // confirmed); the API has the webhook's store and the session reads. The order's creation and the template lookup are
   // called by definer functions and tests only (Q2), and customer wallets are requested by no running process (OPEN-12).
-  'payments.claim_events(integer, integer)': WORKER,
-  'payments.claim_orders(integer, integer)': WORKER,
-  'payments.claim_wallets(integer, integer)': WORKER,
+  'payments.claim_events(integer, integer, text)': WORKER,
+  'payments.claim_orders(integer, integer, text)': WORKER,
+  'payments.claim_wallets(integer, integer, text)': WORKER,
   'payments.classify_receipt(uuid, uuid, uuid, text, text, text, text)': APP,
   'payments.create_order(uuid, uuid, jsonb, bigint, text, text, uuid, text, jsonb)': OWNER_ONLY,
   'payments.list_receipts(uuid, boolean, integer, timestamp with time zone, uuid)': APP,

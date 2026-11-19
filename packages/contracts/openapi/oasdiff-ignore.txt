@@ -1,0 +1,13 @@
+# Reviewed and accepted breaking changes to the published contract, read by oasdiff in CI (--err-ignore). Nothing else is
+# ignored: each non-comment line is one finding, exactly as oasdiff prints it after "in API": the method, the path, the message.
+# No wildcards, and a line that matches nothing does nothing. The CI job checks that removing any other path still fails.
+#
+# Method and path:  POST /v1/webhooks/transactpay
+# What:             the path is removed (replaced by POST /v1/webhooks/paystack)
+# Why:              the payments provider changed from TransactPay to Paystack (P9 revision 8). The path was never deployed and
+#                   no client calls it: it received a provider's notifications, which are not a client's contract. A deprecation
+#                   period would keep a TransactPay endpoint alive for nothing.
+# Approved:         by the project lead, 2026-11-19, with these conditions: this one path only, this reason written down, the check
+#                   otherwise as strict, and a test that the exception is exact.
+# Pull request:     paxalpha/alphakolect_web#13
+POST /v1/webhooks/transactpay api path removed without deprecation

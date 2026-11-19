@@ -46,23 +46,30 @@ export class PaymentsWorker {
 
   constructor(private readonly deps: PaymentsWorkerDeps) {
     this.leaseMs = (deps.leaseSeconds ?? LEASE_SECONDS) * 1000;
-    // A lookup, the creation and the lookup after it all end inside the lease, with a tenth of it to spare.
-    if (3 * deps.provider.requestTimeoutMs >= this.leaseMs * 0.9)
+    // A lookup, the creation (up to three calls: customer lookup, customer, account) and the lookup after it all end
+    // inside the lease, with a tenth of it to spare.
+    if (5 * deps.provider.requestTimeoutMs >= this.leaseMs * 0.9)
       throw new Error('The worker’s lease must outlast the provider’s timeouts');
   }
 
-  /** Whether a call started now ends, at its timeout, inside a lease asked for at `claimedAt`. */
-  private inLease(claimedAt: number): boolean {
+  /** Whether `calls` calls in a row, started now, end at their timeouts inside a lease asked for at `claimedAt`. */
+  private inLease(claimedAt: number, calls = 1): boolean {
     const elapsed = performance.now() - claimedAt;
-    return elapsed + this.deps.provider.requestTimeoutMs < this.leaseMs * 0.9;
+    return elapsed + calls * this.deps.provider.requestTimeoutMs < this.leaseMs * 0.9;
   }
 
   /** Request a wallet for each business whose email is confirmed (BR-2.3), then create those due. */
   async provisionWallets(): Promise<void> {
-    const { db, provider, logger } = this.deps;
+    const { db, provider } = this.deps;
     await db.transaction(async (tx) => {
       await tx.query(`SELECT payments.request_wallets($1)`, [provider.name]);
     });
+    await this.createWallets();
+  }
+
+  /** Create the wallets already requested and due: the second half of provisionWallets. */
+  async createWallets(): Promise<void> {
+    const { db, provider, logger } = this.deps;
     for (let n = 0; n < BATCH; n++) {
       const claimedAt = performance.now();
       const [w] = await db.transaction((tx) =>
@@ -86,7 +93,8 @@ export class PaymentsWorker {
         // definite "no such account" goes on to create one (P9-R2); anything else throws, and is tried again later.
         let account = await provider.findVirtualAccountByAlias(w.alias);
         if (!account) {
-          if (!this.inLease(claimedAt)) {
+          // The creation may take three calls (the customer is looked up, made, and given an account), then one lookup.
+          if (!this.inLease(claimedAt, 4)) {
             logger.warn(
               { walletId: w.id },
               'Too late in the lease to create a wallet: left for the next claim',
@@ -167,7 +175,8 @@ export class PaymentsWorker {
           unavailable || money !== null,
           money?.providerTxId ?? null,
           money?.toAccountNumber ?? null,
-          money?.amount.amountMinor.toString() ?? null,
+          // What arrived: the amount less what the provider kept from it (P9-14), both the provider's own figures.
+          money ? (money.amount.amountMinor - (money.feeMinor ?? 0n)).toString() : null,
           money?.amount.currency ?? null,
           unavailable ? 'pending' : (money?.status ?? null),
           money?.createdAt ?? null,
@@ -214,7 +223,8 @@ export class PaymentsWorker {
       let ref: ProviderTxRef | null = null;
       let error: string | null = null;
       try {
-        if (o.prior_state === 'created' && this.inLease(claimedAt)) {
+        // A payout takes up to three calls: the name enquiry, the recipient and the transfer.
+        if (o.prior_state === 'created' && this.inLease(claimedAt, 3)) {
           const to: VaRef | BankAccount = o.to_bank
             ? { kind: 'bank', bankCode: o.to_bank.bankCode, accountNumber: o.to_bank.accountNumber }
             : { kind: 'va', providerRef: o.to_provider_ref! };
@@ -240,9 +250,15 @@ export class PaymentsWorker {
         // Only a refusal the provider stated is a failure; everything else may have taken effect.
         state =
           err instanceof ProviderError &&
-          ['INSUFFICIENT_FUNDS', 'ACCOUNT_CLOSED', 'INVALID_REQUEST', 'UNSUPPORTED', 'NOT_FOUND'].includes(
-            err.code,
-          ) &&
+          [
+            'INSUFFICIENT_FUNDS',
+            'ACCOUNT_CLOSED',
+            'INVALID_REQUEST',
+            'UNSUPPORTED',
+            'NOT_FOUND',
+            // A step before the transfer failed: nothing was sent (the Paystack adapter's name enquiry and recipient).
+            'NOT_SENT',
+          ].includes(err.code) &&
           o.prior_state === 'created'
             ? 'failed'
             : 'unknown';

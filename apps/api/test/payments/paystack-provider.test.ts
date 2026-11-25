@@ -680,10 +680,20 @@ function sandboxConfig(): PaystackConfig | null {
     }
   const secretKey = env.PAYSTACK_TEST_SECRET_KEY ?? '';
   if (!/^sk_test_/.test(secretKey)) throw new Error('PAYSTACK_SANDBOX=run needs a test key (sk_test_…)');
+  // No default: the domain of a customer's email must end in a real top-level domain, or Paystack refuses it (the sandbox
+  // diagnostic of 24 November), so the run says which one it uses.
+  const walletEmailDomain = env.PAYSTACK_TEST_WALLET_EMAIL_DOMAIN ?? '';
+  if (
+    !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(walletEmailDomain) ||
+    /\.(test|invalid|example|localhost|local)$/.test(walletEmailDomain)
+  )
+    throw new Error(
+      'PAYSTACK_SANDBOX=run needs PAYSTACK_TEST_WALLET_EMAIL_DOMAIN: a domain with a real ending, not .test',
+    );
   return {
     secretKey,
     preferredBank: env.PAYSTACK_TEST_PREFERRED_BANK ?? 'test-bank',
-    walletEmailDomain: env.PAYSTACK_TEST_WALLET_EMAIL_DOMAIN ?? 'wallets.example.test',
+    walletEmailDomain,
   };
 }
 const sandbox = sandboxConfig();

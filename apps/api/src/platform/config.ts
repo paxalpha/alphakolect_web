@@ -106,6 +106,29 @@ const trustedProxies = z
     return Object.freeze(entries);
   });
 
+/** Labels of letters, digits and inner hyphens, at least two of them: the shape of a domain, before its ending is judged. */
+const WALLET_EMAIL_DOMAIN_FORM = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
+/** Endings reserved for tests, documentation and private networks (RFC 2606, 6761, 6762): no payer or provider treats them as mail. */
+const RESERVED_TOP_LEVEL_DOMAINS = new Set([
+  'test',
+  'invalid',
+  'example',
+  'localhost',
+  'local',
+  'internal',
+  'lan',
+  'home',
+  'corp',
+  'onion',
+  'arpa',
+]);
+/** A domain that has a real ending. One that is not shaped like a domain passes here: the form check reports it, once. */
+function hasRealTopLevelDomain(domain: string): boolean {
+  if (!WALLET_EMAIL_DOMAIN_FORM.test(domain)) return true;
+  const ending = domain.slice(domain.lastIndexOf('.') + 1);
+  return /^[a-z]{2,}$/.test(ending) && !RESERVED_TOP_LEVEL_DOMAINS.has(ending);
+}
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().min(1).max(65535).default(4000),
@@ -162,7 +185,11 @@ const EnvSchema = z.object({
   PAYSTACK_PAYOUTS: z.enum(['on', 'off']).default('off'),
   PAYSTACK_WALLET_EMAIL_DOMAIN: z
     .string()
-    .regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, 'must be a domain we control, such as wallets.alphakolect.com')
+    .regex(WALLET_EMAIL_DOMAIN_FORM, 'must be a domain name in lower case, such as wallets.example.com')
+    .refine(hasRealTopLevelDomain, {
+      error:
+        'must end in a real top-level domain: Paystack refuses the email of a customer on .test, .invalid, .example, .localhost, .local and the like',
+    })
     .optional(),
 });
 

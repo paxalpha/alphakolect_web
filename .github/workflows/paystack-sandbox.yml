@@ -3,7 +3,9 @@
 #
 # It never runs on its own: a person adds the label "paystack-sandbox" to a pull request, or starts it by hand. It uses one repository
 # secret, PAYSTACK_TEST_SECRET_KEY, which must be a TEST key (sk_test_…): the job stops at once on anything else, so a live key
-# can never be used here. The customer email domain, which must end in a real top-level domain, is the repository variable
+# can never be used here. The secret is given to ONE step, the one that runs the suite: not to the job, so not to the checkout or the
+# dependency install (whose scripts are other people's code). The first step checks the prefix with an expression, so even it never
+# holds the secret. The customer email domain, which must end in a real top-level domain, is the repository variable
 # PAYSTACK_TEST_WALLET_EMAIL_DOMAIN, or the input of a manual start. The complete output is kept as an artifact.
 name: Paystack sandbox (on demand)
 
@@ -54,17 +56,18 @@ jobs:
       DB_APP_PASSWORD: ci-only-app-role-password
       DB_WORKER_PASSWORD: ci-only-worker-role-password
       DB_READONLY_PASSWORD: ci-only-readonly-password
-      PAYSTACK_SANDBOX: run
-      PAYSTACK_TEST_SECRET_KEY: ${{ secrets.PAYSTACK_TEST_SECRET_KEY }}
-      PAYSTACK_TEST_WALLET_EMAIL_DOMAIN: ${{ inputs.email_domain || vars.PAYSTACK_TEST_WALLET_EMAIL_DOMAIN }}
     steps:
+      # The runner evaluates the expressions; this step's environment holds a yes/no and a domain, never the secret.
       - name: Only a test key, and a domain with a real ending
+        env:
+          KEY_IS_TEST: ${{ startsWith(secrets.PAYSTACK_TEST_SECRET_KEY, 'sk_test_') && secrets.PAYSTACK_TEST_SECRET_KEY != 'sk_test_' }}
+          DOMAIN: ${{ inputs.email_domain || vars.PAYSTACK_TEST_WALLET_EMAIL_DOMAIN }}
         run: |
-          case "$PAYSTACK_TEST_SECRET_KEY" in
-            sk_test_?*) ;;
-            *) echo "::error::PAYSTACK_TEST_SECRET_KEY is missing or is not a test key (sk_test_…). Nothing was run."; exit 1 ;;
-          esac
-          if [ -z "$PAYSTACK_TEST_WALLET_EMAIL_DOMAIN" ]; then
+          if [ "$KEY_IS_TEST" != "true" ]; then
+            echo "::error::PAYSTACK_TEST_SECRET_KEY is missing or is not a test key (sk_test_…). Nothing was run."
+            exit 1
+          fi
+          if [ -z "$DOMAIN" ]; then
             echo "::error::No customer email domain: set the repository variable PAYSTACK_TEST_WALLET_EMAIL_DOMAIN or give the input."
             exit 1
           fi
@@ -80,7 +83,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # The only step that holds the secret.
       - name: Run the sandbox suite
+        env:
+          PAYSTACK_SANDBOX: run
+          PAYSTACK_TEST_SECRET_KEY: ${{ secrets.PAYSTACK_TEST_SECRET_KEY }}
+          PAYSTACK_TEST_WALLET_EMAIL_DOMAIN: ${{ inputs.email_domain || vars.PAYSTACK_TEST_WALLET_EMAIL_DOMAIN }}
         run: |
           {
             echo "commit: ${GITHUB_SHA}"

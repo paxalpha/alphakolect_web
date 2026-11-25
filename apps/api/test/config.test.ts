@@ -120,7 +120,7 @@ describe('loadConfig', () => {
       PAYSTACK_SECRET_KEY: LIVE_KEY,
       PAYSTACK_WEBHOOK_SIGNING_SECRET: SIGNING_SECRET,
       PAYSTACK_PREFERRED_BANK: 'wema-bank',
-      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.com',
     });
     expect(config.payments.provider).toBe('paystack');
     expect(config.payments.paystack).toMatchObject({
@@ -132,13 +132,74 @@ describe('loadConfig', () => {
     });
   });
 
+  it('P9 rev 8: the wallet email domain is a real domain: no reserved ending, no bad shape, and its value is never echoed', () => {
+    const base = {
+      ...valid,
+      PAYMENT_PROVIDER: 'paystack',
+      PAYSTACK_SECRET_KEY: TEST_KEY,
+      PAYSTACK_PREFERRED_BANK: 'test-bank',
+    };
+    const domain = (value: string) => problemsOf({ ...base, PAYSTACK_WALLET_EMAIL_DOMAIN: value });
+    for (const ok of ['wallets.example.com', 'wallets.paxalphaltd.com', 'a-b.c-d.co.uk', 'x1.io'])
+      expect(
+        loadConfig({ ...base, PAYSTACK_WALLET_EMAIL_DOMAIN: ok }).payments.paystack?.walletEmailDomain,
+      ).toBe(ok);
+    // Reserved endings: Paystack refused one (HTTP 400, "email" must be a valid email).
+    for (const reserved of [
+      'test',
+      'invalid',
+      'example',
+      'localhost',
+      'local',
+      'internal',
+      'lan',
+      'home',
+      'corp',
+      'onion',
+      'arpa',
+    ]) {
+      const { problems, message } = domain(`wallets.${reserved}`);
+      expect(problems, reserved).toHaveLength(1);
+      expect(problems[0]).toMatch(/^PAYSTACK_WALLET_EMAIL_DOMAIN must end in a real top-level domain/);
+      expect(message).not.toContain(`wallets.${reserved}`);
+    }
+    // Not shaped like a domain, or an ending that is not a name: one problem each.
+    for (const bad of [
+      'no-dot',
+      '',
+      ' wallets.example.com',
+      'wallets.example.com ',
+      'wallets.example.com.',
+      '.example.com',
+      'wallets..example.com',
+      'Wallets.Example.com',
+      'wallets.-example.com',
+      'wallets.example-.com',
+      'wallets.example.c',
+      'wallets.example.123',
+      'wallets.exa mple.com',
+      'user@example.com',
+      'https://example.com',
+      'example.com/path',
+    ]) {
+      const { problems, message } = domain(bad);
+      expect(problems, JSON.stringify(bad)).toHaveLength(1);
+      expect(problems[0]).toMatch(/^PAYSTACK_WALLET_EMAIL_DOMAIN must /);
+      expect(message).not.toContain('Wallets.Example'); // a value is not echoed
+    }
+    // Missing: asked for once, with the setting's name.
+    expect(problemsOf({ ...base }).problems).toEqual([
+      'PAYSTACK_WALLET_EMAIL_DOMAIN is required when PAYMENT_PROVIDER is paystack',
+    ]);
+  });
+
   it('P9 rev 8: wallet creation and payouts are off unless said; payouts cannot be on in production', () => {
     const paystack = {
       ...valid,
       PAYMENT_PROVIDER: 'paystack',
       PAYSTACK_SECRET_KEY: TEST_KEY,
       PAYSTACK_PREFERRED_BANK: 'test-bank',
-      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.com',
     };
     expect(loadConfig(paystack).payments.paystack).toMatchObject({
       walletsEnabled: false,
@@ -169,7 +230,7 @@ describe('loadConfig', () => {
       ...valid,
       PAYMENT_PROVIDER: 'paystack',
       PAYSTACK_PREFERRED_BANK: 'test-bank',
-      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.com',
     };
     expect(loadConfig({ ...paystack, PAYSTACK_SECRET_KEY: TEST_KEY }).payments.provider).toBe('paystack');
     const live = problemsOf({ ...paystack, PAYSTACK_SECRET_KEY: LIVE_KEY });
@@ -213,7 +274,7 @@ describe('loadConfig', () => {
       PAYMENT_PROVIDER: 'paystack',
       PAYSTACK_SECRET_KEY: LIVE_KEY,
       PAYSTACK_PREFERRED_BANK: 'wema-bank',
-      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.com',
     };
     expect(() => assertApiConfig(loadConfig(production))).not.toThrow();
     let refused: unknown;
@@ -250,7 +311,7 @@ describe('loadConfig', () => {
       PAYMENT_PROVIDER: 'paystack',
       PAYSTACK_SECRET_KEY: LIVE_KEY,
       PAYSTACK_PREFERRED_BANK: 'wema-bank',
-      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.test',
+      PAYSTACK_WALLET_EMAIL_DOMAIN: 'wallets.example.com',
     });
     expect(config.webAppUrl).toBe('https://app.alphakolect.com');
   });

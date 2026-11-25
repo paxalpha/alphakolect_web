@@ -227,6 +227,9 @@ test marked W, D, R and A, run as before against the FakeProvider.
 | E7 | Paystack has one balance | Compared against the sum of every wallet's books (`perAccountBalance` false) | W "pooled balance"; P "what Paystack's one balance gains" |
 | H1 | A worker of another provider's rows (a deployment whose provider was changed) | Not claimed: wallets, events and orders are claimed by their own provider only | D "P9 revision 8" |
 | H2 | A live key outside production, or a test key in it | Refused at startup | `config.test.ts` "P9 rev 8" |
+| H3 | A wallet email domain with a reserved ending (`.test` and ten others) or not shaped like a domain | Refused at startup, one message, the value never echoed. Paystack refused `.test` | `config.test.ts` "the wallet email domain is a real domain" |
+| H4 | A tunnel to the API | The tunnel points at the webhook-only door: only `POST /v1/webhooks/paystack` passes, with only the headers the signature needs; 15 other methods and paths are 404 and never reach the API; a body over 64 KiB is refused | `webhook-proxy.test.ts` |
+| H5 | The worker's role gains a membership (a built-in role, or a login role made a member) | Revoked by the bootstrap on re-run; the operator's check names it, a table privilege and a schema CREATE right | `worker-role.test.ts` (db) |
 
 **Unproven against Paystack.** Every row that depends on Paystack's own answers rests on its documentation: plan §16.4 lists the twelve conditions,
 and the first two (a test deposit through Paystack's demo bank app, and the sandbox suite) are the first to run.

@@ -11,6 +11,9 @@ disposable PostgreSQL service, and keeps the complete output as an artifact (`pa
 
 **It never runs on its own.** It starts when someone with write access adds the label **`paystack-sandbox`** to the pull request, or starts it by hand ("Run workflow").
 
+**The secret reaches one step.** Not the job: so not the checkout or the dependency install. The first step checks that the key starts `sk_test_` with an expression
+the runner evaluates (its environment holds a yes or no, not the key), and only the step that runs the suite is given the key. Nothing else in the workflow can read it.
+
 ### One-time setup (repository settings, by an admin)
 
 1. **Secret** `PAYSTACK_TEST_SECRET_KEY`: Settings → Secrets and variables → Actions → New repository secret. Value: the **test** secret key from Paystack's dashboard

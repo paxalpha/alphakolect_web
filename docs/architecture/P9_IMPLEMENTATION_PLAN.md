@@ -499,3 +499,35 @@ suggested option of each question is what is recorded.
 | Q9 Who pays to send money out | The business bears the transfer fee and the stamp duty: its wallet is debited the amount, the fee and the stamp duty | P10 posts all three. **Payouts stay off** (P9-22) until it does; condition 8 stays open |
 
 The answers close no condition of 16.4: they decide who bears what, and say that nothing goes live yet.
+
+### 16.12 The roadmap to close P9 (25 November 2026)
+
+Ten workstreams and eight gates. A gate authorizes nothing by itself: each action that needs a separate authorization still gets one from the reviewer or the owner.
+Nothing here switches on wallet creation or payouts anywhere, opens a tunnel, makes a deposit, or touches production.
+
+| Workstream | What | Status | Evidence in the repository |
+|---|---|---|---|
+| A | Publish the sandbox evidence on the PR | **Done**: `d92729e`, `902e310`, `3f6bcb7` are on PR #13 | `docs/architecture/evidence/p9-paystack-sandbox-2026-11-24/` |
+| B | The wallet email domain must have a real ending | **Done, for CI to confirm**: P9-26, tested | `config.ts`, `config.test.ts`; the suite names its domain |
+| C | Local readiness: database, credentials, worker, webhook, switches | **Report written, for the reviewer's acceptance** | `P9_LOCAL_READINESS_REPORT.md`; `webhook-proxy.ts` and its test |
+| D | The sandbox wallet and a test deposit, end to end | **Waiting for C's acceptance, a tunnel, and the owner's hands at Paystack's demo bank app**; needs wallet creation on locally, which is not authorized | procedure: readiness report §6 |
+| E | Paystack's written requirements (category, phone, BVN, account name) | **Questions written, not sent** | `P9_PAYSTACK_REQUIREMENTS_REQUEST.md` |
+| F | The worker's role and credentials | **The bootstrap strips memberships and a check exists (P9-27), tested**; running both in each real environment, and the runtime separation (P15), remain | `roles.sql`, `worker-role.sql`, `worker-role.test.ts` |
+| G | Close TransactPay, revoke its keys | **Checklist written, nothing done** | `P9_TRANSACTPAY_CLOSURE_CHECKLIST.md` |
+| H | Custody confirmed in writing, by Paystack and a lawyer | **Questions written, not sent** | `P9_CUSTODY_CONFIRMATION_REQUEST.md` |
+| I | Payouts and P10 | **Recorded; payouts stay off, refused in production**; the work is P10's | `P9_PAYOUT_DEPENDENCY_RECORD.md` |
+| J | The reviewer's full re-review and the project lead's closure | **Pending** | this plan, §16.8 |
+
+| Gate | Evidence | Status |
+|---|---|---|
+| G1 Evidence published | Three commits on PR #13 | **Met** (head `3f6bcb7` when pushed) |
+| G2 Configuration validated | The domain rule and its tests, green in CI | For CI |
+| G3 Environment safe | The readiness report accepted | For the reviewer |
+| G4 Sandbox lifecycle proven | Customer, account, deposit, webhook, worker, ledger, the balance and the fee | Not started: waits for G3 and the owner |
+| G5 Business requirements confirmed | Paystack's written answer, and a privacy decision if it asks for a phone or a BVN | Not started: the owner sends E |
+| G6 Operational security verified | The worker's role checked in each environment, TransactPay revoked | Partly: the tooling exists; the doing is the operator's and the owner's |
+| G7 Custody approved | Paystack's and the lawyer's written replies, the owner's signature | Not started: the owner sends H |
+| G8 Final review | All of the above and green CI on the final head | Pending; the lead records P9 closed |
+
+What can move now, with no one else: G2 (CI), G3 (the reviewer reads the report). What waits for a person at Paystack or a lawyer: G4, G5, G7. What waits for the owner's
+accounts: G6's revocation. The sandbox suite can be re-run in the cloud once the repository holds the test secret (`P9_SANDBOX_IN_CI.md`).

@@ -531,3 +531,44 @@ Nothing here switches on wallet creation or payouts anywhere, opens a tunnel, ma
 
 What can move now, with no one else: G2 (CI), G3 (the reviewer reads the report). What waits for a person at Paystack or a lawyer: G4, G5, G7. What waits for the owner's
 accounts: G6's revocation. The sandbox suite can be re-run in the cloud once the repository holds the test secret (`P9_SANDBOX_IN_CI.md`).
+
+### 16.13 The closure roadmap as the reviewer corrected it (27 November 2026)
+
+**Status, in the reviewer's words: test-mode engineering substantially complete; end-to-end deposit verification outstanding.** "P9 closed for test mode" will not mean the Paystack
+integration is validated or production-ready: the deposit-to-ledger path is unproven until D2 is done. **D1 is accepted** (both runs; no local repeat is needed, since the Linux process tests, green in CI on `ca8ae07`, give the
+direct evidence of successive passes and a clean SIGTERM). The full §16.8 review and the decision on the readiness report are the reviewer's, and are open.
+
+**Four corrections to the earlier proposal, all taken:**
+
+| | Correction | What it means |
+|---|---|---|
+| A | **No wallet creation before condition 3 is resolved** | Send the Paystack requirements request (`P9_PAYSTACK_REQUIREMENTS_REQUEST.md`) and have its answer first. If Paystack wants a phone, a BVN or a validation the project does not hold, the test waits for an approved solution. No invented identity details, ever |
+| B | **Condition 5 gets its own verification step** | Whether a new customer is reliably found, and whether Paystack refuses a second account for that customer, are checked in D2 explicitly, not assumed from the sandbox suite |
+| C | **The source-address question is closed in the door, not left to P15** | The webhook-only door now keeps Paystack's three addresses (`webhook-proxy.ts`, tested): the path restriction is no longer mistaken for an allowlist. The residual (it trusts the tunnel's header) is stated in the readiness report |
+| D | **D2 is not one blanket authorization** | Three separate gates inside one controlled plan (below), each with its own stop condition |
+
+**D2, in three gates.** Nothing in D2 is authorized. Each gate needs the reviewer's explicit word, and the one before it must be complete and cleaned up.
+
+| Gate | What | Needs first | Stop if |
+|---|---|---|---|
+| D2a: the door | The signing secret from Paystack's dashboard set locally; the tunnel pointed at the door on **port 4001, never the API on 4000**; the test webhook URL registered; a signed `ping` or test event reaches the API through the door; an unsigned one and a wrong route do not | The readiness report accepted; `.env` re-inspected by name and prefix | The tunnel is on 4000; the allowlist is off without a recorded decision; any route but the webhook answers |
+| D2b: one wallet | `PAYSTACK_WALLET_CREATION=on` for **one named test**, for one synthetic business, for a stated time; the account made and its name recorded; the customer found again; a second creation made no second account (condition 5); then **off** | **Condition 3 resolved** (correction A) | Paystack asks for anything the project does not hold; more than one account appears |
+| D2c: one deposit | One demo-bank deposit of at most a stated sum in kobo; the signed webhook stored; the worker confirms it; **one** ledger credit net of the fee; the books against Paystack's one balance, with the settlement delay noted | D2a and D2b done | The credit is not exactly one, or not the expected net; a difference opens that cannot be explained |
+
+**What a D2 authorization must name before it is given:** the exact local database; the synthetic business and its test account; the maximum deposit in kobo, and the one deposit permitted, with the expected ledger entry; the tunnel's destination (the door, port 4001); how long wallet creation stays on;
+that payouts stay off; the stop conditions; and the cleanup: stop the tunnel, the door, the worker and the API; remove the test webhook URL; wallet creation off; no credential in the evidence.
+
+**The stages:** 1, review and the owner's actions (the full §16.8 review; the readiness report; **the owner sends the Paystack and custody letters and revokes the TransactPay keys, which nobody does for them**); 2, D2a to D2c as gated above; 3, the reviewer accepts the
+implementation and the D2 evidence, and the project lead records **"P9 closed for test mode"**, with the live-money gates still open and separate.
+
+**The live-money checklist, by §16.4 condition** (none of it is permission to merge, run production migrations, use live keys or move money):
+
+| Condition | Still required |
+|---|---|
+| 3 | Paystack's business category and what a dedicated account requires, written; a privacy form if it asks for a phone number or BVN |
+| 8 | P10 posts the transfer fee and stamp duty before payouts, which stay off and refused in production |
+| 9 | The role bootstrap and `worker-role.sql` run in each real environment |
+| 10 | P15 proves the worker's credentials and runtime are separate |
+| 11 | Paystack and a lawyer confirm custody in writing; the account is approved for live use |
+| 12 | The TransactPay accounts are closed and the exposed keys revoked everywhere |
+| 13 | A payout reversed after success has an accounting treatment (P10) |

@@ -166,6 +166,9 @@ const EnvSchema = z.object({
   // Payments (P9). The provider the worker and the webhook use; Paystack's settings are required when it is Paystack. The
   // fake is refused in production. A test key (sk_test_) is the only kind outside production, and a live key (sk_live_) the
   // only kind in it: a developer's machine can never move real money.
+  // How often the worker runs its passes and reconciles, in seconds. The defaults are for running; a test sets them small.
+  WORKER_PASS_SECONDS: z.coerce.number().int().min(1).max(3600).default(30),
+  WORKER_RECONCILE_SECONDS: z.coerce.number().int().min(1).max(86_400).default(900),
   PAYMENT_PROVIDER: z.enum(['fake', 'paystack']).default('fake'),
   PAYSTACK_SECRET_KEY: z
     .string()
@@ -250,6 +253,8 @@ export type Config = Readonly<{
   logLevel: z.infer<typeof EnvSchema>['LOG_LEVEL'];
   databaseUrl: string;
   workerDatabaseUrl: string | undefined;
+  /** The worker's rhythm (P9 §3.7), in milliseconds. */
+  worker: Readonly<{ passMs: number; reconcileMs: number }>;
   webOrigins: ReadonlySet<string>;
   cookieDomain: string | undefined;
   trustProxy: TrustedProxies;
@@ -317,6 +322,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logLevel: e.LOG_LEVEL,
     databaseUrl: e.DATABASE_URL,
     workerDatabaseUrl: e.WORKER_DATABASE_URL,
+    worker: Object.freeze({
+      passMs: e.WORKER_PASS_SECONDS * 1000,
+      reconcileMs: e.WORKER_RECONCILE_SECONDS * 1000,
+    }),
     webOrigins: e.WEB_ORIGINS,
     cookieDomain: e.COOKIE_DOMAIN,
     trustProxy: e.TRUST_PROXY,

@@ -193,6 +193,20 @@ describe('loadConfig', () => {
     ]);
   });
 
+  it('P9 rev 8: the worker’s rhythm defaults to 30 seconds and 15 minutes, and is a whole number of seconds in range', () => {
+    expect(loadConfig(valid).worker).toEqual({ passMs: 30_000, reconcileMs: 900_000 });
+    expect(loadConfig({ ...valid, WORKER_PASS_SECONDS: '2', WORKER_RECONCILE_SECONDS: '60' }).worker).toEqual(
+      {
+        passMs: 2_000,
+        reconcileMs: 60_000,
+      },
+    );
+    for (const bad of ['0', '-1', '1.5', 'soon', '3601', '']) {
+      expect(problemsOf({ ...valid, WORKER_PASS_SECONDS: bad }).problems, bad).toHaveLength(1);
+    }
+    expect(problemsOf({ ...valid, WORKER_RECONCILE_SECONDS: '86401' }).problems).toHaveLength(1);
+  });
+
   it('P9 rev 8: wallet creation and payouts are off unless said; payouts cannot be on in production', () => {
     const paystack = {
       ...valid,

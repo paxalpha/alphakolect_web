@@ -8,7 +8,9 @@
 --   1. the role exists, can log in, and is not a superuser, cannot create roles or databases, does not bypass row security, no replication;
 --   2. it belongs to no role and no role belongs to it;
 --   3. it has no privilege on any table, view or sequence outside the system schemas (it acts only through its functions);
---   4. it cannot create objects in any schema, nor in the database.
+--   4. it cannot create objects in any schema, nor in the database;
+--   5. it CAN connect to this database (a database made before the worker's role existed lacks the grant, and the worker then fails to
+--      start with a permission error: apply packages/db/sql/bootstrap/database.sql to it, which is safe to repeat).
 DO $$
 DECLARE
   bad text;
@@ -60,6 +62,10 @@ BEGIN
 
   IF has_database_privilege('alphakolect_worker', current_database(), 'CREATE') THEN
     RAISE EXCEPTION 'alphakolect_worker can create schemas in this database';
+  END IF;
+
+  IF NOT has_database_privilege('alphakolect_worker', current_database(), 'CONNECT') THEN
+    RAISE EXCEPTION 'alphakolect_worker cannot connect to this database: apply packages/db/sql/bootstrap/database.sql to it';
   END IF;
 
   RAISE NOTICE 'alphakolect_worker: attributes, memberships and privileges are as required';

@@ -8,12 +8,22 @@
 //   pnpm --filter @alphakolect/api webhook:proxy                  # listens on 127.0.0.1:4001, forwards to http://127.0.0.1:4000
 //   cloudflared tunnel --url http://127.0.0.1:4001                # the tunnel points here, never at the API
 //
-// Environment: WEBHOOK_PROXY_PORT (4001), WEBHOOK_PROXY_UPSTREAM (http://127.0.0.1:4000). It listens on loopback only.
+// Environment: WEBHOOK_PROXY_PORT (4001), WEBHOOK_PROXY_UPSTREAM (http://127.0.0.1:4000), WEBHOOK_PROXY_ALLOWED_SOURCES (Paystack's three,
+// or a comma list, or `none`), WEBHOOK_PROXY_SOURCE_HEADER (cf-connecting-ip). It listens on loopback only.
 // It checks no signature: the API does, on the exact bytes it is given, which this proxy forwards unchanged.
+//
+// It also keeps a list of the addresses a notification may come from: Paystack's three documented ones (52.31.139.75, 52.49.173.169,
+// 52.214.14.220). The door sees the tunnel's address, so the original sender's is read from the header the tunnel sets
+// (WEBHOOK_PROXY_SOURCE_HEADER: `cf-connecting-ip` for cloudflared, the default; `x-forwarded-for` for ngrok, where the LAST entry is
+// the one the tunnel added and the earlier ones are the sender's to make up). A request with no such header, or from any other address,
+// is a 404 like everything else. This is a second wall, not the first: the signature is what proves a notification is Paystack's.
+// WEBHOOK_PROXY_ALLOWED_SOURCES=none switches the list off, and says so when it starts.
 import { createServer, request as httpRequest, type IncomingMessage, type Server } from 'node:http';
 import { pathToFileURL } from 'node:url';
 
 export const WEBHOOK_PATH = '/v1/webhooks/paystack';
+/** Paystack's documented webhook source addresses (https://paystack.com/docs/payments/webhooks/, read 19 November 2026). */
+export const PAYSTACK_SOURCES = ['52.31.139.75', '52.49.173.169', '52.214.14.220'] as const;
 /** The only request headers that cross: what the API needs to check the signature and read the body. */
 const FORWARDED_HEADERS = [
   'content-type',
@@ -28,7 +38,20 @@ export type WebhookProxyOptions = Readonly<{
   path?: string;
   maxBytes?: number;
   timeoutMs?: number;
+  /** The addresses a notification may come from. Absent: no check (a test, or the explicit "none"). */
+  allowedSources?: readonly string[];
+  /** The request header the tunnel puts the sender's address in. `x-forwarded-for` is read from its last entry. */
+  sourceHeader?: string;
 }>;
+
+/** The sender's address as the tunnel reports it, or undefined: one value, an IPv4-mapped IPv6 prefix removed. */
+function senderOf(req: IncomingMessage, header: string): string | undefined {
+  const raw = req.headers[header];
+  const value = Array.isArray(raw) ? raw[raw.length - 1] : raw;
+  if (typeof value !== 'string' || value.trim() === '') return undefined;
+  const entries = header === 'x-forwarded-for' ? value.split(',') : [value];
+  return entries[entries.length - 1]!.trim().replace(/^::ffff:/i, '');
+}
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | 'too_large'> {
   return new Promise((resolve, reject) => {
@@ -54,12 +77,21 @@ export function createWebhookProxy(options: WebhookProxyOptions): Server {
   const path = options.path ?? WEBHOOK_PATH;
   const maxBytes = options.maxBytes ?? 64 * 1024;
   const timeoutMs = options.timeoutMs ?? 10_000;
+  const allowed = options.allowedSources ? new Set(options.allowedSources) : null;
+  const sourceHeader = (options.sourceHeader ?? 'cf-connecting-ip').toLowerCase();
 
   return createServer((req, res) => {
     // Exact method and exact path, no query: anything else does not exist here.
     if (req.method !== 'POST' || req.url !== path) {
       res.writeHead(404).end();
       return;
+    }
+    if (allowed) {
+      const sender = senderOf(req, sourceHeader);
+      if (sender === undefined || !allowed.has(sender)) {
+        res.writeHead(404).end();
+        return;
+      }
     }
     readBody(req, maxBytes).then(
       (body) => {
@@ -114,10 +146,30 @@ export function createWebhookProxy(options: WebhookProxyOptions): Server {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const port = Number(process.env.WEBHOOK_PROXY_PORT ?? 4001);
   const upstream = process.env.WEBHOOK_PROXY_UPSTREAM ?? 'http://127.0.0.1:4000';
-  const server = createWebhookProxy({ upstream });
+  const listed = process.env.WEBHOOK_PROXY_ALLOWED_SOURCES;
+  const allowedSources =
+    listed === 'none'
+      ? undefined
+      : listed
+        ? listed
+            .split(',')
+            .map((a) => a.trim())
+            .filter(Boolean)
+        : [...PAYSTACK_SOURCES];
+  const sourceHeader = process.env.WEBHOOK_PROXY_SOURCE_HEADER ?? 'cf-connecting-ip';
+  const server = createWebhookProxy({
+    upstream,
+    ...(allowedSources ? { allowedSources } : {}),
+    sourceHeader,
+  });
   server.listen(port, '127.0.0.1', () => {
     process.stdout.write(
       `Forwarding POST ${WEBHOOK_PATH} from 127.0.0.1:${port} to ${upstream}; every other request is a 404.\n`,
+    );
+    process.stdout.write(
+      allowedSources
+        ? `Only from ${allowedSources.join(', ')}, as read from the ${sourceHeader} header the tunnel sets.\n`
+        : 'WARNING: the source-address list is switched off (WEBHOOK_PROXY_ALLOWED_SOURCES=none): the signature is the only check on who sent a notification.\n',
     );
   });
 }

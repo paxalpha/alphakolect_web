@@ -9,6 +9,10 @@ import { runWorkerLoop, sleepUnlessAborted } from '../../src/modules/payments/wo
 afterEach(() => vi.useRealTimers());
 
 const quiet = () => ({
+  infos: [] as Array<{ obj: Record<string, unknown>; msg: string }>,
+  info(obj: object, msg: string) {
+    this.infos.push({ obj: obj as Record<string, unknown>, msg });
+  },
   errors: [] as unknown[],
   error(obj: object) {
     this.errors.push(obj);
@@ -99,6 +103,60 @@ describe('the worker loop', () => {
       signal: control.signal,
     });
     expect(runOnce).not.toHaveBeenCalled();
+  });
+});
+
+describe('the evidence a pass leaves', () => {
+  it('logs one line for each completed pass with a number that only goes up and how long it took, and a separate one for a reconciliation', async () => {
+    let clock = 5_000;
+    const control = new AbortController();
+    const log = quiet();
+    let sleeps = 0;
+    await runWorkerLoop({
+      worker: {
+        runOnce: async () => void (clock += 40),
+        reconcile: async () => void (clock += 7),
+      },
+      logger: log,
+      passMs: 1_000,
+      reconcileMs: 2_500,
+      signal: control.signal,
+      now: () => clock,
+      sleep: async (ms) => {
+        clock += ms;
+        if (++sleeps === 4) control.abort();
+      },
+    });
+    const passes = log.infos.filter((i) => i.msg === 'Worker pass completed');
+    expect(passes.map((p) => p.obj.pass)).toEqual([1, 2, 3, 4]);
+    expect(passes.every((p) => p.obj.durationMs === 40)).toBe(true);
+    // Reconciled on the first pass, then once 2.5 s had gone by: the third.
+    const reconciliations = log.infos.filter((i) => i.msg === 'Reconciliation completed');
+    expect(reconciliations.map((r) => r.obj.pass)).toEqual([1, 3]);
+    expect(reconciliations.every((r) => r.obj.durationMs === 7)).toBe(true);
+    // Only a number and a duration: nothing a pass handled can reach the log through these lines.
+    for (const line of log.infos) expect(Object.keys(line.obj).sort()).toEqual(['durationMs', 'pass']);
+    expect(log.errors).toEqual([]);
+  });
+
+  it('a pass that fails logs its number with the error, and no completion line', async () => {
+    const control = new AbortController();
+    const log = quiet();
+    await runWorkerLoop({
+      worker: {
+        runOnce: async () => {
+          throw new Error('database unavailable');
+        },
+        reconcile: async () => undefined,
+      },
+      logger: log,
+      passMs: 1,
+      reconcileMs: 1_000_000,
+      signal: control.signal,
+      sleep: async () => control.abort(),
+    });
+    expect(log.infos).toEqual([]);
+    expect(log.errors).toMatchObject([{ pass: 1 }]);
   });
 });
 

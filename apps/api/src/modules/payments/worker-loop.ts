@@ -9,7 +9,7 @@ import type { PaymentsWorker } from './worker-tasks.js';
 
 export type WorkerLoopDeps = Readonly<{
   worker: Pick<PaymentsWorker, 'runOnce' | 'reconcile'>;
-  logger: { error: (obj: object, msg: string) => void };
+  logger: { error: (obj: object, msg: string) => void; info: (obj: object, msg: string) => void };
   /** Time between passes of the tasks that run often. */
   passMs: number;
   /** Time between reconciliations: the first pass also reconciles. */
@@ -40,15 +40,23 @@ export async function runWorkerLoop(deps: WorkerLoopDeps): Promise<void> {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? sleepUnlessAborted;
   let lastReconcile = 0;
+  let pass = 0;
   while (!signal.aborted) {
+    pass += 1;
+    const started = now();
     try {
       await worker.runOnce();
+      // Evidence that a pass completed, one line each: its number, which only goes up, and how long it took. Nothing about what it did,
+      // so no customer, amount or credential can reach the log through it.
+      logger.info({ pass, durationMs: now() - started }, 'Worker pass completed');
       if (now() - lastReconcile >= reconcileMs) {
         lastReconcile = now();
+        const reconcileStarted = now();
         await worker.reconcile();
+        logger.info({ pass, durationMs: now() - reconcileStarted }, 'Reconciliation completed');
       }
     } catch (err) {
-      logger.error({ err }, 'A worker pass failed');
+      logger.error({ err, pass }, 'A worker pass failed');
     }
     await sleep(passMs, signal);
   }

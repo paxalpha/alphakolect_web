@@ -130,9 +130,10 @@ describe('the evidence a pass leaves', () => {
     const passes = log.infos.filter((i) => i.msg === 'Worker pass completed');
     expect(passes.map((p) => p.obj.pass)).toEqual([1, 2, 3, 4]);
     expect(passes.every((p) => p.obj.durationMs === 40)).toBe(true);
-    // Reconciled on the first pass, then once 2.5 s had gone by: the third.
+    // Reconciled on the first pass (ending at 5,047), then once 2.5 s had gone by since that one began (5,040): the clock reads 8,167 on the
+    // fourth pass, 3,127 later; on the third it reads 7,127, 2,087 later, which is not yet.
     const reconciliations = log.infos.filter((i) => i.msg === 'Reconciliation completed');
-    expect(reconciliations.map((r) => r.obj.pass)).toEqual([1, 3]);
+    expect(reconciliations.map((r) => r.obj.pass)).toEqual([1, 4]);
     expect(reconciliations.every((r) => r.obj.durationMs === 7)).toBe(true);
     // Only a number and a duration: nothing a pass handled can reach the log through these lines.
     for (const line of log.infos) expect(Object.keys(line.obj).sort()).toEqual(['durationMs', 'pass']);

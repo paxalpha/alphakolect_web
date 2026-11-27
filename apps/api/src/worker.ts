@@ -9,9 +9,6 @@ import { createLogger } from './platform/logger.js';
 // alphakolect_worker (P9-R1). The work is kept in the domain's own rows, claimed with a lease (P9-1, P9-R3), so several
 // workers can run and a dead one loses nothing.
 
-const PASS_MS = 30_000;
-const RECONCILE_MS = 15 * 60_000;
-
 function readConfig(): Config {
   try {
     return loadConfig();
@@ -42,6 +39,13 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
 logger.info({ provider: config.payments.provider }, 'Worker running');
-await runWorkerLoop({ worker, logger, passMs: PASS_MS, reconcileMs: RECONCILE_MS, signal: stopping.signal });
+await runWorkerLoop({
+  worker,
+  logger,
+  passMs: config.worker.passMs,
+  reconcileMs: config.worker.reconcileMs,
+  signal: stopping.signal,
+});
 await db.close();
+logger.info({}, 'Worker stopped: its database connections are closed');
 process.exit(0);

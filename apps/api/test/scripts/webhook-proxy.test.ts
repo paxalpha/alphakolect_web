@@ -1,7 +1,7 @@
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createWebhookProxy, WEBHOOK_PATH } from '../../scripts/webhook-proxy.js';
+import { createWebhookProxy, PAYSTACK_SOURCES, WEBHOOK_PATH } from '../../scripts/webhook-proxy.js';
 
 // The development tunnel's door (plan §16.4 condition 7): only Paystack's notification gets through to the API, with only
 // the headers it needs, and everything else is a 404 that never reaches the API.
@@ -141,5 +141,79 @@ describe('the webhook-only door', () => {
     answer = { status: 200, body: 'y'.repeat(10_000), type: 'text/plain' };
     const res = await fetch(`${proxyUrl}${WEBHOOK_PATH}`, { method: 'POST', body: '{}' });
     expect((await res.text()).length).toBe(4096);
+  });
+});
+
+describe('the source-address list', () => {
+  const gated = async (options: { sourceHeader?: string } = {}) => {
+    const door = createWebhookProxy({
+      upstream: `http://127.0.0.1:${apiPort}`,
+      allowedSources: PAYSTACK_SOURCES,
+      ...options,
+    });
+    const port = await listen(door);
+    const post = (headers: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${port}${WEBHOOK_PATH}`, { method: 'POST', body: '{}', headers });
+    return { door, post, port };
+  };
+
+  it('the three documented Paystack addresses are the default list', () => {
+    expect([...PAYSTACK_SOURCES]).toEqual(['52.31.139.75', '52.49.173.169', '52.214.14.220']);
+  });
+
+  it('lets through a notification whose sender, as the tunnel says, is one of them, and no other', async () => {
+    const { door, post } = await gated();
+    try {
+      for (const ip of PAYSTACK_SOURCES)
+        expect((await post({ 'cf-connecting-ip': ip })).status, ip).toBe(200);
+      expect((await post({ 'cf-connecting-ip': '::ffff:52.31.139.75' })).status).toBe(200);
+      expect(seen).toHaveLength(4);
+      seen = [];
+      for (const ip of [
+        '203.0.113.9',
+        '52.31.139.76',
+        '52.31.139.7',
+        '0.0.0.0',
+        'unknown',
+        '52.31.139.75, 203.0.113.9',
+      ])
+        expect((await post({ 'cf-connecting-ip': ip })).status, ip).toBe(404);
+      // No address at all: not a notification from a tunnel that says who sent it.
+      expect((await post({})).status).toBe(404);
+      expect((await post({ 'x-forwarded-for': '52.31.139.75' })).status).toBe(404);
+      expect(seen).toEqual([]);
+    } finally {
+      door.close();
+    }
+  });
+
+  it('with x-forwarded-for, the last entry, which the tunnel added, decides: a sender cannot put a good address first', async () => {
+    const { door, post } = await gated({ sourceHeader: 'X-Forwarded-For' });
+    try {
+      expect((await post({ 'x-forwarded-for': '52.49.173.169' })).status).toBe(200);
+      expect((await post({ 'x-forwarded-for': '203.0.113.9, 52.49.173.169' })).status).toBe(200);
+      seen = [];
+      expect((await post({ 'x-forwarded-for': '52.49.173.169, 203.0.113.9' })).status).toBe(404);
+      expect((await post({ 'x-forwarded-for': '52.49.173.169,' })).status).toBe(404);
+      expect((await post({ 'cf-connecting-ip': '52.49.173.169' })).status).toBe(404);
+      expect(seen).toEqual([]);
+    } finally {
+      door.close();
+    }
+  });
+
+  it('answers a wrong route with a 404 whoever sends it', async () => {
+    const { door, port } = await gated();
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/v1/auth/login`, {
+        method: 'POST',
+        body: '{}',
+        headers: { 'cf-connecting-ip': '52.31.139.75' },
+      });
+      expect(res.status).toBe(404);
+      expect(seen).toEqual([]);
+    } finally {
+      door.close();
+    }
   });
 });

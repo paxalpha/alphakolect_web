@@ -86,6 +86,21 @@ describe('the role bootstrap and the worker', () => {
     });
   });
 
+  it('the check also refuses a database the worker cannot connect to (found in D1: a database older than the worker’s role)', async () => {
+    const database = inject('testDatabase');
+    await admin.query(`REVOKE CONNECT ON DATABASE "${database}" FROM alphakolect_worker`);
+    try {
+      const message = await inDatabase.query(check).then(
+        () => null,
+        (err: Error) => err.message,
+      );
+      expect(message).toMatch(/^alphakolect_worker cannot connect to this database: apply .*database\.sql/);
+    } finally {
+      await admin.query(`GRANT CONNECT ON DATABASE "${database}" TO alphakolect_worker`);
+    }
+    await expect(inDatabase.query(check)).resolves.toBeDefined();
+  });
+
   it('the check also refuses a privilege on a table, and a right to create objects', async () => {
     await inDatabase.query(`CREATE SCHEMA zz_worker_check`);
     try {

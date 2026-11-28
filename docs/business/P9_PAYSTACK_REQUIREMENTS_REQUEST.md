@@ -1,5 +1,8 @@
 # To Paystack: what is required to give each of our businesses a dedicated account number
 
+> **Status, 28 November 2026: superseded by what was sent.** A fuller clarification request, built from the DVA research, was sent to Paystack on 28 November (`P9_PAYSTACK_REQUIREMENTS_SENT.md`). This earlier draft was never sent; it is kept as the record. Its
+> questions on the account name, notifications, fees and balance timing are covered there; its question on whether a **business** can be the customer is covered, in more detail, by the sent text's items 1 and 2.
+
 **To:** Paystack Support (Nigeria)
 **From:** AlphaKolect
 **Prepared:** 25 November 2026, for the owner to send. **Not sent.** Answers are needed in writing; they decide whether wallet creation can be

@@ -25,3 +25,22 @@ document, and it goes to the independent reviewer before any code.
 3. **New hard parts take their place.** The sufficiency of the business's share, who may charge and when (the lock order), what the books mean when Paystack has not yet settled the money behind a share, and what a suspended business may do with a share it already holds.
 4. **Payouts stay off** (P9-22), and the stamp duty and transfer fee are P10's to post when they come (owner Q9).
 5. **Settlement is a separate state** (P9-35): a wallet share credited is not money available to pay out, and a charge between two shares does not change what Paystack holds.
+
+## 3. The plan, section by section
+
+| Plan section | Verdict | Why |
+|---|---|---|
+| §1 Scope, §2 findings due | **Redo the wording** | They name VA-to-VA transfers, TransactPay's questions and P9 condition 5; the findings (TA-12 restoring only on a confirmed charge, TA-25 suspension) still apply, in a new form |
+| §3.1 Billing state and invoices (P10-2) | **Keep, review** | An invoice, its states and the periods do not depend on a provider; the states that wait for a provider answer (submitted, unknown) go |
+| §3.2 Prices (BR-10.1, 10.2, 12.2) | **Keep** | Versioned pricing is independent of how money moves |
+| §3.3 Billable agents (BR-10.6a) | **Keep** | The count, the owner's rule N2 and its tests are independent |
+| §3.4 Billing dates, the run and the upcoming charge | **Keep, review** | The 90-day trial from email confirmation (N1), the dates and the run stand; what the run does at the end (an order) changes |
+| §3.5 The charge (about 300 lines) | **Redo entirely** | It is the provider charge: orders, claims, unknown, not-found finality, reversal, retries. Replaced by an atomic posting (§4 here) |
+| §3.6 Suspension enforcement (BR-10.4, TA-25) | **Keep, review** | Suspension after failed charges still stands; "failed" now means one thing: not enough share, not a provider doubt |
+| §3.7 Restore (BR-10.5, TA-12) | **Redo the trigger** | Restoring "only on a confirmed charge" becomes restoring when the posting commits |
+| §3.8 The switch, exemptions and the release guard | **Keep, review** | Billing stays off until released (BR-1.3), the release guard, the exemptions; the guard's reference to provider capabilities goes |
+| §4 Interfaces, §5 Tests | **Revise** | Fewer states, fewer endpoints for finding unknown orders, new sufficiency and concurrency tests |
+| §6 to §9 Obligations, decisions, questions, "before billing can charge" | **Redo** | The TransactPay questions are void; §9 and §9.1 (what to do when TransactPay answers) go; the release conditions become Paystack's and the owner's |
+| §10 to §17 The build and the six reviews | **Keep as history** | They record what was found, and much of it (locks, periods, ledger postings) is still true |
+
+**A count, so the size of the redo is known:** the plan mentions TransactPay 56 times, in §1 to §3.5, §3.8, §5, §6 to §9.1 and §10 onward; §3.5 alone is about a quarter of the document.

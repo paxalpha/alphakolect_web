@@ -66,7 +66,7 @@ in 6 prints the host so a person sees it.
 ## 6. What the operator does, and the reviewer accepts, before step D
 
 1. **Check the environment** (each time the local database or role is rebuilt): `psql "<superuser or migrator url>" -v ON_ERROR_STOP=1 -f packages/db/sql/checks/worker-role.sql`. It must end with `alphakolect_worker: attributes, memberships and privileges are as required`.
-2. **Check the local configuration by name**, never by value: `apps/api/.env` has `PAYMENT_PROVIDER=paystack`, an `sk_test_` key, `PAYSTACK_PAYOUTS` absent or `off`, and `DATABASE_URL`/`WORKER_DATABASE_URL` on `127.0.0.1`. `PAYSTACK_WALLET_CREATION=on` only for the sandbox test, on the reviewer's authorization.
+2. **Check the local configuration by name**, never by value: `apps/api/.env` has `PAYMENT_PROVIDER=paystack`, an `sk_test_` key, `PAYSTACK_PAYOUTS` absent or `off`, and `DATABASE_URL`/`WORKER_DATABASE_URL` on `127.0.0.1`. `PAYSTACK_WALLET_CREATION` absent or `off`: **off for the whole of D2a**, which is a test of the webhook door and creates no wallet. It may be switched on only in D2b, one named test, after condition 3 is resolved and on the reviewer's authorization.
 3. **Start in this order**: the API, the worker, the webhook-only door (`pnpm --filter @alphakolect/api webhook:proxy`), then the tunnel pointed at the door's port (4001).
 4. **Register** the tunnel's address plus `/v1/webhooks/paystack` as the **test** webhook in Paystack's dashboard, and set `PAYSTACK_WEBHOOK_SIGNING_SECRET` if the dashboard gave one.
 5. **Stop** when the test is done: the tunnel, the door, the worker; remove the webhook URL from the dashboard; set `PAYSTACK_WALLET_CREATION` back to off.

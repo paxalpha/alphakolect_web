@@ -10,3 +10,5 @@ Accounts for AlphaKolect's Multi-Business Savings Platform". **Prepared in:** th
 The eight questions, as the text sent covers them:
 
 1. **Business classification and eligibility.** Which Industry and Category AlphaKolect should select on its Paystack Compliance profile: Financial Technologies, Savings, Financial Cooperatives, Mobile Wallets, Payment Solution Service Providers or another; and whether the proposed multi-business DVA use is permitted under the right classification.
+
+2. **Business customer identity validation.** Our intended customers may be registered companies, cooperative societies or other savings-group entities, not individual consumers. Can a registered business or cooperative be created and validated as the DVA customer? If personal BVN validation is required, whose BVN: a director's, a beneficial owner's, an authorised signatory's or another individual's? Can the registered business name be used in the customer record? Must the first and last names match the name on the BVN? Is there an approved business-entity validation alternative? The required API fields and the supported validation procedure.

@@ -22,3 +22,5 @@ The eight questions, as the text sent covers them:
 6. **Settlement, balances and custody.** The settlement schedule for our integration, including when an incoming DVA payment becomes available in our Paystack balance (we understand NGN payouts are generally T+1); whether AlphaKolect may keep an internal ledger for several independent savings groups; whether Paystack supports several customer-linked DVAs for that; and whether the funds are held in separately identifiable or segregated accounts or within the merchant's normal settlement structure.
 
 7. **Inbound Transfer Approval.** We understand it is available only on Paystack-Titan virtual accounts: can it be enabled for AlphaKolect, does it support API-driven accept and reject rules, and how are rejected transfers handled.
+
+8. **DVA account limits.** We understand the default limit is 1,000 accounts per business: does it apply to our integration, and what documents, projected volumes or approval would be needed to raise it.

@@ -20,3 +20,5 @@ The eight questions, as the text sent covers them:
 5. **DVA fees and taxes.** The published pricing is 1% per transaction capped at NGN 300: does it apply to our use; is the fee deducted from the merchant's settlement; can it be passed to the person making the transfer; does VAT apply to it; are there other charges for assignment, requery, rejection or reversal; an illustrative transaction and settlement breakdown.
 
 6. **Settlement, balances and custody.** The settlement schedule for our integration, including when an incoming DVA payment becomes available in our Paystack balance (we understand NGN payouts are generally T+1); whether AlphaKolect may keep an internal ledger for several independent savings groups; whether Paystack supports several customer-linked DVAs for that; and whether the funds are held in separately identifiable or segregated accounts or within the merchant's normal settlement structure.
+
+7. **Inbound Transfer Approval.** We understand it is available only on Paystack-Titan virtual accounts: can it be enabled for AlphaKolect, does it support API-driven accept and reject rules, and how are rejected transfers handled.

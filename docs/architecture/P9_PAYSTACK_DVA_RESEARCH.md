@@ -126,3 +126,8 @@ Nigeria's standard automatic payout is **T+1** (next working day; weekends and p
 | Paid out | The funds have actually been sent to the destination |
 
 AlphaKolect must not let a customer withdraw merely because its ledger credited an amount: settlement and liquidity risk are managed separately.
+
+## 9. The 1,000-account limit
+
+Paystack's support documentation says a business has a **default limit of 1,000 virtual accounts** assigned to customers, and that an increase can be asked for (the developer documentation says it is subject to a review of the business and use case). If AlphaKolect is to give **one DVA to each
+participating business or savings group**, whether 1,000 is enough, and whether the limit is per integration, per merchant or another grouping in AlphaKolect's own setup, has to be settled before scaling.

@@ -574,3 +574,11 @@ implementation and the D2 evidence, and the project lead records **"P9 closed fo
 | 11 | Paystack and a lawyer confirm custody in writing; the account is approved for live use |
 | 12 | The TransactPay accounts are closed and the exposed keys revoked everywhere |
 | 13 | A payout reversed after success has an accounting treatment (P10) |
+
+### 16.14 What the DVA research changed (28 November 2026)
+
+The reviewer's research (`P9_PAYSTACK_DVA_RESEARCH.md`) found that Paystack's public documentation does **not** establish that AlphaKolect can give a dedicated account to each independent business, validate it without an individual's BVN, or keep per-business balances in
+anything but software. A clarification request was **sent to Paystack on 28 November 2026** (`P9_PAYSTACK_REQUIREMENTS_SENT.md`), before any identity form was designed, any account assigned or anything enabled live. The decisions, each a recommended option until Paystack answers:
+
+| # | Decision | Taken |
+|---|---|---|

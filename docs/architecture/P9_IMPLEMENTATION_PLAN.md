@@ -583,3 +583,4 @@ anything but software. A clarification request was **sent to Paystack on 28 Nove
 | # | Decision | Taken |
 |---|---|---|
 | P9-30 | The customer's identity | **Open.** Written classification and business-customer identity requirements are awaited (condition 3). **No production identity form is designed**: whose BVN, and whether a business can be the customer, are Paystack's to answer. The code's choice of a business name as `first_name` and "Business" as `last_name` (P9-21) is **unproven for a live validating account**: validation overwrites the customer's name with the BVN's. |
+| P9-31 | D2b, the one-wallet test | **Held** until Paystack answers items 1 (the classification) and 2 (the business-customer identity) of the sent email, and then asked for separately. A test-mode account accepted without a phone or validation is not evidence of live eligibility. |

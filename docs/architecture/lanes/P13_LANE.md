@@ -11,3 +11,7 @@ The OpenAPI contract (generated, checked in CI) and each phase's endpoints as th
 ## What can start now
 
 The frontend architecture, design system, route structure, and the contract-consumer set-up; journeys for the parts whose APIs already exist.
+
+## What stays gated
+
+Screens for payments, wallets and billing wait for their endpoints to be settled; a screen is never built against an assumed API. Nothing here may expose a switch that P9 keeps off (wallet creation, payouts).

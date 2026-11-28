@@ -20,3 +20,12 @@ Paystack must classify them from AlphaKolect's legal structure, services, fund f
 - **Model B, financial intermediary:** AlphaKolect runs the payment collection and ledger, receives funds associated with several groups, and manages balances or onward movement.
 
 **Recommendation recorded:** ask Paystack to classify the exact operating model in writing. Do not choose a category to make the DVA API work.
+
+## 2. What a DVA customer must give
+
+Paystack's support documentation lists three basic customer requirements: **a phone number, a full name and an email address**; and it says businesses in **Financial Services, Betting and General Services must validate their customers**.
+The developer documentation adds that, for Nigerian businesses in those categories, the customer's **identity must be validated before a DVA is generated**, and that the same information is used to name the bank account.
+
+The single-step assignment for the categories that must validate takes these fields: `email`, `first_name`, `middle_name`, `last_name`, `phone`, `preferred_bank`, `country`, and **`account_number` (linked to the BVN), `bvn` and `bank_code`**. The request is
+**asynchronous**: Paystack answers "in progress" and reports the validation and the assignment by webhook (`customeridentification.success` or `.failed`, `dedicatedaccount.assign.success` or `.failed`). So validation must succeed before the assignment succeeds,
+but the single-step call does not finish the whole thing in one HTTP response.

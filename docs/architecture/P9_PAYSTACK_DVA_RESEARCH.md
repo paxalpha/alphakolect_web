@@ -162,3 +162,7 @@ The documentation makes it important not to collapse three things:
 3. **Paystack's settlement and available balance**: what has actually settled and can be paid out.
 
 Reconciliation must connect all three **without assuming they are equal at the same moment**. That protects against duplicate webhooks, settlement delays, rejected transactions, reversals and discrepancies.
+
+## 12. Sources to keep
+
+Paystack: Dedicated Virtual Accounts; Validate Customer; the Customer API; the Dedicated Virtual Account API; the dedicated virtual accounts support article; Supported businesses; How to activate your business; Inbound Transfer Approval; Transactions pricing; Getting your money; Check your balance.

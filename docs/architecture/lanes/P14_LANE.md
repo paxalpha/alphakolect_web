@@ -11,3 +11,7 @@ Features to validate: the later part of this phase needs the other phases comple
 ## What can start now
 
 The legacy parity inventory and the business-rule traceability matrix (each rule to its test), which need only the documents and the existing tests.
+
+## What stays gated
+
+Full integration, acceptance and the final security acceptance wait for complete features. A passing sandbox is not production validation.

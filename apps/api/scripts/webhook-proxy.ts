@@ -143,33 +143,72 @@ export function createWebhookProxy(options: WebhookProxyOptions): Server {
   });
 }
 
+export type WebhookProxySettings = Readonly<{
+  port: number;
+  upstream: string;
+  /** Undefined only when the operator said `none`. */
+  allowedSources: readonly string[] | undefined;
+  sourceHeader: string;
+}>;
+
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+const IPV6 = /^[0-9a-f:]+$/i;
+const looksLikeAddress = (value: string): boolean => {
+  const v4 = IPV4.exec(value);
+  if (v4) return v4.slice(1).every((octet) => Number(octet) <= 255);
+  return value.includes(':') && IPV6.test(value);
+};
+
+/**
+ * What the command reads from its environment: the port, the API's address, the list of source addresses (Paystack's three unless the
+ * operator names others, or says `none`) and the header the tunnel puts the sender in. Anything unusable stops the start with a message
+ * that never repeats the value: a list that names something that is not an address would otherwise silently let nothing, or everything, in.
+ */
+export function webhookProxySettings(
+  env: Readonly<Record<string, string | undefined>>,
+): WebhookProxySettings {
+  const port = Number(env.WEBHOOK_PROXY_PORT ?? 4001);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535)
+    throw new Error('WEBHOOK_PROXY_PORT must be a port number from 1 to 65535');
+  const upstream = env.WEBHOOK_PROXY_UPSTREAM ?? 'http://127.0.0.1:4000';
+  const header = (env.WEBHOOK_PROXY_SOURCE_HEADER ?? 'cf-connecting-ip').trim().toLowerCase();
+  if (!/^[a-z0-9-]+$/.test(header)) throw new Error('WEBHOOK_PROXY_SOURCE_HEADER must be a header name');
+  const listed = env.WEBHOOK_PROXY_ALLOWED_SOURCES?.trim();
+  if (listed === 'none') return { port, upstream, allowedSources: undefined, sourceHeader: header };
+  if (!listed) return { port, upstream, allowedSources: [...PAYSTACK_SOURCES], sourceHeader: header };
+  const sources = listed
+    .split(',')
+    .map((a) => a.trim())
+    .filter(Boolean);
+  if (sources.length === 0 || !sources.every(looksLikeAddress))
+    throw new Error('WEBHOOK_PROXY_ALLOWED_SOURCES must be a comma list of IP addresses, or none');
+  return { port, upstream, allowedSources: sources, sourceHeader: header };
+}
+
+/** The two lines the door prints when it starts: where it forwards, and whether the source list is on, with the list and the header in force. */
+export function startupLines(settings: WebhookProxySettings): string[] {
+  return [
+    `Forwarding POST ${WEBHOOK_PATH} from 127.0.0.1:${settings.port} to ${settings.upstream}; every other request is a 404.`,
+    settings.allowedSources
+      ? `Source list ON: only ${settings.allowedSources.join(', ')}, as read from the ${settings.sourceHeader} header the tunnel sets.`
+      : 'WARNING: the source-address list is switched off (WEBHOOK_PROXY_ALLOWED_SOURCES=none): the signature is the only check on who sent a notification.',
+  ];
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const port = Number(process.env.WEBHOOK_PROXY_PORT ?? 4001);
-  const upstream = process.env.WEBHOOK_PROXY_UPSTREAM ?? 'http://127.0.0.1:4000';
-  const listed = process.env.WEBHOOK_PROXY_ALLOWED_SOURCES;
-  const allowedSources =
-    listed === 'none'
-      ? undefined
-      : listed
-        ? listed
-            .split(',')
-            .map((a) => a.trim())
-            .filter(Boolean)
-        : [...PAYSTACK_SOURCES];
-  const sourceHeader = process.env.WEBHOOK_PROXY_SOURCE_HEADER ?? 'cf-connecting-ip';
+  let settings: WebhookProxySettings;
+  try {
+    settings = webhookProxySettings(process.env);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : 'Unusable settings'}\nRefusing to start.\n`);
+    process.exit(1);
+  }
   const server = createWebhookProxy({
-    upstream,
-    ...(allowedSources ? { allowedSources } : {}),
-    sourceHeader,
+    upstream: settings.upstream,
+    ...(settings.allowedSources ? { allowedSources: settings.allowedSources } : {}),
+    sourceHeader: settings.sourceHeader,
   });
-  server.listen(port, '127.0.0.1', () => {
-    process.stdout.write(
-      `Forwarding POST ${WEBHOOK_PATH} from 127.0.0.1:${port} to ${upstream}; every other request is a 404.\n`,
-    );
-    process.stdout.write(
-      allowedSources
-        ? `Only from ${allowedSources.join(', ')}, as read from the ${sourceHeader} header the tunnel sets.\n`
-        : 'WARNING: the source-address list is switched off (WEBHOOK_PROXY_ALLOWED_SOURCES=none): the signature is the only check on who sent a notification.\n',
-    );
+  server.listen(settings.port, '127.0.0.1', () => {
+    for (const line of startupLines(settings)) process.stdout.write(`${line}\n`);
   });
 }

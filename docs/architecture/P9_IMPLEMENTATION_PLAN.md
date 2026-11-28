@@ -555,6 +555,8 @@ direct evidence of successive passes and a clean SIGTERM). The full §16.8 revie
 | D2b: one wallet | `PAYSTACK_WALLET_CREATION=on` for **one named test**, for one synthetic business, for a stated time; the account made and its name recorded; the customer found again; a second creation made no second account (condition 5); then **off** | **Condition 3 resolved** (correction A) | Paystack asks for anything the project does not hold; more than one account appears |
 | D2c: one deposit | One demo-bank deposit of at most a stated sum in kobo; the signed webhook stored; the worker confirms it; **one** ledger credit net of the fee; the books against Paystack's one balance, with the settlement delay noted | D2a and D2b done | The credit is not exactly one, or not the expected net; a difference opens that cannot be explained |
 
+**D2a creates no wallet** (the reviewer, 28 November): it tests the webhook door and the tunnel's header, with wallet creation and payouts off throughout. Wallet creation is D2b's, after condition 3.
+
 **What a D2 authorization must name before it is given:** the exact local database; the synthetic business and its test account; the maximum deposit in kobo, and the one deposit permitted, with the expected ledger entry; the tunnel's destination (the door, port 4001); how long wallet creation stays on;
 that payouts stay off; the stop conditions; and the cleanup: stop the tunnel, the door, the worker and the API; remove the test webhook URL; wallet creation off; no credential in the evidence.
 

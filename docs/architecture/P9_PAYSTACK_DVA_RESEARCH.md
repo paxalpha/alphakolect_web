@@ -93,3 +93,14 @@ test credential, and explains that real validation is done with live keys.
 
 So: a `test-bank` account assignment is useful integration evidence; a `test-bank` transfer is useful webhook and reconciliation evidence; a **test customer accepted without live identity checks does not prove a real customer will pass live validation**, and a test-mode success does not
 establish AlphaKolect's eligibility for live DVA use. Paystack's customer API says first name, last name and phone are **compulsory** when creating a DVA customer in the specified categories, so the earlier sandbox's acceptance of an incomplete customer is not permission to omit them live.
+
+## 7. DVA fees, and who bears them
+
+**The published rate** (Nigeria): 1% of the transaction, capped at ₦300 (support article and the pricing page): fee = min(1% × amount, ₦300). From the published rate only, not a guarantee of an invoice: ₦1,000 gives ₦10; ₦5,000 ₦50; ₦10,000 ₦100; ₦30,000 ₦300; ₦100,000 ₦300 (the cap).
+
+**Not established, to be confirmed in writing:**
+- whether the DVA fee is deducted from the merchant's settlement, and whether it can be passed to the payer or taken from what the customer is credited (the general "pass the fee on" documentation is about checkout, and is not to be assumed to cover inbound DVA transfers);
+- whether any separate charge applies to a rejected or reversed transfer;
+- **whether VAT is added**: the Nigerian DVA pricing row does not say its fee is VAT-exclusive (other rows say so for other fees), so a 7.5% VAT on top is neither shown nor excluded by that page.
+
+**For P10:** model the DVA fee and any tax as **separate ledger entries** until Paystack confirms the treatment.

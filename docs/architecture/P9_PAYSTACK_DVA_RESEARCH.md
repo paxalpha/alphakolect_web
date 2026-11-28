@@ -104,3 +104,25 @@ establish AlphaKolect's eligibility for live DVA use. Paystack's customer API sa
 - **whether VAT is added**: the Nigerian DVA pricing row does not say its fee is VAT-exclusive (other rows say so for other fees), so a 7.5% VAT on top is neither shown nor excluded by that page.
 
 **For P10:** model the DVA fee and any tax as **separate ledger entries** until Paystack confirms the treatment.
+
+## 8. Settlement, and what "available" means
+
+Three different events, which must not be collapsed:
+
+1. **The bank transfer succeeds** at the payer's bank.
+2. **Paystack reports it**: the `charge.success` webhook, which Paystack says is typically within a few minutes and can take longer.
+3. **The money becomes available for payout.** Paystack's balance documentation says a successful payment is not at once transfer balance: the balance endpoint shows what is available to send, after settlement on the merchant's schedule.
+
+Nigeria's standard automatic payout is **T+1** (next working day; weekends and public holidays do not count). A manual payout option exists, with its own eligibility and approval.
+
+**What it means for AlphaKolect.** A `charge.success` webhook does not mean the funds can be sent; a ledger credit does not mean Paystack has settled it; and the balance endpoint will not at once show a recent DVA transfer. The platform must tell apart:
+
+| State | Meaning |
+|---|---|
+| Payment received | Paystack has confirmed the incoming transaction |
+| Ledger credited | AlphaKolect has recorded the customer's accounting balance |
+| Settlement pending | The funds have not yet become available in the merchant's Paystack balance |
+| Available balance | What Paystack reports as available for transfers |
+| Paid out | The funds have actually been sent to the destination |
+
+AlphaKolect must not let a customer withdraw merely because its ledger credited an amount: settlement and liquidity risk are managed separately.

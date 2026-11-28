@@ -11,3 +11,7 @@ The P9 worker and its configuration (this lane starts from the P9 Paystack branc
 ## What can start now
 
 The worker runtime and credential-separation design, the container and secret-injection design, the backup and restore plan, monitoring and alerting, the deployment and rollback runbooks, and the retention rule for stored payment events.
+
+## What stays gated
+
+**No production deployment, no production credential and no DNS cutover** without separate approval. Preparation is not deployment.

@@ -49,3 +49,20 @@ So the name fields are not display labels where identity validation applies. The
 | Can one business customer have a DVA without collecting an individual's personal identity? | Not established |
 
 **Verdict recorded: condition 3 is genuinely unresolved.** A BVN collection form must not be designed around an assumed answer.
+
+## 3. A business customer is not an individual customer
+
+A DVA is assigned to a **customer record**: create a customer; validate it where required; create the DVA for it. The validation is built on **personal** identity (BVN and a bank account). No public documentation was found establishing a separate **legal-entity**
+verification flow for assigning a DVA to a business customer. That is not proof that Paystack cannot support the use case: it is that the public documentation does not establish it.
+
+**The B2B2C naming feature does not settle it.** Paystack offers a naming feature for businesses that provide virtual accounts as a service to other businesses (its example: a school-management platform whose accounts show the school's name instead of the platform's), by
+contacting support for review. Two separate questions:
+
+| | |
+|---|---|
+| Documented | Paystack can customise the account name for B2B2C businesses, subject to its review |
+| **Unresolved** | Whether a company itself can be the validated DVA customer without an individual's BVN |
+
+**Naming is not custody either.** Paystack describes DVAs as payment accounts linked to its merchant business, whose incoming transfers are recorded as transactions from the assigned customer. That does not establish that each business customer has a separately
+safeguarded balance, that funds are held in trust for it, that it can withdraw independently, that the merchant's balance is segregated by customer, or that Paystack has approved a pooled-funds arrangement for AlphaKolect. **An internal ledger separates balances in
+software and accounting; it is not evidence of legal segregation.** This is why the custody letter and the legal review stay independent live-money gates.

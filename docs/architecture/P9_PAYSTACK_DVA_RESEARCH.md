@@ -66,3 +66,10 @@ contacting support for review. Two separate questions:
 **Naming is not custody either.** Paystack describes DVAs as payment accounts linked to its merchant business, whose incoming transfers are recorded as transactions from the assigned customer. That does not establish that each business customer has a separately
 safeguarded balance, that funds are held in trust for it, that it can withdraw independently, that the merchant's balance is segregated by customer, or that Paystack has approved a pooled-funds arrangement for AlphaKolect. **An internal ledger separates balances in
 software and accounting; it is not evidence of legal segregation.** This is why the custody letter and the legal review stay independent live-money gates.
+
+## 4. Account naming, providers and inbound transfer approval
+
+- **Default naming:** Paystack-Titan and Wema accounts show "Paystack Business Name / Customer Name" in the support article; the developer documentation says "Product Name / Customer Name". The small inconsistency means the **name the API returns, and Paystack's written confirmation, are authoritative**.
+- **Length and characters:** no published DVA account-name length limit was found. To ask: maximum length, allowed characters, truncation, whether the B2B2C name has its own limit, and whether the customer name is always the validated BVN name.
+- **Inbound Transfer Approval:** Paystack's support documentation says it is available **only on Paystack-Titan** virtual accounts, and lets a merchant accept or reject an incoming credit before it is processed (the webhook must answer within 5 seconds, or Paystack accepts it). It could enforce
+  customer limits, restrict third-party deposits (Paystack describes comparing the sender's name), or block suspended accounts. **Not to be assumed enabled for AlphaKolect:** ask whether it is available on the integration, whether it works through the API, its webhook and response rules, what a rejection does, and what happens to a transfer the sender has already made.

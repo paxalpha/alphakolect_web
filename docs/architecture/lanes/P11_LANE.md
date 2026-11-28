@@ -11,3 +11,7 @@ The ledger (P6, closed) and savings (P8, closed), both in `main`; the payment pr
 ## What can start now
 
 Requirements and business-rule review from `BUSINESS_RULES.md`; the domain and accounting design; the plan for the independent reviewer; the ledger and permission tests that need no provider.
+
+## What stays gated
+
+**Any real disbursement is a payout, and payouts are off** (P9-22, refused in production) until P10 posts the fee and stamp duty. Designing and testing a disbursement is not authorizing one. Live money is gated by P9's release conditions.

@@ -7,3 +7,7 @@
 ## What it depends on
 
 Features to validate: the later part of this phase needs the other phases complete.
+
+## What can start now
+
+The legacy parity inventory and the business-rule traceability matrix (each rule to its test), which need only the documents and the existing tests.

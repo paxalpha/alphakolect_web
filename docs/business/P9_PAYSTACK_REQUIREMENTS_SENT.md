@@ -16,3 +16,5 @@ The eight questions, as the text sent covers them:
 3. **B2B2C account naming.** Whether the B2B2C naming feature can be enabled for AlphaKolect; the supported naming format, maximum account-name length, permitted characters, truncation behaviour, and whether it is available with both Wema and Paystack-Titan.
 
 4. **Customer notifications.** When a transfer arrives in a DVA, whether Paystack sends an SMS or email directly to the customer or only notifies the merchant (email, Dashboard, webhooks); and whether customers are notified of failed, rejected or reversed transfers.
+
+5. **DVA fees and taxes.** The published pricing is 1% per transaction capped at NGN 300: does it apply to our use; is the fee deducted from the merchant's settlement; can it be passed to the person making the transfer; does VAT apply to it; are there other charges for assignment, requery, rejection or reversal; an illustrative transaction and settlement breakdown.

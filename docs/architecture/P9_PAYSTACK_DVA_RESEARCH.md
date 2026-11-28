@@ -37,3 +37,15 @@ Paystack's validation needs a customer's **BVN and a bank account connected to t
 
 So the name fields are not display labels where identity validation applies. The idea of sending `first_name` as a business name and `last_name` as "Business" is therefore not a documented workaround, and the code's current choice of those fields
 (plan P9-21) is **unproven for a live validating account**. The sandbox accepted it only because test mode does not validate.
+
+### 2b. What the public documentation leaves unanswered
+
+| Question | Public documentation |
+|---|---|
+| Can a Nigerian registered company be the DVA customer without an individual's identity? | Not established |
+| Whose BVN: a director's, a beneficial owner's, the savings group's operator's? | Not established |
+| Can a company name be used as `first_name`? | Not established; validation overwrites the name with the BVN's |
+| Can the BVN name differ from the proposed customer name? | Validation documentation indicates the name matters; no business-entity exception is documented |
+| Can one business customer have a DVA without collecting an individual's personal identity? | Not established |
+
+**Verdict recorded: condition 3 is genuinely unresolved.** A BVN collection form must not be designed around an assumed answer.

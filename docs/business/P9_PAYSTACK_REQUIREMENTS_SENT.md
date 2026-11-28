@@ -8,3 +8,5 @@ Accounts for AlphaKolect's Multi-Business Savings Platform". **Prepared in:** th
 **Answer awaited. Condition 3 stays open until Paystack replies in writing**, and D2b waits for the reply to items 1 and 2 (plan §16.14).
 
 The eight questions, as the text sent covers them:
+
+1. **Business classification and eligibility.** Which Industry and Category AlphaKolect should select on its Paystack Compliance profile: Financial Technologies, Savings, Financial Cooperatives, Mobile Wallets, Payment Solution Service Providers or another; and whether the proposed multi-business DVA use is permitted under the right classification.

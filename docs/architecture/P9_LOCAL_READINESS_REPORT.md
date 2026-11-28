@@ -84,6 +84,8 @@ repeating the value; and the real command run as an operator runs it), so the op
 | That the restriction is on | that same line, and **no** line beginning `WARNING: the source-address list is switched off` |
 | Wallet creation and payouts during D2a | **Both `off`**, read from the `.env` by name before the door starts and unchanged until D2a ends (the reviewer, 28 November). Wallet creation belongs to D2b; payouts stay off throughout |
 
+If the `.env` shows wallet creation or payouts on at any point in D2a, D2a stops and the setting is reported, not corrected silently.
+
 **Not shown, and not shown by any test:** that a real tunnel delivers the header the door reads, with the value the door expects. The tests prove how the door handles the header; **what a tunnel really sends is established only by D2a**, which must show a request
 through the real tunnel reaching the API (a signed one, from Paystack) and one that does not (unsigned, or from a source the list refuses). Until then the list is a design, not a demonstrated control, and the signature remains the only check relied on.
 

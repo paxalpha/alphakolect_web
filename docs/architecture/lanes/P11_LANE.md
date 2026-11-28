@@ -7,3 +7,7 @@
 ## What it depends on
 
 The ledger (P6, closed) and savings (P8, closed), both in `main`; the payment primitives of P9 only for the money-moving steps.
+
+## What can start now
+
+Requirements and business-rule review from `BUSINESS_RULES.md`; the domain and accounting design; the plan for the independent reviewer; the ledger and permission tests that need no provider.

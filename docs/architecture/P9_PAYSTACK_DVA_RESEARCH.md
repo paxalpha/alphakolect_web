@@ -73,3 +73,15 @@ software and accounting; it is not evidence of legal segregation.** This is why 
 - **Length and characters:** no published DVA account-name length limit was found. To ask: maximum length, allowed characters, truncation, whether the B2B2C name has its own limit, and whether the customer name is always the validated BVN name.
 - **Inbound Transfer Approval:** Paystack's support documentation says it is available **only on Paystack-Titan** virtual accounts, and lets a merchant accept or reject an incoming credit before it is processed (the webhook must answer within 5 seconds, or Paystack accepts it). It could enforce
   customer limits, restrict third-party deposits (Paystack describes comparing the sender's name), or block suspended accounts. **Not to be assumed enabled for AlphaKolect:** ask whether it is available on the integration, whether it works through the API, its webhook and response rules, what a rejection does, and what happens to a transfer the sender has already made.
+
+## 5. Who is told when money arrives
+
+| Notification | Public documentation |
+|---|---|
+| The merchant, by email | Documented |
+| The merchant's Dashboard transaction | Documented |
+| The merchant's webhook (`charge.success`) | Documented |
+| An SMS to the DVA's customer | No documented guarantee found |
+| An email to the DVA's customer | No documented guarantee found |
+
+**Recommendation recorded:** AlphaKolect plans to send **its own** customer notification, and only **after** the payment has been authenticated, confirmed with Paystack and posted to the ledger. A webhook that merely reached the server is not a reason to tell a customer their money arrived.

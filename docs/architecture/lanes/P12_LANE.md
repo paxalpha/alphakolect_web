@@ -11,3 +11,7 @@ The audit and authorization foundation (P5, closed). KYC limits are enforced in 
 ## What can start now
 
 The outbox, the email port and its retry and delivery tracking; private document storage; the support ticket lifecycle; the general KYC tier and limit framework, without collecting any identity data.
+
+## What stays gated
+
+**No BVN or other identity collection** until Paystack answers in writing what a dedicated account requires (P9 condition 3) and the owner approves a privacy form. The framework may be designed; sensitive collection is not invented ahead of the answer.

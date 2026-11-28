@@ -131,3 +131,24 @@ AlphaKolect must not let a customer withdraw merely because its ledger credited 
 
 Paystack's support documentation says a business has a **default limit of 1,000 virtual accounts** assigned to customers, and that an increase can be asked for (the developer documentation says it is subject to a review of the business and use case). If AlphaKolect is to give **one DVA to each
 participating business or savings group**, whether 1,000 is enough, and whether the limit is per integration, per merchant or another grouping in AlphaKolect's own setup, has to be settled before scaling.
+
+## 10. Claim by claim
+
+| Claim | Verdict | Correction or qualification |
+|---|---|---|
+| AlphaKolect likely falls under Financial Services | Supported as a possibility | The exact category depends on the operating model and Paystack's classification |
+| Savings, Financial Cooperatives and Mobile Wallets are Financial Services categories | Verified | All appear on Paystack's list |
+| Financial Services DVA customers need name and phone | Verified | First name, last name and phone become compulsory |
+| Financial Services customers need identity validation | Verified | For Nigerian businesses in this category |
+| BVN and a bank account are required | Verified | The account must be connected to the BVN |
+| The business-customer BVN model is undocumented | Verified | No clear entity-customer identity flow found |
+| A business name can simply be used as first name | **Unsupported** | Successful validation updates names to the BVN-registered names |
+| Paystack offers B2B2C account naming | Verified | Subject to Paystack's review and extension |
+| The naming feature proves business-customer validation is supported | **False inference** | Naming and identity verification are separate |
+| Paystack does not notify the customer | Not established | Public documentation describes merchant notifications only |
+| The DVA fee is 1% capped at ₦300 | Verified | Allocation and VAT remain open |
+| Funds are available immediately after the webhook | **Incorrect** | Payment notification and payout availability are separate |
+| Nigerian standard settlement is T+1 | Verified | Next working day, under the standard automatic schedule |
+| Inbound Transfer Approval is Titan-only | Verified | Paystack says so |
+| DVA is for registered businesses that complete go-live | Verified | Nigeria and Ghana |
+| The default account limit is 1,000 | Verified | Increases are subject to review |

@@ -7,3 +7,7 @@
 ## What it depends on
 
 The audit and authorization foundation (P5, closed). KYC limits are enforced in payments, so they meet P9 when built.
+
+## What can start now
+
+The outbox, the email port and its retry and delivery tracking; private document storage; the support ticket lifecycle; the general KYC tier and limit framework, without collecting any identity data.

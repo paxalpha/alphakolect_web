@@ -29,3 +29,11 @@ The developer documentation adds that, for Nigerian businesses in those categori
 The single-step assignment for the categories that must validate takes these fields: `email`, `first_name`, `middle_name`, `last_name`, `phone`, `preferred_bank`, `country`, and **`account_number` (linked to the BVN), `bvn` and `bank_code`**. The request is
 **asynchronous**: Paystack answers "in progress" and reports the validation and the assignment by webhook (`customeridentification.success` or `.failed`, `dedicatedaccount.assign.success` or `.failed`). So validation must succeed before the assignment succeeds,
 but the single-step call does not finish the whole thing in one HTTP response.
+
+### 2a. The BVN, and the name that follows from it
+
+Paystack's validation needs a customer's **BVN and a bank account connected to that BVN**. Documented failures include an account that cannot be resolved, and a wrong account name, BVN or account number. **When validation succeeds, the customer's
+`first_name` and `last_name` are updated to the name on the BVN, and cannot then be changed through Update Customer; changing them needs revalidation.**
+
+So the name fields are not display labels where identity validation applies. The idea of sending `first_name` as a business name and `last_name` as "Business" is therefore not a documented workaround, and the code's current choice of those fields
+(plan P9-21) is **unproven for a live validating account**. The sandbox accepted it only because test mode does not validate.

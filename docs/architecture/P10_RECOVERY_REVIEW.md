@@ -56,3 +56,16 @@ This is the shape the revised plan must work out and the reviewer must test, not
 5. **No worker claim for a charge**, unless the run itself needs leasing for scale. The run can be one function that finds due invoices and posts each in its own transaction.
 6. **What a share is not.** A credited share is not Paystack money available (P9-35). A charge between two shares moves no money at Paystack, but the platform's share is then AlphaKolect's revenue sitting in the pooled balance; paying it out is a payout (off), after settlement.
 7. **Failure and reversal.** A reversed deposit (a provider reversal after credit) goes to a person (P9, plan E1); whether a charge already posted against that deposit stands is a question for the revised plan and the owner.
+
+## 5. Decisions the revised plan needs, and who makes them
+
+| # | Decision | Whose | Recommended |
+|---|---|---|---|
+| 1 | What a business whose share is too small for its invoice experiences: the retry cadence, the suspension point, held months (the owner answered the retry, suspension and held-month rules for the provider charge, in the F and G forms) | Owner, if the answers do not carry over | Carry the owner's answers over unchanged where the facts are the same, and ask again only where "failed" meant a provider doubt |
+| 2 | Whether billing may charge a share that is credited but not yet settled | Project lead | **Yes**: it moves nothing at Paystack. Payout is the gated step |
+| 3 | A deposit reversed after a charge was posted against it | Owner and lead | A person decides (as P9 E1), nothing automatic |
+| 4 | The stamp duty and transfer fee on a later payout | Owner (answered, Q9: the business bears them) | P10 builds the posting; payouts stay off until then |
+| 5 | Whether the run needs leasing or a worker | Reviewer | A single idempotent function first; leasing only if scale needs it |
+| 6 | The release guard's conditions with no provider facts to wait for | Lead | Billing stays off until the lead releases it (BR-1.3), with the ledger and suspension tests green in CI |
+
+**Questions for Paystack:** none for billing itself, which calls Paystack for nothing. The open Paystack questions (identity, settlement, custody) are P9's and gate going live, not the design of the charge.

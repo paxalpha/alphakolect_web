@@ -85,3 +85,11 @@ software and accounting; it is not evidence of legal segregation.** This is why 
 | An email to the DVA's customer | No documented guarantee found |
 
 **Recommendation recorded:** AlphaKolect plans to send **its own** customer notification, and only **after** the payment has been authenticated, confirmed with Paystack and posted to the ledger. A webhook that merely reached the server is not a reason to tell a customer their money arrived.
+
+## 6. Test mode against live mode
+
+DVAs are available to registered businesses in Nigeria and Ghana that have **completed go-live**. For Nigerian testing Paystack documents `preferred_bank = test-bank` and a demo bank app for transfers into those accounts. The customer-validation documentation gives a special
+test credential, and explains that real validation is done with live keys.
+
+So: a `test-bank` account assignment is useful integration evidence; a `test-bank` transfer is useful webhook and reconciliation evidence; a **test customer accepted without live identity checks does not prove a real customer will pass live validation**, and a test-mode success does not
+establish AlphaKolect's eligibility for live DVA use. Paystack's customer API says first name, last name and phone are **compulsory** when creating a DVA customer in the specified categories, so the earlier sandbox's acceptance of an incomplete customer is not permission to omit them live.

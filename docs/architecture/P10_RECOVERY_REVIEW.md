@@ -16,3 +16,12 @@ document, and it goes to the independent reviewer before any code.
 | The provider | Paystack, not TransactPay (P9 revision 8). One pooled balance; no transfer between accounts; payouts off |
 | The reviewer's last word on it | The sixth plan review: "strong draft, not approved", gated on the owner's answers (now in) and TransactPay's (now void) |
 | Nothing deployed | No live money anywhere; P9 itself is open |
+
+## 2. What changed under the plan
+
+1. **The charge is not a provider call.** With one Paystack balance and no transfer between accounts, the business's payment to AlphaKolect moves nothing at Paystack: the business's wallet share goes down and AlphaKolect's goes up, **in the books, in one database transaction**.
+   The money stays in the same Paystack balance until it is paid out.
+2. **So the hard parts of the old charge disappear.** An unknown outcome after a timeout, a lookup that finds nothing, a "not found is final" rule, a reversal window, a provider status table, a repeated reference: all of them existed because a charge could be in flight at a provider. A posting inside one transaction is committed or it is not.
+3. **New hard parts take their place.** The sufficiency of the business's share, who may charge and when (the lock order), what the books mean when Paystack has not yet settled the money behind a share, and what a suspended business may do with a share it already holds.
+4. **Payouts stay off** (P9-22), and the stamp duty and transfer fee are P10's to post when they come (owner Q9).
+5. **Settlement is a separate state** (P9-35): a wallet share credited is not money available to pay out, and a charge between two shares does not change what Paystack holds.

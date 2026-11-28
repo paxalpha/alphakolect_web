@@ -591,3 +591,5 @@ anything but software. A clarification request was **sent to Paystack on 28 Nove
 | P9-36 | Telling the customer | AlphaKolect sends its own notification, after the payment is authenticated, confirmed with Paystack and posted to the ledger, never on the webhook's arrival. Paystack documents notifying the merchant only (item 4 of the email). |
 | P9-37 | How many accounts | The default is 1,000 DVAs. One per business means it must be asked about before scaling (item 8): whether it applies to the integration, how to raise it, what Paystack needs. |
 | P9-38 | Three ledgers | Paystack's transaction record (`provider_transactions`), AlphaKolect's customer ledger (the books), and Paystack's settled, available balance: reconciliation connects all three and does not assume they are equal at one moment. |
+
+**Unchanged by any of this:** D2a (the webhook door) stays a separate, bounded authorization with no wallet created; D2b waits for Paystack's reply (P9-31); D2c is separate; custody, the legal review and the TransactPay remediation stay independent live-money gates; payouts stay off.

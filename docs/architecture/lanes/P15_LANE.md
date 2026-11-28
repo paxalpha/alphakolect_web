@@ -7,3 +7,7 @@
 ## What it depends on
 
 The P9 worker and its configuration (this lane starts from the P9 Paystack branch). P9 conditions 9 and 10 (the worker role in each real environment, and its credentials kept apart) are proved here.
+
+## What can start now
+
+The worker runtime and credential-separation design, the container and secret-injection design, the backup and restore plan, monitoring and alerting, the deployment and rollback runbooks, and the retention rule for stored payment events.

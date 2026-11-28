@@ -152,3 +152,13 @@ participating business or savings group**, whether 1,000 is enough, and whether 
 | Inbound Transfer Approval is Titan-only | Verified | Paystack says so |
 | DVA is for registered businesses that complete go-live | Verified | Nigeria and Ghana |
 | The default account limit is 1,000 | Verified | Increases are subject to review |
+
+## 11. Three ledgers, not one
+
+The documentation makes it important not to collapse three things:
+
+1. **The Paystack transaction record**: what Paystack reports as an incoming payment: reference, status, amount and fee.
+2. **AlphaKolect's customer ledger**: what AlphaKolect owes or records for each savings group or business.
+3. **Paystack's settlement and available balance**: what has actually settled and can be paid out.
+
+Reconciliation must connect all three **without assuming they are equal at the same moment**. That protects against duplicate webhooks, settlement delays, rejected transactions, reversals and discrepancies.

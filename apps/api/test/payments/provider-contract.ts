@@ -9,7 +9,7 @@ import {
 
 /**
  * Behaviour every PaymentProvider adapter must satisfy (TARGET_ARCHITECTURE §12, §24).
- * FakeProvider runs it now; the TransactPay adapter runs it against the sandbox in P9.
+ * FakeProvider runs it now; the Paystack adapter is held to its documentation by its own suite (paystack-provider.test.ts).
  * `fund` puts money into a VA from outside the provider, which each adapter does differently.
  */
 export function describeProviderContract(

@@ -105,7 +105,7 @@ import {
   listPlatformUnmatched,
   listPlatformWallets,
   listWalletReceipts,
-  receiveTransactPayEvent,
+  receivePaystackEvent,
   resolveReconciliationFinding,
   resolveUnmatchedTransaction,
 } from './endpoints/payments.js';
@@ -243,7 +243,7 @@ export const endpoints = {
   listPlatformUnmatched,
   listPlatformWallets,
   listWalletReceipts,
-  receiveTransactPayEvent,
+  receivePaystackEvent,
   resolveReconciliationFinding,
   resolveUnmatchedTransaction,
 } as const;

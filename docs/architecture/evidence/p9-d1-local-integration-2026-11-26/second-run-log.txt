@@ -1,0 +1,27 @@
+run 2 of D1 | head 3f7606cc7e60d3a07ba67c385fb39619ca6fdf5a | 06:31:54Z
+--- worker-role.sql immediately before startup (superuser, local socket)
+NOTICE:  alphakolect_worker: attributes, memberships and privileges are as required
+DO
+worker CONNECT: t; memberships: 0
+migrations recorded: 57 (unfinished 0)
+--- API
+{"level":30,"time":"2026-11-27T06:32:05.320Z","service":"api","port":4000,"env":"development","msg":"API listening"}
+  TCP    127.0.0.1:4000         0.0.0.0:0              LISTENING       29744
+GET /v1/health -> 200
+--- baseline, API alone, 30 s apart (nothing of the worker yet)
+t0 xact_commit=18 sessions=14 worker_sessions_now=0
+t+30 xact_commit=28 sessions=21 worker_sessions_now=0
+--- worker started: windows pid 18264 at 06:33:06Z
+{"level":30,"time":"2026-11-27T06:32:52.517Z","service":"api","provider":"paystack","msg":"Worker running"}
+worker alive: yes | 06:33:10Z | xact_commit=38 sessions=27 worker_sessions_now=0
+worker alive: yes | 06:33:47Z | xact_commit=53 sessions=37 worker_sessions_now=0
+worker alive: yes | 06:34:26Z | xact_commit=66 sessions=47 worker_sessions_now=1
+worker alive: yes | 06:35:02Z | xact_commit=82 sessions=56 worker_sessions_now=0
+worker alive: yes | 06:35:40Z | xact_commit=96 sessions=65 worker_sessions_now=0
+--- worker log so far
+{"level":30,"time":"2026-11-27T06:32:52.517Z","service":"api","provider":"paystack","msg":"Worker running"}
+--- state
+payments rows: wallets=0 events=0 orders=0 findings=0
+--- direct evidence of passes: the worker role's connections, sampled each second for 80 s (pid 29300 alive at start: yes) 06:36:09Z
+worker alive at the end: yes 06:36:12Z
+{"level":30,"time":"2026-11-27T06:32:52.517Z","service":"api","provider":"paystack","msg":"Worker running"}

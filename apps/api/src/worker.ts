@@ -1,4 +1,5 @@
 import { createPaymentProvider } from './integrations/payments/index.js';
+import { runWorkerLoop } from './modules/payments/worker-loop.js';
 import { PaymentsWorker } from './modules/payments/worker-tasks.js';
 import { ConfigError, loadConfig, type Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
@@ -7,9 +8,6 @@ import { createLogger } from './platform/logger.js';
 // The background worker (P9 §3.7; TA-11): a second entry point of the API, connecting as its own role,
 // alphakolect_worker (P9-R1). The work is kept in the domain's own rows, claimed with a lease (P9-1, P9-R3), so several
 // workers can run and a dead one loses nothing.
-
-const PASS_MS = 30_000;
-const RECONCILE_MS = 15 * 60_000;
 
 function readConfig(): Config {
   try {
@@ -32,27 +30,22 @@ if (!config.workerDatabaseUrl) {
 const db = createDb(config.workerDatabaseUrl);
 const worker = new PaymentsWorker({ db, provider: createPaymentProvider(config), logger });
 
-let stopping = false;
+const stopping = new AbortController();
 const stop = (signal: NodeJS.Signals) => {
   logger.info({ signal }, 'Worker stopping');
-  stopping = true;
+  stopping.abort();
 };
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 
 logger.info({ provider: config.payments.provider }, 'Worker running');
-let lastReconcile = 0;
-while (!stopping) {
-  try {
-    await worker.runOnce();
-    if (Date.now() - lastReconcile >= RECONCILE_MS) {
-      lastReconcile = Date.now();
-      await worker.reconcile();
-    }
-  } catch (err) {
-    logger.error({ err }, 'A worker pass failed');
-  }
-  await new Promise((resolve) => setTimeout(resolve, PASS_MS).unref());
-}
+await runWorkerLoop({
+  worker,
+  logger,
+  passMs: config.worker.passMs,
+  reconcileMs: config.worker.reconcileMs,
+  signal: stopping.signal,
+});
 await db.close();
+logger.info({}, 'Worker stopped: its database connections are closed');
 process.exit(0);

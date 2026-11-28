@@ -1,5 +1,9 @@
 # To TransactPay: incoming deposits and balances
 
+> **Superseded on 19 November 2026.** The payments provider is now Paystack (`docs/architecture/P9_IMPLEMENTATION_PLAN.md` §16). This form was not
+> answered or sent, and is kept as the record.
+
+
 **To:** TransactPay Support
 **From:** AlphaKolect Integration Team
 **Prepared:** 10 November 2026

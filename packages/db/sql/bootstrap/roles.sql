@@ -44,3 +44,25 @@ BEGIN
   END LOOP;
 END
 $$;
+
+-- The worker's role belongs to no role, and no role belongs to it (P9 §16.4 condition 9). The block above re-applies attributes and
+-- passwords but removes no membership that already exists, and a membership (pg_read_all_data, a login role granted to it, anything)
+-- would give it more than its functions. Each is revoked, by the grantor that made it, so a re-run of this file restores the
+-- state a fresh cluster has. The other roles are not touched here.
+DO $$
+DECLARE
+  m record;
+BEGIN
+  FOR m IN
+    SELECT granted.rolname AS granted_role, member.rolname AS member_role, grantor.rolname AS grantor_role
+      FROM pg_auth_members am
+      JOIN pg_roles granted ON granted.oid = am.roleid
+      JOIN pg_roles member ON member.oid = am.member
+      JOIN pg_roles grantor ON grantor.oid = am.grantor
+     WHERE granted.rolname = 'alphakolect_worker' OR member.rolname = 'alphakolect_worker'
+  LOOP
+    EXECUTE format('REVOKE %I FROM %I GRANTED BY %I', m.granted_role, m.member_role, m.grantor_role);
+    RAISE NOTICE 'Revoked a membership of alphakolect_worker (role %, member %)', m.granted_role, m.member_role;
+  END LOOP;
+END
+$$;

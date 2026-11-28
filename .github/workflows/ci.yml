@@ -92,6 +92,8 @@ jobs:
     env:
       OASDIFF_VERSION: 1.32.1
       SPEC: packages/contracts/openapi/v1.json
+      # Reviewed, accepted breaking changes, each with its reason (one path, no wildcards).
+      IGNORE: packages/contracts/openapi/oasdiff-ignore.txt
     steps:
       - uses: actions/checkout@v4
         with:
@@ -117,7 +119,31 @@ jobs:
             exit 0
           fi
           git show "${BASE_SHA}:${SPEC}" > base-openapi.json
-          ./oasdiff breaking base-openapi.json "${SPEC}" --fail-on ERR --format githubactions
+          ./oasdiff breaking base-openapi.json "${SPEC}" --fail-on ERR --format githubactions --err-ignore "${IGNORE}"
+
+      # The exception is exact: the same comparison, with one other path removed from the new spec, must still fail.
+      - name: The accepted exception hides nothing else
+        env:
+          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if ! git cat-file -e "${BASE_SHA}:${SPEC}" 2>/dev/null; then exit 0; fi
+          git show "${BASE_SHA}:${SPEC}" > base-openapi.json
+          node -e '
+            const fs = require("fs");
+            const base = JSON.parse(fs.readFileSync("base-openapi.json", "utf8"));
+            const next = JSON.parse(fs.readFileSync(process.env.SPEC, "utf8"));
+            const other = Object.keys(base.paths).find((p) => p in next.paths);
+            if (!other) { console.log("No path in common: nothing to test."); process.exit(0); }
+            delete next.paths[other];
+            fs.writeFileSync("mutated-openapi.json", JSON.stringify(next));
+            console.log("Removed " + other + " from the new spec.");
+          '
+          [ -f mutated-openapi.json ] || exit 0
+          if ./oasdiff breaking base-openapi.json mutated-openapi.json --fail-on ERR --err-ignore "${IGNORE}" > /dev/null; then
+            echo "::error::The accepted exception also hides the removal of another path"
+            exit 1
+          fi
+          echo "Removing another path still fails the check, as it must."
 
   secrets:
     name: Secret scan (gitleaks)

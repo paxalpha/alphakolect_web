@@ -188,7 +188,7 @@ describe('the webhook (TA-8)', () => {
     const id = `tx-${randomBytes(8).toString('hex')}`;
     const payload = `{"type":"transfer.inbound", "providerTxId":"${id}",  "amount":"999"}`;
     const res = await request(app)
-      .post('/v1/webhooks/transactpay')
+      .post('/v1/webhooks/paystack')
       .set('Content-Type', 'application/json')
       .set('Authorization', 'Bearer not-for-keeping')
       .set('Cookie', 'session=not-for-keeping')
@@ -205,14 +205,14 @@ describe('the webhook (TA-8)', () => {
   });
 
   it('an unrecognised body is stored with no lead; too large, or not JSON, is refused', async () => {
-    const res = await request(app).post('/v1/webhooks/transactpay').send({ hello: 'world' });
+    const res = await request(app).post('/v1/webhooks/paystack').send({ hello: 'world' });
     expect(res.status).toBe(200);
     const big = await request(app)
-      .post('/v1/webhooks/transactpay')
+      .post('/v1/webhooks/paystack')
       .send({ pad: 'x'.repeat(70_000) });
     expectError(big, 413, 'PAYLOAD_TOO_LARGE');
     const bad = await request(app)
-      .post('/v1/webhooks/transactpay')
+      .post('/v1/webhooks/paystack')
       .set('Content-Type', 'application/json')
       .send('{not json');
     expect(bad.status).toBe(400);

@@ -456,6 +456,10 @@ export class PaymentsService {
     await limiter.enforce('provider_webhook', ctx.ip, provider.name);
     if (body.length > BODY_LIMIT)
       throw new AppError(413, 'PAYLOAD_TOO_LARGE', 'This notification is too large');
+    // The provider's signature over the bytes received. A notification that fails is refused, and not stored; one that
+    // passes is still only a lead, confirmed through the API before anything is credited (P9-2).
+    if (!provider.verifyNotification(body, headers))
+      throw new AppError(401, 'UNAUTHENTICATED', 'This notification is not signed by the provider');
     let reference: string | null = null;
     try {
       reference = provider.parseEvent(raw, {}).providerTxId ?? null;

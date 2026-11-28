@@ -1,5 +1,9 @@
 # AlphaKolect: Questions for TransactPay
 
+> **Superseded on 19 November 2026.** The payments provider is now Paystack (`docs/architecture/P9_IMPLEMENTATION_PLAN.md` §16). Kept as the record of
+> what was asked of, and read about, TransactPay.
+
+
 **For:** whoever speaks to TransactPay for AlphaKolect (the owner or the project lead), to put to TransactPay's
 integration or support team
 **Prepared:** 26 October 2026

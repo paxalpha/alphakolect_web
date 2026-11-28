@@ -1,0 +1,82 @@
+commit: 9f8de5f761ee1a3a8cb5dc5563e2f5f7ca3895b9
+branch: feat/p9-paystack
+started: 2026-11-24T16:23:26Z
+command: PAYSTACK_SANDBOX=run npx vitest run test/payments/paystack-provider.test.ts --reporter=verbose
+---
+npm notice run @alphakolect/api@0.0.0 npx
+npm notice run vitest run test/payments/paystack-provider.test.ts --reporter=verbose
+
+ RUN  v3.2.7 C:/Users/midef/Desktop/Projects/alphakolect/apps/api
+
+ ✓ test/payments/paystack-provider.test.ts > wallets > finds one by its alias: the customer on our domain, and the account it holds 52ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > a customer with no account is "no account"; no customer is too, but only as Paystack says it 7ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > P9-R2: anything but the documented not-found is not an answer, so nothing is created on it 16ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > creates one for a customer who has none: the account, with our preferred bank, and nothing else made 2ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > makes the customer first when there is none, named for the owner, with our email address 2ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > a customer who has an account already is not given another 4ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > a refusal is a refusal; a timeout, a dropped connection or a server error is UNKNOWN_OUTCOME (TA-8) 6ms
+ ✓ test/payments/paystack-provider.test.ts > wallets > reads an account as closed when Paystack says it is not active; an absent one is NOT_FOUND 2ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > reads the reference, the amount and fee in kobo, the account it landed in, and when 155ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status success is successful (anything unrecognised is not final) 2ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status failed is failed (anything unrecognised is not final) 1ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status abandoned is failed (anything unrecognised is not final) 0ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status reversed is reversed (anything unrecognised is not final) 0ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status pending is pending (anything unrecognised is not final) 0ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status ongoing is pending (anything unrecognised is not final) 0ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status queued is pending (anything unrecognised is not final) 0ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > status something new is pending (anything unrecognised is not final) 1ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > no fee is no fee; a fee beyond the payment, or one that is not an amount, is no event 4ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > P9-R4: an amount that is not whole kobo in naira is refused, never cut 8ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > without an account named there is nothing to match it by; any channel but a dedicated account is no wallet money 2ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > only the documented not-found is NOT_FOUND; an outage, our own expired key or a rate limit must not reject real money 6ms
+ ✓ test/payments/paystack-provider.test.ts > confirming a transaction > takes the reference from a payment notification, and from nothing else; believes nothing it says 7ms
+ ✓ test/payments/paystack-provider.test.ts > notifications are signed > accepts the signature with a time, on the exact bytes, up to five minutes old 43ms
+ ✓ test/payments/paystack-provider.test.ts > notifications are signed > refuses a stale or future one, another body, another secret, and anything malformed 2ms
+ ✓ test/payments/paystack-provider.test.ts > notifications are signed > accepts the older signature, of the body with the secret key, and only that 1ms
+ ✓ test/payments/paystack-provider.test.ts > notifications are signed > without a signing secret the signature with a time counts for nothing 1ms
+ ✓ test/payments/paystack-provider.test.ts > notifications are signed > a notification with no signature at all is refused 0ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > names the account, makes the recipient, then sends our reference and the amount in kobo 2ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > a step before the transfer that fails, of any kind, means nothing was sent 5ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > only a 400 or 422 is a refusal; a reference used already, the balance and a code to enter are told apart 10ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > reads every status Paystack documents: six conclusive, three not, and an unknown one is not final 15ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > refuses what it cannot send: a transfer between accounts, another currency, an amount past a safe integer 3ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > our reference is sent as it is when Paystack takes it, and as a fixed digest when it does not 2ms
+ ✓ test/payments/paystack-provider.test.ts > payouts > looks a payout up by the same reference it was sent with; none found is null only as documented 7ms
+ ✓ test/payments/paystack-provider.test.ts > the balance and what is not offered > reads the one balance, in kobo, of the naira entry 1ms
+ ✓ test/payments/paystack-provider.test.ts > the balance and what is not offered > no naira balance, or no answer, is no balance: never a balance of nothing 4ms
+ ✓ test/payments/paystack-provider.test.ts > the balance and what is not offered > declares and refuses what Paystack does not give: a balance per account, a transfer between accounts 1ms
+ ✓ test/payments/paystack-provider.test.ts > an account that is not stated to be a wallet is not one (P9 rev 8, the reviewer’s P1) > assigned, active and in naira, all stated, or the lookup and the creation say nothing is certain 11ms
+ ✓ test/payments/paystack-provider.test.ts > an account that is not stated to be a wallet is not one (P9 rev 8, the reviewer’s P1) > an account made names the customer it was made for, or it is not used 2ms
+ ✓ test/payments/paystack-provider.test.ts > an account that is not stated to be a wallet is not one (P9 rev 8, the reviewer’s P1) > a closed account is reported closed, never active, and one that does not say so is not active either 2ms
+ ✓ test/payments/paystack-provider.test.ts > what is switched off (P9 rev 8, P9-22 and P9-23) > wallets and payouts are off unless said, and nothing is sent to Paystack when they are 2ms
+ ✓ test/payments/paystack-provider.test.ts > the sandbox, on demand (P9-6; plan §16.4) > what it does not know: an alias is null, a transaction NOT_FOUND, a payout null (P9-R2) 2559ms
+ × test/payments/paystack-provider.test.ts > the sandbox, on demand (P9-6; plan §16.4) > an account: made under its alias, found by it, and a repeat makes no second one (B1) 1190ms
+   → The customer was refused (HTTP 400)
+ ✓ test/payments/paystack-provider.test.ts > the sandbox, on demand (P9-6; plan §16.4) > reads the balance 609ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/payments/paystack-provider.test.ts > the sandbox, on demand (P9-6; plan §16.4) > an account: made under its alias, found by it, and a repeat makes no second one (B1)
+ProviderError: The customer was refused (HTTP 400)
+ ❯ PaystackProvider.refuseOrUnknown src/integrations/payments/paystack-provider.ts:445:13
+    443|   private refuseOrUnknown(res: Answer, what: string): void {
+    444|     if (res.status === 400 || res.status === 422)
+    445|       throw new ProviderError('INVALID_REQUEST', `${what} was refused …
+       |             ^
+    446|     if (res.status !== 200 && res.status !== 201)
+    447|       throw new ProviderError('UNKNOWN_OUTCOME', `No stated result for…
+ ❯ PaystackProvider.createVirtualAccount src/integrations/payments/paystack-provider.ts:177:12
+ ❯ test/payments/paystack-provider.test.ts:704:21
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+Serialized Error: { code: 'INVALID_REQUEST' }
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 43 passed (44)
+   Start at  17:23:46
+   Duration  67.11s (transform 634ms, setup 0ms, collect 1.07s, tests 4.76s, environment 1ms, prepare 487ms)
+
+--- exit: 1
+finished: 2026-11-24T16:25:22Z

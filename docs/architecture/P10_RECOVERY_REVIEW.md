@@ -69,3 +69,12 @@ This is the shape the revised plan must work out and the reviewer must test, not
 | 6 | The release guard's conditions with no provider facts to wait for | Lead | Billing stays off until the lead releases it (BR-1.3), with the ledger and suspension tests green in CI |
 
 **Questions for Paystack:** none for billing itself, which calls Paystack for nothing. The open Paystack questions (identity, settlement, custody) are P9's and gate going live, not the design of the charge.
+
+## 6. What happens next
+
+1. **Revision 9 of the P10 plan** is written from this review: §3.5 rewritten as the atomic charge, the TransactPay sections removed or recorded as history, the owner's answers mapped to the new design, the guard footprints named. Many small commits, as every change here.
+2. **Independent review of revision 9**, as for every plan before it. No code before it is approved.
+3. **Build in small commits** on this branch, with **all testing in GitHub Actions** on the pull request (the main job and the contract and secret checks), not on a laptop.
+4. **P9 does not wait for P10, and P10 does not wait for P9's external gates.** What P10 needs from P9 is its payment primitives and its Paystack facts, both in place; going live needs P9's release gates, and P10's own, separately.
+
+**Not changed by this review:** payouts off; wallet creation off; no tunnel; no deposit; nothing live. The owner's forms stand as answered.

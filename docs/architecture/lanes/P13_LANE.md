@@ -7,3 +7,7 @@
 ## What it depends on
 
 The OpenAPI contract (generated, checked in CI) and each phase's endpoints as they are approved.
+
+## What can start now
+
+The frontend architecture, design system, route structure, and the contract-consumer set-up; journeys for the parts whose APIs already exist.

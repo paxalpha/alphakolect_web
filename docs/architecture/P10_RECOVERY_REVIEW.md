@@ -44,3 +44,15 @@ document, and it goes to the independent reviewer before any code.
 | §10 to §17 The build and the six reviews | **Keep as history** | They record what was found, and much of it (locks, periods, ledger postings) is still true |
 
 **A count, so the size of the redo is known:** the plan mentions TransactPay 56 times, in §1 to §3.5, §3.8, §5, §6 to §9.1 and §10 onward; §3.5 alone is about a quarter of the document.
+
+## 4. The charge, redesigned in outline (to be settled in revision 9)
+
+This is the shape the revised plan must work out and the reviewer must test, not a design:
+
+1. **One transaction, two ledgers.** For each business and period: debit the business's wallet account (1100) and credit its subscription expense (5100), and in the platform's ledger debit the platform wallet (1100) and credit subscription income (4100): the traces P9 already wrote down (plan §3.5 of P9). Both postings commit together or neither does.
+2. **Idempotent by period.** The posting's key is the business and the billing period, so a retry, a crash or a second worker posts once. This is what the unknown-order machinery was for; here the ledger's own idempotency record is enough.
+3. **Sufficiency inside the transaction.** The share is checked against the invoice **under the locks the posting takes**, not before: a check outside the transaction can be stale by the time it posts. Not enough: nothing is posted, the failure is counted, and the retry and suspension rules of §3.5 and §3.6 (as the owner decided them) apply.
+4. **Lock order.** The two ledgers' projections are taken in the order the lock guard pins, with the billing rows in their category; the posting core already refuses to wait (L6). The revised plan must name the footprint and pin it in the guard.
+5. **No worker claim for a charge**, unless the run itself needs leasing for scale. The run can be one function that finds due invoices and posts each in its own transaction.
+6. **What a share is not.** A credited share is not Paystack money available (P9-35). A charge between two shares moves no money at Paystack, but the platform's share is then AlphaKolect's revenue sitting in the pooled balance; paying it out is a payout (off), after settlement.
+7. **Failure and reversal.** A reversed deposit (a provider reversal after credit) goes to a person (P9, plan E1); whether a charge already posted against that deposit stands is a question for the revised plan and the owner.

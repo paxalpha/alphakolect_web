@@ -71,6 +71,21 @@ in 6 prints the host so a person sees it.
 4. **Register** the tunnel's address plus `/v1/webhooks/paystack` as the **test** webhook in Paystack's dashboard, and set `PAYSTACK_WEBHOOK_SIGNING_SECRET` if the dashboard gave one.
 5. **Stop** when the test is done: the tunnel, the door, the worker; remove the webhook URL from the dashboard; set `PAYSTACK_WALLET_CREATION` back to off.
 
+### 6a. What the operator records before D2a, and what is not yet shown (the reviewer's note of 28 November)
+
+`WEBHOOK_PROXY_ALLOWED_SOURCES=none` switches the source list off, so **D2a must not proceed with it**. The command's own settings are tested (defaults, `none`, a list of the operator's own, the header, bad values that stop the start without
+repeating the value; and the real command run as an operator runs it), so the operator's record before D2a is read straight off what the door prints. Record, without any credential:
+
+| To record | Where it comes from |
+|---|---|
+| The tunnel provider actually used | the operator (cloudflared or ngrok) |
+| The source-header setting | `WEBHOOK_PROXY_SOURCE_HEADER` (`cf-connecting-ip` for cloudflared, `x-forwarded-for` for ngrok) |
+| The effective list: the three expected addresses, 52.31.139.75, 52.49.173.169 and 52.214.14.220 | the door's second startup line: `Source list ON: only <the list>, as read from the <header> header the tunnel sets.` |
+| That the restriction is on | that same line, and **no** line beginning `WARNING: the source-address list is switched off` |
+
+**Not shown, and not shown by any test:** that a real tunnel delivers the header the door reads, with the value the door expects. The tests prove how the door handles the header; **what a tunnel really sends is established only by D2a**, which must show a request
+through the real tunnel reaching the API (a signed one, from Paystack) and one that does not (unsigned, or from a source the list refuses). Until then the list is a design, not a demonstrated control, and the signature remains the only check relied on.
+
 ## 7. Not established by this report
 
 - The content of the local env files beyond names, hosts and prefixes: the operator's check in 6 stands in for it.

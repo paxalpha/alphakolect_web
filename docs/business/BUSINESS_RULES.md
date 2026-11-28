@@ -26,6 +26,7 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 2.4 The ~197 virtual accounts created for fake sign-ups should be closed with TransactPay. *(Q3a, Q3d)*
 *Note added on 19 November 2026, with the owner's approval:* The payments provider is now Paystack. Where these rules say TransactPay, they now say Paystack, and the Paystack account is AlphaKolect's own. The accounts made at TransactPay for fake sign-ups are still to be closed there, as rule 2.4 says. *(Owner's answer to Q6 of the Paystack form, 19 November 2026.)*
 2.5 Every business gets a **90-day free trial** from sign-up. *(Q9b)*
+*Note added on 13 November 2026, with the owner's approval:* The 90-day free trial starts on the day the business **confirms its email**, not on the day it signs up. This replaces "from sign-up" above. *(Owner's answer to Q1 of the billing questions, 11 November 2026.)*
 
 ## 3. Who can do what
 
@@ -113,6 +114,8 @@ Rules marked **(please confirm)** are our reading of your answers, not your exac
 > - **10.6a Billing:** an agent with **no activity for 15 days or more** counts as **inactive** and is not billed. This is about inactivity, not the deactivation switch.
 > - **10.6b Login:** a **deactivated** agent **cannot log in** to the mobile app, from the moment of deactivation.
 > - *Still to define:* what counts as "activity" (proposed: a login or a recorded collection). See `TARGET_ARCHITECTURE.md` §30.
+
+*Note added on 13 November 2026, with the owner's approval:* "Activity" is now defined: an agent is active if, in the 15 days before the billing date, the agent **signed in to the mobile app** or **recorded a collection**. *(Owner's answer to Q2 of the billing questions, 11 November 2026.)*
 
 ## 11. Records
 

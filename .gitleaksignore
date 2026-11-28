@@ -38,3 +38,8 @@ legacy/current-system/VERIFICATION_CHECKLIST.md:curl-auth-header:115
 5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/src/platform/config.ts:generic-api-key:52
 5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/test/identity/access-tokens.test.ts:generic-api-key:18
 5d21aeb2967cf4553ee541fd4718df3532adaab8:apps/api/test/identity/access-tokens.test.ts:generic-api-key:19
+
+# P9 revision 8 (reviewed 2026-11-19): made-up Paystack signing secrets in the configuration test, in a commit on the P9 branch. The scan covers every branch's history, so
+# each branch carries the two reviewed fingerprints. Later commits on the P9 branch mark them gitleaks:allow.
+e487ec85e1a065ab73661e99d7a77f85d10c5e45:apps/api/test/config.test.ts:generic-api-key:120
+e487ec85e1a065ab73661e99d7a77f85d10c5e45:apps/api/test/config.test.ts:generic-api-key:127
